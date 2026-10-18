@@ -26,7 +26,8 @@ namespace metaleq
 {
 
 inline constexpr int    kNumBands     = 5;
-inline constexpr int    kMaxChainSize = 24;
+// Worst case: 24 base/macro filters plus up to 18 filters from six shapes.
+inline constexpr int    kMaxChainSize = 48;
 inline constexpr int    kMaxChannels  = 8;   // we only ever advertise mono/stereo buses
 inline constexpr double kPi           = 3.14159265358979323846;
 
@@ -247,11 +248,15 @@ struct EqSettings
     double lpFreq   = 12000.0;
     int    hpSlope  = 0;   // 0 = off, 1 = 12, 2 = 24, 3 = 36 dB/oct
     int    lpSlope  = 0;
+    bool   lpEnabled = true;
     double lsFreq   = 140.0;
     double lsGainDb = 0.0;
     double hsFreq   = 7000.0;
     double hsGainDb = 0.0;
     std::array<BandSettings, kNumBands> bands {};
+    // TIGHTEN, SCOOP, MID PUNCH, PICK ATTACK, FIZZ TAMER, BRIGHTEN.
+    // Separate layers preserve the user's EQ and macro edits when toggled.
+    std::array<bool, 6> shapes {};
     double trimDb   = 0.0;
 };
 
@@ -362,8 +367,49 @@ inline void buildChain (ChainSpec& chain,
     if (fizzCut > 1.0e-3)
         chain.add (FilterType::highShelf, 7000.0, kButterworthQ, -5.5 * fizzCut);
 
+    //--- independent, non-destructive tonal-shape layers -------------------
+    // These fixed contributions are deliberately separate from the manual
+    // bands and macros. Each layer is present at most once, so toggling cannot
+    // accumulate filters or overwrite a user edit.
+    if (eq.shapes[0]) // TIGHTEN
+    {
+        chain.add (FilterType::lowShelf, 130.0, kButterworthQ, -3.0);
+        chain.add (FilterType::peak, 300.0, 0.85, -3.0);
+        chain.add (FilterType::peak, 1800.0, 1.0, 1.0);
+    }
+    if (eq.shapes[1]) // SCOOP
+    {
+        chain.add (FilterType::peak, 550.0, 0.55, -4.5);
+        chain.add (FilterType::peak, 1800.0, 0.9, 1.5);
+    }
+    if (eq.shapes[2]) // MID PUNCH
+    {
+        chain.add (FilterType::peak, 320.0, 0.9, -3.0);
+        chain.add (FilterType::peak, 1600.0, 0.75, 4.0);
+        chain.add (FilterType::peak, 3000.0, 1.0, 1.5);
+    }
+    if (eq.shapes[3]) // PICK ATTACK
+    {
+        chain.add (FilterType::peak, 350.0, 1.0, -2.0);
+        chain.add (FilterType::peak, 2600.0, 0.7, 4.0);
+        chain.add (FilterType::peak, 5000.0, 1.0, 1.5);
+    }
+    if (eq.shapes[4]) // FIZZ TAMER
+    {
+        chain.add (FilterType::highShelf, 7000.0, kButterworthQ, -2.0);
+        chain.add (FilterType::peak, 5200.0, 1.0, -3.5);
+        chain.add (FilterType::peak, 8500.0, 0.8, -2.5);
+    }
+    if (eq.shapes[5]) // BRIGHTEN
+    {
+        chain.add (FilterType::highShelf, 8000.0, kButterworthQ, 3.0);
+        chain.add (FilterType::peak, 3000.0, 0.9, 2.0);
+        chain.add (FilterType::peak, 10000.0, 0.7, 1.5);
+    }
+
     //--- low pass ------------------------------------------------------------
-    addCrossover (chain, FilterType::lowPass, eq.lpFreq, eq.lpSlope, sampleRate);
+    if (eq.lpEnabled)
+        addCrossover (chain, FilterType::lowPass, eq.lpFreq, eq.lpSlope, sampleRate);
 
     chain.trimDb = eq.trimDb;
 }

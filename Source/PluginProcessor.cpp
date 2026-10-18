@@ -2,10 +2,55 @@
 #include "PluginEditor.h"
 #include <juce_dsp/juce_dsp.h>
 #include <chrono>
+#include <cmath>
 
 namespace
 {
     using namespace metaleq;
+
+    bool parsePresetNumber (const juce::String& text, double& result)
+    {
+        const auto* cursor = text.toRawUTF8();
+        const auto* start = cursor;
+        if (*cursor == '+' || *cursor == '-')
+            ++cursor;
+
+        bool hasDigits = false;
+        while (*cursor >= '0' && *cursor <= '9')
+        {
+            hasDigits = true;
+            ++cursor;
+        }
+        if (*cursor == '.')
+        {
+            ++cursor;
+            while (*cursor >= '0' && *cursor <= '9')
+            {
+                hasDigits = true;
+                ++cursor;
+            }
+        }
+        if (! hasDigits)
+            return false;
+
+        if (*cursor == 'e' || *cursor == 'E')
+        {
+            ++cursor;
+            if (*cursor == '+' || *cursor == '-')
+                ++cursor;
+            const auto* exponentStart = cursor;
+            while (*cursor >= '0' && *cursor <= '9')
+                ++cursor;
+            if (cursor == exponentStart)
+                return false;
+        }
+        if (*cursor != '\0')
+            return false;
+
+        char* end = nullptr;
+        result = std::strtod (start, &end);
+        return end == cursor && std::isfinite (result);
+    }
 
     //==========================================================================
     // Parameter identities. Never change these strings: they are the plugin's
@@ -20,6 +65,7 @@ const char* MetalEQAudioProcessor::ParameterIDs::hpFreq   = "hpFreq";
 const char* MetalEQAudioProcessor::ParameterIDs::hpSlope  = "hpSlope";
 const char* MetalEQAudioProcessor::ParameterIDs::lpFreq   = "lpFreq";
 const char* MetalEQAudioProcessor::ParameterIDs::lpSlope  = "lpSlope";
+const char* MetalEQAudioProcessor::ParameterIDs::lpOn     = "lpOn";
 const char* MetalEQAudioProcessor::ParameterIDs::lsFreq   = "lsFreq";
 const char* MetalEQAudioProcessor::ParameterIDs::lsGain   = "lsGain";
 const char* MetalEQAudioProcessor::ParameterIDs::hsFreq   = "hsFreq";
@@ -32,6 +78,8 @@ const char* MetalEQAudioProcessor::ParameterIDs::bandQ[metaleq::kNumBands] =
     { "band1Q", "band2Q", "band3Q", "band4Q", "band5Q" };
 const char* MetalEQAudioProcessor::ParameterIDs::bandOn[metaleq::kNumBands] =
     { "band1On", "band2On", "band3On", "band4On", "band5On" };
+const char* MetalEQAudioProcessor::ParameterIDs::shapeOn[6] =
+    { "shapeTightenOn", "shapeScoopOn", "shapeMidPunchOn", "shapePickAttackOn", "shapeFizzTamerOn", "shapeBrightenOn" };
 const char* MetalEQAudioProcessor::ParameterIDs::trim     = "trim";
 const char* MetalEQAudioProcessor::ParameterIDs::tight    = "tight";
 const char* MetalEQAudioProcessor::ParameterIDs::body     = "body";
@@ -44,7 +92,7 @@ const char* MetalEQAudioProcessor::ParameterIDs::bypass   = kBypassId;
 
 juce::StringArray MetalEQAudioProcessor::ParameterIDs::allEqParameterIds()
 {
-    juce::StringArray ids { hpFreq, hpSlope, lpFreq, lpSlope, lsFreq, lsGain, hsFreq, hsGain };
+    juce::StringArray ids { hpFreq, hpSlope, lpFreq, lpSlope, lpOn, lsFreq, lsGain, hsFreq, hsGain };
 
     for (int i = 0; i < metaleq::kNumBands; ++i)
     {
@@ -60,6 +108,8 @@ juce::StringArray MetalEQAudioProcessor::ParameterIDs::allEqParameterIds()
     ids.add (scoop);
     ids.add (bite);
     ids.add (fizzCut);
+    for (const auto* id : shapeOn)
+        ids.add (id);
 
     return ids;
 }
@@ -71,12 +121,15 @@ MetalEQAudioProcessor::MetalEQAudioProcessor()
                           .withOutput ("Output", juce::AudioChannelSet::stereo(), true))
 {
     apvts = std::make_unique<juce::AudioProcessorValueTreeState> (*this, nullptr, "PARAMS", createParameterLayout());
+    rememberCurrentAsLoadedPreset ("Custom", false);
 
     analyzerCapture.reset (new float[static_cast<size_t> (maxCaptureSamples)]);
     for (auto& gain : analyzerSuggestion)
         gain.store (0.0f, std::memory_order_relaxed);
 
     for (auto& level : peakLevels)
+        level.store (0.0f, std::memory_order_relaxed);
+    for (auto& level : inputPeakLevels)
         level.store (0.0f, std::memory_order_relaxed);
 
     engine.prepare (getSampleRate() > 0.0 ? getSampleRate() : 48000.0);
@@ -114,6 +167,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout MetalEQAudioProcessor::creat
     layout.add (std::make_unique<juce::AudioParameterChoice> (
         ParameterIDs::lpSlope, "Low-Pass Slope",
         juce::StringArray { "Off", "12 dB/oct", "24 dB/oct", "36 dB/oct" }, 0));
+    layout.add (std::make_unique<juce::AudioParameterBool> (ParameterIDs::lpOn, "Low-Pass Enabled", true));
 
     //--- shelves -------------------------------------------------------------
     layout.add (std::make_unique<juce::AudioParameterFloat> (
@@ -181,6 +235,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout MetalEQAudioProcessor::creat
         layout.add (std::make_unique<juce::AudioParameterFloat> (
             m.id, m.name, juce::NormalisableRange<float> (0.0f, 1.0f, 0.005f), m.defaultValue));
 
+    static constexpr const char* shapeNames[] =
+        { "TIGHTEN", "SCOOP Shape", "MID PUNCH", "PICK ATTACK", "FIZZ TAMER", "BRIGHTEN" };
+    for (int i = 0; i < 6; ++i)
+        layout.add (std::make_unique<juce::AudioParameterBool> (ParameterIDs::shapeOn[i], shapeNames[i], false));
+
     //--- preset selector -----------------------------------------------------
     {
         juce::StringArray presetNames { "Custom (Modified)" };
@@ -217,6 +276,8 @@ void MetalEQAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
     engine.setChain (chain, 1);
 
     for (auto& level : peakLevels)
+        level.store (0.0f, std::memory_order_relaxed);
+    for (auto& level : inputPeakLevels)
         level.store (0.0f, std::memory_order_relaxed);
 
     juce::ignoreUnused (samplesPerBlock);
@@ -405,6 +466,11 @@ void MetalEQAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     captureAnalyzerInput (buffer);
     serviceDeferredAnalyzerStart();
 
+    if (meteringEnabled.load (std::memory_order_relaxed))
+        for (int ch = 0; ch < numChannels; ++ch)
+            inputPeakLevels[static_cast<size_t> (ch)].store (
+                buffer.getMagnitude (ch, 0, numSamples), std::memory_order_relaxed);
+
     const bool bypassed = apvts->getRawParameterValue (ParameterIDs::bypass)->load() >= 0.5f;
     const bool abCompare = apvts->getRawParameterValue (ParameterIDs::abCompare)->load() >= 0.5f;
 
@@ -458,6 +524,13 @@ void MetalEQAudioProcessor::processBlockBypassed (juce::AudioBuffer<float>& buff
     // machine progress exactly as they do in the normal callback.
     captureAnalyzerInput (buffer);
     serviceDeferredAnalyzerStart();
+    if (meteringEnabled.load (std::memory_order_relaxed))
+        for (int ch = 0; ch < juce::jmin (buffer.getNumChannels(), metaleq::kMaxChannels); ++ch)
+        {
+            const float peak = buffer.getMagnitude (ch, 0, buffer.getNumSamples());
+            inputPeakLevels[static_cast<size_t> (ch)].store (peak, std::memory_order_relaxed);
+            peakLevels[static_cast<size_t> (ch)].store (peak, std::memory_order_relaxed);
+        }
     juce::ignoreUnused (midiMessages);
 }
 
@@ -479,7 +552,21 @@ void MetalEQAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 
     state.setProperty ("version", 1, nullptr);
     state.setProperty ("lastPresetName", lastPresetName, nullptr);
-    state.appendChild (apvts->state, nullptr);
+    state.setProperty ("lastPresetIsUser", loadedPresetIsUser, nullptr);
+    auto parameters = getSoundParameterState();
+    const char* uiParameterIds[] = { ParameterIDs::preset, ParameterIDs::abCompare, ParameterIDs::bypass };
+    for (const auto* id : uiParameterIds)
+    {
+        if (const auto* parameter = apvts->getParameter (id))
+        {
+            juce::ValueTree node ("PARAM");
+            node.setProperty ("id", id, nullptr);
+            node.setProperty ("value", juce::String (
+                static_cast<double> (parameter->convertFrom0to1 (parameter->getValue())), 9), nullptr);
+            parameters.appendChild (node, nullptr);
+        }
+    }
+    state.appendChild (parameters, nullptr);
 
     juce::MemoryOutputStream stream (destData, false);
     state.writeToStream (stream);
@@ -501,11 +588,13 @@ void MetalEQAudioProcessor::setStateInformation (const void* data, int sizeInByt
     const auto child = tree.getChildWithName ("PARAMS");
 
     if (child.isValid())
-        apvts->state = child;
+        apvts->replaceState (child.createCopy());
 
     lastPresetName = tree.getProperty ("lastPresetName").toString().isNotEmpty()
                        ? tree.getProperty ("lastPresetName").toString()
                        : juce::String ("Custom");
+    loadedPresetIsUser = static_cast<bool> (tree.getProperty ("lastPresetIsUser", false));
+    rememberCurrentAsLoadedPreset (lastPresetName, loadedPresetIsUser);
 
     applyingPreset.store (false, std::memory_order_relaxed);
 
@@ -531,6 +620,7 @@ metaleq::EqSettings MetalEQAudioProcessor::readEqSettings() const
     eq.lpFreq   = load (ParameterIDs::lpFreq);
     eq.hpSlope  = juce::jlimit (0, 3, (int) load (ParameterIDs::hpSlope));
     eq.lpSlope  = juce::jlimit (0, 3, (int) load (ParameterIDs::lpSlope));
+    eq.lpEnabled = load (ParameterIDs::lpOn) >= 0.5f;
     eq.lsFreq   = load (ParameterIDs::lsFreq);
     eq.lsGainDb = load (ParameterIDs::lsGain);
     eq.hsFreq   = load (ParameterIDs::hsFreq);
@@ -546,6 +636,9 @@ metaleq::EqSettings MetalEQAudioProcessor::readEqSettings() const
         b.q      = metaleq::clampValue (static_cast<double> (load (ParameterIDs::bandQ[i])), p::bandQMin, p::bandQMax);
         b.on     = load (ParameterIDs::bandOn[i]) >= 0.5f;
     }
+
+    for (int i = 0; i < static_cast<int> (eq.shapes.size()); ++i)
+        eq.shapes[static_cast<size_t> (i)] = load (ParameterIDs::shapeOn[i]) >= 0.5f;
 
     return eq;
 }
@@ -621,6 +714,7 @@ void MetalEQAudioProcessor::applyEqSettings (const metaleq::EqSettings& eq, bool
 {
     setFloatParameter (ParameterIDs::hpFreq, eq.hpFreq);
     setFloatParameter (ParameterIDs::lpFreq, eq.lpFreq);
+    setFloatParameter (ParameterIDs::lpOn, eq.lpEnabled ? 1.0 : 0.0);
     setFloatParameter (ParameterIDs::lsFreq, eq.lsFreq);
     setFloatParameter (ParameterIDs::lsGain, eq.lsGainDb);
     setFloatParameter (ParameterIDs::hsFreq, eq.hsFreq);
@@ -665,6 +759,7 @@ void MetalEQAudioProcessor::applyPreset (int index)
         resetToNeutral();
         setChoiceParameter (ParameterIDs::preset, 0);
         lastPresetName = "Custom";
+        rememberCurrentAsLoadedPreset (lastPresetName, false);
         applyingPreset.store (false, std::memory_order_relaxed);
         return;
     }
@@ -673,12 +768,16 @@ void MetalEQAudioProcessor::applyPreset (int index)
 
     applyEqSettings (preset.eq, true);
 
+    for (const auto* id : ParameterIDs::shapeOn)
+        setFloatParameter (id, 0.0);
+
     if (preset.setsMacros)
         applyMacroSettings (preset.macros);
 
     setChoiceParameter (ParameterIDs::preset, safeIndex);
 
     lastPresetName = preset.name;
+    rememberCurrentAsLoadedPreset (lastPresetName, false);
 
     applyingPreset.store (false, std::memory_order_relaxed);
 }
@@ -687,32 +786,32 @@ void MetalEQAudioProcessor::applyShape (int index)
 {
     if (index < 0 || index >= metaleq::getNumShapes())
         return;
+    if (index == 6)
+        resetToNeutral();
+    else
+        setShapeEnabled (index, apvts->getRawParameterValue (ParameterIDs::shapeOn[index])->load() < 0.5f);
+}
 
-    const auto& shape = metaleq::getShape (index);
+void MetalEQAudioProcessor::setShapeEnabled (int index, bool enabled)
+{
+    if (index < 0 || index >= 6)
+        return;
+    setFloatParameter (ParameterIDs::shapeOn[index], enabled ? 1.0 : 0.0);
+}
 
-    applyingPreset.store (true, std::memory_order_relaxed);
-
-    applyEqSettings (shape.eq, shape.setsCrossovers);
-
-    if (shape.setsMacros)
-        applyMacroSettings (shape.macros);
-
-    // A shape is a curve, not a factory preset: the preset display follows the
-    // normal "user edited it" path once the guard is released.
-    applyingPreset.store (false, std::memory_order_relaxed);
-
-    // Selecting "Custom" is the honest description of "the EQ now differs from
-    // the recalled preset", so do it explicitly.
-    if (getSelectedPresetIndex() > 0)
-        setChoiceParameter (ParameterIDs::preset, 0);
-
-    lastPresetName = "Custom";
+void MetalEQAudioProcessor::setLowPassEnabled (bool enabled)
+{
+    setFloatParameter (ParameterIDs::lpOn, enabled ? 1.0 : 0.0);
+    if (enabled && apvts->getRawParameterValue (ParameterIDs::lpSlope)->load() < 0.5f)
+        setChoiceParameter (ParameterIDs::lpSlope, 2);
 }
 
 void MetalEQAudioProcessor::resetToNeutral()
 {
     applyEqSettings (neutralEqSettings(), true);
     applyMacroSettings (neutralMacroSettings());
+    for (const auto* id : ParameterIDs::shapeOn)
+        setFloatParameter (id, 0.0);
 }
 
 //==============================================================================
@@ -726,7 +825,34 @@ int MetalEQAudioProcessor::getSelectedPresetIndex() const
 
 bool MetalEQAudioProcessor::isPresetModified() const
 {
-    return getSelectedPresetIndex() == 0;
+    if (! loadedPresetState.isValid())
+        return true;
+
+    const auto current = getSoundParameterState();
+    if (current.getNumChildren() != loadedPresetState.getNumChildren())
+        return true;
+    for (int i = 0; i < current.getNumChildren(); ++i)
+    {
+        const auto child = current.getChild (i);
+        const auto id = child.getProperty ("id").toString();
+        bool found = false;
+        for (int j = 0; j < loadedPresetState.getNumChildren(); ++j)
+        {
+            const auto baseline = loadedPresetState.getChild (j);
+            if (baseline.getProperty ("id").toString() == id)
+            {
+                found = true;
+                const double a = child.getProperty ("value").toString().getDoubleValue();
+                const double b = baseline.getProperty ("value").toString().getDoubleValue();
+                if (std::abs (a - b) > 1.0e-5)
+                    return true;
+                break;
+            }
+        }
+        if (! found)
+            return true;
+    }
+    return false;
 }
 
 MetalEQAudioProcessor::DisplayState MetalEQAudioProcessor::getDisplayState() const
@@ -736,8 +862,9 @@ MetalEQAudioProcessor::DisplayState MetalEQAudioProcessor::getDisplayState() con
     state.eq      = readEqSettings();
     state.macros  = readMacroSettings();
     state.presetIndex = getSelectedPresetIndex();
-    state.presetName = (state.presetIndex > 0) ? juce::String (metaleq::getPreset (state.presetIndex).name)
-                                               : juce::String ("Custom");
+    state.presetName = lastPresetName;
+    state.presetDirty = isPresetModified();
+    state.userPreset = loadedPresetIsUser;
     state.abCompare  = apvts->getRawParameterValue (ParameterIDs::abCompare)->load() >= 0.5f;
     state.bypassed   = apvts->getRawParameterValue (ParameterIDs::bypass)->load() >= 0.5f;
 
@@ -758,9 +885,357 @@ float MetalEQAudioProcessor::getPeakLevel (int channel) const noexcept
     return peakLevels[static_cast<size_t> (channel)].load (std::memory_order_relaxed);
 }
 
+float MetalEQAudioProcessor::getInputPeakLevel (int channel) const noexcept
+{
+    if (channel < 0 || channel >= metaleq::kMaxChannels)
+        return 0.0f;
+    return inputPeakLevels[static_cast<size_t> (channel)].load (std::memory_order_relaxed);
+}
+
 double MetalEQAudioProcessor::getResponseDb (double freq) const
 {
     return metaleq::responseDb (readEqSettings(), readMacroSettings(), getDisplaySampleRate(), freq);
+}
+
+//==============================================================================
+// User preset file operations run on the message thread. Project state remains
+// entirely inside APVTS and never depends on these files.
+juce::ValueTree MetalEQAudioProcessor::getSoundParameterState() const
+{
+    const auto ids = ParameterIDs::allEqParameterIds();
+    juce::ValueTree state ("PARAMS");
+    for (const auto& id : ids)
+    {
+        if (const auto* parameter = apvts->getParameter (id))
+        {
+            juce::ValueTree node ("PARAM");
+            node.setProperty ("id", id, nullptr);
+            const auto plainValue = parameter->convertFrom0to1 (parameter->getValue());
+            node.setProperty ("value", juce::String (static_cast<double> (plainValue), 9), nullptr);
+            state.appendChild (node, nullptr);
+        }
+    }
+    return state;
+}
+
+void MetalEQAudioProcessor::rememberCurrentAsLoadedPreset (const juce::String& name, bool isUser)
+{
+    loadedPresetState = getSoundParameterState();
+    lastPresetName = name;
+    loadedPresetIsUser = isUser;
+}
+
+juce::File MetalEQAudioProcessor::getUserPresetDirectory() const
+{
+    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+        .getChildFile ("MetalEQ").getChildFile ("Presets");
+}
+
+bool MetalEQAudioProcessor::isSafePresetName (const juce::String& rawName)
+{
+    const auto name = rawName.trim();
+    if (name.isEmpty() || name.length() > 48 || name == "." || name == "..")
+        return false;
+    for (auto c : name)
+        if (c < 32 || c == '/' || c == '\\' || c == ':' || c == '*' || c == '?'
+            || c == '"' || c == '<' || c == '>' || c == '|')
+            return false;
+    return true;
+}
+
+juce::File MetalEQAudioProcessor::getUserPresetFile (const juce::String& name) const
+{
+    const auto legalName = juce::File::createLegalFileName (name.trim()).substring (0, 72);
+    return getUserPresetDirectory().getChildFile (legalName + ".metaleq");
+}
+
+juce::StringArray MetalEQAudioProcessor::getUserPresetNames() const
+{
+    juce::StringArray names;
+    const auto directory = getUserPresetDirectory();
+    if (! directory.isDirectory())
+        return names;
+
+    juce::Array<juce::File> files;
+    directory.findChildFiles (files, juce::File::findFiles, false, "*.metaleq");
+    for (const auto& file : files)
+    {
+        if (file.getSize() <= 0 || file.getSize() > 256 * 1024)
+            continue;
+        const auto xml = juce::XmlDocument::parse (file);
+        if (xml == nullptr)
+            continue;
+        const auto tree = juce::ValueTree::fromXml (*xml);
+        const auto name = tree.getProperty ("name").toString();
+        if (tree.hasType ("MetalEQUserPreset") && tree.getProperty ("schemaVersion").toString() == "1"
+            && isSafePresetName (name) && ! names.contains (name, true))
+            names.add (name);
+    }
+    names.sort (true);
+    return names;
+}
+
+bool MetalEQAudioProcessor::saveUserPreset (const juce::String& rawName, bool overwrite, juce::String& error)
+{
+    const auto name = rawName.trim();
+    error.clear();
+    if (! isSafePresetName (name))
+    {
+        error = "Use a preset name from 1 to 48 characters. File path characters are not allowed.";
+        return false;
+    }
+    if (metaleq::findPresetByName (name.toRawUTF8()) >= 0)
+    {
+        error = "Factory presets are read-only. Choose a different name.";
+        return false;
+    }
+
+    auto file = getUserPresetFile (name);
+    for (const auto& existing : getUserPresetNames())
+        if (existing.equalsIgnoreCase (name))
+        {
+            file = getUserPresetFile (existing);
+            if (! overwrite)
+            {
+                error = "A user preset with that name already exists.";
+                return false;
+            }
+            break;
+        }
+
+    if (! getUserPresetDirectory().createDirectory())
+    {
+        error = "Could not create the user preset folder.";
+        return false;
+    }
+    const bool nameAlreadyExists = getUserPresetNames().contains (name, true);
+    if (file.existsAsFile() && ! nameAlreadyExists)
+    {
+        error = "A file with the requested preset filename already exists.";
+        return false;
+    }
+    juce::ValueTree root ("MetalEQUserPreset");
+    root.setProperty ("schemaVersion", 1, nullptr);
+    root.setProperty ("name", name, nullptr);
+    root.appendChild (getSoundParameterState(), nullptr);
+    const auto xml = root.createXml();
+    if (xml == nullptr || ! file.replaceWithText (xml->toString()))
+    {
+        error = "The preset could not be written. Check that the user preset folder is writable.";
+        return false;
+    }
+
+    setChoiceParameter (ParameterIDs::preset, 0);
+    rememberCurrentAsLoadedPreset (name, true);
+    return true;
+}
+
+bool MetalEQAudioProcessor::applySoundParameterState (const juce::ValueTree& state, juce::String& error)
+{
+    if (! state.isValid() || ! state.hasType ("PARAMS"))
+    {
+        error = "Preset has no valid parameter state.";
+        return false;
+    }
+
+    const auto expectedIds = ParameterIDs::allEqParameterIds();
+    juce::StringArray seenIds;
+    if (state.getNumChildren() != expectedIds.size())
+    {
+        error = "Preset is incomplete or uses an unsupported parameter schema.";
+        return false;
+    }
+    int lowPassSlope = -1;
+    int lowPassEnabledChild = -1;
+    for (int i = 0; i < state.getNumChildren(); ++i)
+    {
+        const auto child = state.getChild (i);
+        const auto id = child.getProperty ("id").toString();
+        const auto rawValue = child.getProperty ("value").toString();
+        if (id == ParameterIDs::lpSlope)
+            lowPassSlope = i;
+        if (id == ParameterIDs::lpOn)
+            lowPassEnabledChild = i;
+    }
+
+    // Version-1 user presets written by an earlier build could contain a
+    // blank lpOn value if APVTS had not materialized that default node yet.
+    // Derive only this known legacy field from the stored slope; all other
+    // missing or malformed values remain errors.
+    auto validatedState = state.createCopy();
+    if (lowPassSlope >= 0 && lowPassEnabledChild >= 0
+        && validatedState.getChild (lowPassEnabledChild).getProperty ("value").toString().trim().isEmpty())
+    {
+        const auto slopeText = validatedState.getChild (lowPassSlope).getProperty ("value").toString().trim();
+        double slopeValue = 0.0;
+        const auto* slopeParameter = apvts->getParameter (ParameterIDs::lpSlope);
+        if (slopeText.isEmpty() || ! parsePresetNumber (slopeText, slopeValue) || slopeParameter == nullptr
+            || slopeValue < slopeParameter->getNormalisableRange().start
+            || slopeValue > slopeParameter->getNormalisableRange().end)
+        {
+            error = "Preset contains an unknown or invalid parameter: lpSlope=" + slopeText;
+            return false;
+        }
+        validatedState.getChild (lowPassEnabledChild).setProperty (
+            "value", slopeValue > 0.0 ? "1" : "0", nullptr);
+    }
+
+    for (int i = 0; i < validatedState.getNumChildren(); ++i)
+    {
+        const auto child = validatedState.getChild (i);
+        const auto id = child.getProperty ("id").toString();
+        const auto rawValue = child.getProperty ("value").toString().trim();
+        double value = 0.0;
+        const bool parsed = parsePresetNumber (rawValue, value);
+        const auto* parameter = apvts->getParameter (id);
+        const auto range = parameter != nullptr ? parameter->getNormalisableRange()
+                                                : juce::NormalisableRange<float> { 0.0f, 1.0f };
+        if (! expectedIds.contains (id) || seenIds.contains (id) || rawValue.isEmpty()
+            || ! parsed
+            || value < range.start || value > range.end
+            || parameter == nullptr)
+        {
+            error = "Preset contains an unknown or invalid parameter: " + id + "=" + rawValue;
+            return false;
+        }
+        seenIds.add (id);
+    }
+
+    applyingPreset.store (true, std::memory_order_relaxed);
+    for (int i = 0; i < validatedState.getNumChildren(); ++i)
+    {
+        const auto child = validatedState.getChild (i);
+        if (auto* parameter = apvts->getParameter (child.getProperty ("id").toString()))
+        {
+            const auto plainValue = static_cast<float> (child.getProperty ("value").toString().getDoubleValue());
+            parameter->setValueNotifyingHost (parameter->getNormalisableRange().convertTo0to1 (plainValue));
+        }
+    }
+    applyingPreset.store (false, std::memory_order_relaxed);
+    setChoiceParameter (ParameterIDs::preset, 0);
+    return true;
+}
+
+bool MetalEQAudioProcessor::loadUserPreset (const juce::String& name, juce::String& error)
+{
+    error.clear();
+    if (! isSafePresetName (name) || metaleq::findPresetByName (name.toRawUTF8()) >= 0)
+    {
+        error = "That is not a valid user preset name.";
+        return false;
+    }
+    const auto file = getUserPresetFile (name);
+    if (! file.existsAsFile() || file.getSize() <= 0 || file.getSize() > 256 * 1024)
+    {
+        error = "The user preset file is missing or too large.";
+        return false;
+    }
+    const auto xml = juce::XmlDocument::parse (file);
+    if (xml == nullptr)
+    {
+        error = "The user preset file is damaged or is not valid XML.";
+        return false;
+    }
+    const auto root = juce::ValueTree::fromXml (*xml);
+    if (! root.hasType ("MetalEQUserPreset") || root.getProperty ("schemaVersion").toString() != "1"
+        || ! root.getProperty ("name").toString().equalsIgnoreCase (name))
+    {
+        error = "This preset was created by an incompatible version or has invalid metadata.";
+        return false;
+    }
+    if (! applySoundParameterState (root.getChildWithName ("PARAMS"), error))
+        return false;
+
+    rememberCurrentAsLoadedPreset (root.getProperty ("name").toString(), true);
+    return true;
+}
+
+bool MetalEQAudioProcessor::renameUserPreset (const juce::String& oldRaw, const juce::String& newRaw, juce::String& error)
+{
+    error.clear();
+    const auto oldName = oldRaw.trim();
+    const auto newName = newRaw.trim();
+    if (! isSafePresetName (oldName) || ! isSafePresetName (newName)
+        || metaleq::findPresetByName (oldName.toRawUTF8()) >= 0
+        || metaleq::findPresetByName (newName.toRawUTF8()) >= 0)
+    {
+        error = "Factory presets are read-only. Enter a valid user-preset name.";
+        return false;
+    }
+    for (const auto& existing : getUserPresetNames())
+        if (existing.equalsIgnoreCase (newName) && ! existing.equalsIgnoreCase (oldName))
+        {
+            error = "A preset with that name already exists.";
+            return false;
+        }
+    const auto oldFile = getUserPresetFile (oldName);
+    if (! oldFile.existsAsFile())
+    {
+        error = "The selected user preset no longer exists.";
+        return false;
+    }
+    const auto xml = juce::XmlDocument::parse (oldFile);
+    if (xml == nullptr)
+    {
+        error = "The selected preset file is damaged.";
+        return false;
+    }
+    auto tree = juce::ValueTree::fromXml (*xml);
+    if (! tree.hasType ("MetalEQUserPreset") || tree.getProperty ("schemaVersion").toString() != "1")
+    {
+        error = "The selected file is not a compatible user preset.";
+        return false;
+    }
+    tree.setProperty ("name", newName, nullptr);
+    const auto newFile = getUserPresetFile (newName);
+    const auto newXml = tree.createXml();
+    if (newFile.existsAsFile() || newXml == nullptr || ! newFile.replaceWithText (newXml->toString()))
+    {
+        error = "The renamed preset could not be written.";
+        return false;
+    }
+    if (! oldFile.deleteFile())
+    {
+        newFile.deleteFile();
+        error = "The old preset file could not be removed; rename was rolled back.";
+        return false;
+    }
+    if (loadedPresetIsUser && lastPresetName.equalsIgnoreCase (oldName))
+        lastPresetName = newName;
+    return true;
+}
+
+bool MetalEQAudioProcessor::deleteUserPreset (const juce::String& name, juce::String& error)
+{
+    error.clear();
+    if (! isSafePresetName (name) || metaleq::findPresetByName (name.toRawUTF8()) >= 0)
+    {
+        error = "Factory presets cannot be deleted.";
+        return false;
+    }
+    const auto file = getUserPresetFile (name);
+    if (! file.existsAsFile() || ! file.deleteFile())
+    {
+        error = "The user preset could not be deleted.";
+        return false;
+    }
+    if (loadedPresetIsUser && lastPresetName.equalsIgnoreCase (name))
+    {
+        loadedPresetIsUser = false;
+        lastPresetName = "Custom";
+        setChoiceParameter (ParameterIDs::preset, 0);
+    }
+    return true;
+}
+
+void MetalEQAudioProcessor::revertToLoadedPreset()
+{
+    juce::String error;
+    if (applySoundParameterState (loadedPresetState, error))
+    {
+        const int factory = loadedPresetIsUser ? -1 : metaleq::findPresetByName (lastPresetName.toRawUTF8());
+        setChoiceParameter (ParameterIDs::preset, factory >= 0 ? factory + 1 : 0);
+    }
 }
 
 void MetalEQAudioProcessor::startAnalyzerCapture (int targetProfile)

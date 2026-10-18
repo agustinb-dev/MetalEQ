@@ -26,7 +26,7 @@ inline constexpr std::array<const char*, 8> idStrings =
 
 //==============================================================================
 inline constexpr double hpFreqMin = 20.0,   hpFreqMax = 180.0,   hpFreqDefault = 80.0;
-inline constexpr double lpFreqMin = 5000.0, lpFreqMax = 20000.0, lpFreqDefault = 12000.0;
+inline constexpr double lpFreqMin = 3000.0, lpFreqMax = 20000.0, lpFreqDefault = 12000.0;
 inline constexpr double lsFreqMin = 30.0,   lsFreqMax = 400.0,   lsFreqDefault = 140.0;
 inline constexpr double hsFreqMin = 3000.0, hsFreqMax = 16000.0, hsFreqDefault = 7000.0;
 

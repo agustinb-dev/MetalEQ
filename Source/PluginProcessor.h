@@ -88,6 +88,7 @@ public:
         static const char* hpSlope;
         static const char* lpFreq;
         static const char* lpSlope;
+        static const char* lpOn;
         static const char* lsFreq;
         static const char* lsGain;
         static const char* hsFreq;
@@ -96,6 +97,7 @@ public:
         static const char* bandGain[metaleq::kNumBands];
         static const char* bandQ[metaleq::kNumBands];
         static const char* bandOn[metaleq::kNumBands];
+        static const char* shapeOn[6];
         static const char* trim;
         static const char* tight;
         static const char* body;
@@ -119,6 +121,8 @@ public:
 
     /** Applies a one-click tonal shape by index. */
     void applyShape (int index);
+    void setShapeEnabled (int index, bool enabled);
+    void setLowPassEnabled (bool enabled);
 
     /** Back to the fully neutral state, macros included. */
     void resetToNeutral();
@@ -137,6 +141,8 @@ public:
         int                     presetIndex = 0;
         bool                    abCompare  = false;
         bool                    bypassed   = false;
+        bool                    presetDirty = false;
+        bool                    userPreset = false;
     };
 
     /** Snapshot of everything the GUI needs. Reads atomics only, so it is safe
@@ -151,6 +157,7 @@ public:
 
     /** Peak level of the last processed block, for the GUI meter. */
     float getPeakLevel (int channel) const noexcept;
+    float getInputPeakLevel (int channel) const noexcept;
 
     void setMeteringEnabled (bool shouldBeEnabled) noexcept
         {
@@ -159,6 +166,18 @@ public:
 
     /** True when the last recalled preset has been modified by the user. */
     bool isPresetModified() const;
+
+    // User-preset file operations are message-thread-only. They intentionally
+    // store EQ parameters only; analyzer recordings and UI/runtime data never
+    // enter the preset file.
+    juce::StringArray getUserPresetNames() const;
+    bool saveUserPreset (const juce::String& name, bool overwrite, juce::String& error);
+    bool loadUserPreset (const juce::String& name, juce::String& error);
+    bool renameUserPreset (const juce::String& oldName, const juce::String& newName, juce::String& error);
+    bool deleteUserPreset (const juce::String& name, juce::String& error);
+    void revertToLoadedPreset();
+    bool isLoadedPresetUser() const noexcept { return loadedPresetIsUser; }
+    juce::File getUserPresetDirectory() const;
 
     /** Frequency response in dB at `freq` for the current settings. */
     double getResponseDb (double freq) const;
@@ -193,12 +212,19 @@ private:
     void applyMacroSettings (const metaleq::MacroSettings& macros);
     void setFloatParameter (const char* id, double plainValue);
     void setChoiceParameter (const char* id, int index);
+    juce::ValueTree getSoundParameterState() const;
+    bool applySoundParameterState (const juce::ValueTree& state, juce::String& error);
+    void rememberCurrentAsLoadedPreset (const juce::String& name, bool isUser);
+    juce::File getUserPresetFile (const juce::String& name) const;
+    static bool isSafePresetName (const juce::String& name);
 
     //==============================================================================
     juce::AudioProcessorValueTreeState::ParameterLayout parameterLayout;
 
     std::unique_ptr<juce::AudioProcessorValueTreeState> apvts;
     juce::String lastPresetName { "Custom" };
+    juce::ValueTree loadedPresetState;
+    bool loadedPresetIsUser = false;
 
     /** Guards against reacting to the parameter writes we make ourselves. */
     std::atomic<bool> applyingPreset { false };
@@ -227,6 +253,7 @@ private:
     metaleq::EqEngine engine;
 
     std::array<std::atomic<float>, metaleq::kMaxChannels> peakLevels {};
+    std::array<std::atomic<float>, metaleq::kMaxChannels> inputPeakLevels {};
 
     //==============================================================================
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MetalEQAudioProcessor)

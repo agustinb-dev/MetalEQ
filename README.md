@@ -18,9 +18,12 @@ Build Debug with `cmake --build build --config Debug`.
 
 ## Controls
 
-- **Factory presets:** the complete preset table from the DSP source, plus Custom.
-- **Tone shapes:** Tighten, Scoop, Mid Punch, Pick Attack, Fizz Tamer, Brighten, and Reset. Each applies editable EQ settings.
+- **Factory and user presets:** all factory profiles are available in the selector. Use Save As to create a user preset; Save on a user preset asks before overwriting. Rename and Delete operate only on user presets. Revert restores the last loaded preset, and the dirty marker indicates edits since loading or saving.
+- **User preset storage:** files are stored under `%APPDATA%\MetalEQ\Presets` in a versioned `.metaleq` format. Preset files exclude analyzer captures. DAW project state is stored independently, so saved sessions still restore when preset files are moved or deleted.
+- **Tone shapes:** Tighten, Scoop, Mid Punch, Pick Attack, Fizz Tamer, and Brighten are independent toggles. Enabling one adds its EQ contribution; disabling it removes only that contribution, preserving macros and detailed EQ edits. Reset EQ is a separate action.
 - **Macros:** Tight, Body, Scoop, Bite, Fizz Cut, and Output Trim.
+- **Filters and fine EQ:** high-pass and low-pass each have enable, cutoff, and slope controls. The low-pass is a conventional high-cut used to tame excessive top-end fizz; it is not a noise gate. Expand Fine EQ to edit the five bell bands' frequency, gain, Q, and enable state.
+- **Graph:** logarithmic frequency scale with guitar-focused landmarks, adaptive labels, gain grid, active filter cutoffs, and the combined response. Input and output peak meters are polled by the UI.
 - **Bypass and A/B:** bypass leaves the signal untouched; A/B compares the EQ with a neutral curve while preserving output trim.
 - **Analyzer:** choose a metalcore or thrash target, capture while the host sends audio, inspect the suggested curve, adjust its amount, and apply it to the five parametric bands. It compares the average captured spectrum with the selected target; it does not identify the source genre.
 
@@ -28,7 +31,14 @@ The audio callback uses preallocated capture storage and fixed-size DSP state. F
 
 ## Verification
 
-Release and Debug VST3 builds were verified with CMake. The project has no automated test target. REAPER and pluginval were unavailable in the build environment, so host validation remains to be done.
+Build and run the dependency-light DSP and state/preset tests with:
+
+```powershell
+cmake --build build --config Release
+ctest --test-dir build -C Release --output-on-failure
+```
+
+The tests cover logarithmic graph mapping and label density, shape composition and removal, low-pass bypass/slopes at representative sample rates, factory preset validity, user-preset save/load/overwrite/rename/delete, and DAW state round-trip. REAPER and pluginval were unavailable in the build environment; scan/instantiation, GUI interaction, host automation during playback, audible transition quality, and in-host project recall still require validation in REAPER.
 
 ## License
 

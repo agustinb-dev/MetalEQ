@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.22)
 project(MetalEQ VERSION 0.0.1)
 
+include(CTest)
+
 # Options to speed up JUCE build
 set(JUCE_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(JUCE_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
@@ -63,3 +65,27 @@ target_compile_definitions(${PROJECT_NAME}
         JUCE_USE_CURL=0
         JUCE_VST3_CAN_REPLACE_VST2=0
 )
+
+if(BUILD_TESTING)
+  add_executable(MetalEQ_DspTests
+      Tests/MetalEqTests.cpp
+      Source/dsp/MetalEqPresets.cpp
+  )
+  target_compile_features(MetalEQ_DspTests PRIVATE cxx_std_17)
+  target_include_directories(MetalEQ_DspTests PRIVATE Source)
+  if(MSVC)
+    target_compile_options(MetalEQ_DspTests PRIVATE /W4 /permissive-)
+  endif()
+  add_test(NAME MetalEQ_DspTests COMMAND MetalEQ_DspTests)
+
+  add_executable(MetalEQ_StateTests Tests/MetalEqStateTests.cpp)
+  target_compile_features(MetalEQ_StateTests PRIVATE cxx_std_17)
+  target_include_directories(MetalEQ_StateTests PRIVATE Source)
+  target_link_libraries(MetalEQ_StateTests PRIVATE
+      ${PROJECT_NAME}
+      juce::juce_audio_utils
+      juce::juce_dsp
+      juce::juce_recommended_config_flags
+  )
+  add_test(NAME MetalEQ_StateTests COMMAND MetalEQ_StateTests)
+endif()

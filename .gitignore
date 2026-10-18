@@ -1,0 +1,37 @@
+# Build output
+build/
+cmake-build-*/
+
+# Visual Studio / MSBuild
+.vs/
+*.vcxproj.user
+*.sln
+*.opensdf
+*.sdf
+*.VC.db
+*.VC.opendb
+*.aps
+
+# JUCE is fetched via CMake FetchContent
+_build/
+JuceLibraryCode/
+
+# Build artefacts
+*.vst3
+*.audioplug
+*.aaxplugin
+*.dll
+*.so
+*.dylib
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.obj
+
+# User / OS files
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

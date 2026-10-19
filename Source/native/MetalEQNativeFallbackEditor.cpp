@@ -160,7 +160,7 @@ MetalEQNativeFallbackEditor::MetalEQNativeFallbackEditor (MetalEQAudioProcessor&
     presetLabel.setJustificationType (juce::Justification::centredLeft);
     presetStateLabel.setJustificationType (juce::Justification::centred);
 
-    presetCombo.setTooltip ("Factory presets are read-only. User presets are stored in your Windows app-data folder.");
+    presetCombo.setTooltip ("Factory presets are read-only. User presets are stored in your application data folder.");
     presetCombo.addItem ("Custom / Neutral", 1);
     for (int i = 0; i < metaleq::getNumPresets(); ++i)
         presetCombo.addItem (metaleq::getPreset (i).name, i + 2);

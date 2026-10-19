@@ -1,0 +1,85 @@
+name: Linux VST3
+
+on:
+  push:
+    branches: [main, webview-ui-migration]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build VST3 (x86_64 Linux)
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # WebKitGTK is required by JUCE's WebBrowserComponent on Linux. The
+      # -dev packages are what actually matters; the rest are JUCE's own Linux
+      # dependencies plus the X11/ALSA/FreeType headers it expects.
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            ninja-build \
+            pkg-config \
+            git \
+            ca-certificates \
+            libasound2-dev \
+            libfreetype6-dev \
+            libx11-dev \
+            libxcomposite-dev \
+            libxcursor-dev \
+            libxext-dev \
+            libxinerama-dev \
+            libxrandr-dev \
+            libxrender-dev \
+            libwebkit2gtk-4.1-dev
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: Gui/package-lock.json
+
+      # The React UI is embedded in the binary as a zip via juce_add_binary_data,
+      # so it has to be built first. CMake invokes npm itself when it can find
+      # it, but installing here keeps the failure (if any) in one clear step.
+      - name: Build WebView UI
+        working-directory: Gui
+        run: |
+          npm ci
+          npm run build
+
+      - name: Configure
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Collect VST3 bundle
+        run: |
+          mkdir -p dist
+          # juce_add_plugin produces a self-contained .vst3 directory, which is
+          # what hosts expect to drop into their VST3 folder.
+          cp -r build/MetalEQ_artefacts/Release/MetalEQ.vst3 dist/
+          find dist -type f | sort
+
+      - name: Package
+        run: tar -czf MetalEQ-vst3-linux-x86_64.tar.gz -C dist MetalEQ.vst3
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MetalEQ-vst3-linux-x86_64
+          path: |
+            MetalEQ-vst3-linux-x86_64.tar.gz
+            dist/MetalEQ.vst3
+          if-no-files-found: error

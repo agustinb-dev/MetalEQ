@@ -28,10 +28,18 @@ endif()
 set(JUCE_MODULE_PATH "${juce_SOURCE_DIR}/modules" CACHE PATH "JUCE modules directory")
 
 # ---------------------------------------------------------------------------
-# WebView2 SDK (Windows) — required for juce::WebBrowserComponent on Windows.
+# WebView2 SDK (Windows only) — required for juce::WebBrowserComponent on
+# Windows. On Linux/macOS the editor uses the WebKit backend instead, which is
+# provided by the system (libwebkit2gtk-4.1-dev), so this whole block is
+# skipped.
+#
 # We download and extract the NuGet package at configure time so that the
 # static loader (WebView2LoaderStatic.lib) is available without the nuget CLI.
 # ---------------------------------------------------------------------------
+set(METALEQ_WEBVIEW2_DIR "")
+set(METALEQ_WEBVIEW2_INCLUDE_DIR "")
+set(METALEQ_WEBVIEW2_LOADER_LIB "")
+if(WIN32)
 set(METALEQ_WEBVIEW2_VERSION "1.0.3485.44" CACHE STRING "WebView2 SDK version")
 # JUCE's FindWebView2.cmake globs for *Microsoft.Web.WebView2* under this dir and
 # expects build/native/{include,lib,x64} inside it (flat nupkg layout).
@@ -68,6 +76,7 @@ endif()
 # CreateCoreWebView2EnvironmentWithOptions.
 set(METALEQ_WEBVIEW2_LOADER_LIB
     "${METALEQ_WEBVIEW2_DIR}/build/native/${METALEQ_WEBVIEW2_ARCH}/WebView2LoaderStatic.lib")
+endif() # WIN32
 
 # ---------------------------------------------------------------------------
 # WebView UI assets (React + TypeScript via Vite).
@@ -123,16 +132,25 @@ if(METALEQ_NPM_EXECUTABLE AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Gui/package.js
     # juceaide's "binarydata" mode takes: <namespace> <headerName> <outFolder>
     # <fileList.txt>, where <fileList.txt> is a newline-delimited list of input
     # paths. It emits <outFolder>/BinaryData.h and <outFolder>/BinaryData<N>.cpp.
+    #
+    # The optional --windows flag only selects CRLF vs LF line endings in the
+    # generated C++ (see juceaide/Main.cpp). There is no --linux/--osx
+    # equivalent, so on other platforms we simply omit it and get LF.
     set(METALEQ_UI_JUCELIB "${CMAKE_CURRENT_BINARY_DIR}/juce_binarydata_metaleq_ui_zip/JuceLibraryCode")
     set(METALEQ_UI_BINDATA_CPP "${METALEQ_UI_JUCELIB}/BinaryData1.cpp")
     set(METALEQ_UI_BINDATA_H "${METALEQ_UI_JUCELIB}/BinaryData.h")
     set(METALEQ_UI_FILELIST "${CMAKE_CURRENT_BINARY_DIR}/metaleq_ui_filelist.txt")
 
+    set(METALEQ_UI_JUCELIB_LINE_ENDING_FLAG "")
+    if(WIN32)
+        set(METALEQ_UI_JUCELIB_LINE_ENDING_FLAG --windows)
+    endif()
+
     add_custom_command(
         OUTPUT "${METALEQ_UI_BINDATA_CPP}" "${METALEQ_UI_BINDATA_H}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${METALEQ_UI_JUCELIB}"
         COMMAND "${CMAKE_COMMAND}" -E echo "${METALEQ_UI_ZIP}" > "${METALEQ_UI_FILELIST}"
-        COMMAND $<TARGET_FILE:juceaide> binarydata BinaryData BinaryData.h "${METALEQ_UI_JUCELIB}" "${METALEQ_UI_FILELIST}" --windows
+        COMMAND $<TARGET_FILE:juceaide> binarydata BinaryData BinaryData.h "${METALEQ_UI_JUCELIB}" "${METALEQ_UI_FILELIST}" ${METALEQ_UI_JUCELIB_LINE_ENDING_FLAG}
         DEPENDS "${METALEQ_UI_ZIP}" juceaide
         COMMENT "MetalEQ: generating BinaryData from metaleq_ui.zip"
         VERBATIM
@@ -179,8 +197,11 @@ endif()
 target_include_directories(${PROJECT_NAME}
     PRIVATE
         "${juce_SOURCE_DIR}"
-        "${METALEQ_WEBVIEW2_INCLUDE_DIR}"
 )
+
+if(METALEQ_WEBVIEW2_INCLUDE_DIR)
+    target_include_directories(${PROJECT_NAME} PRIVATE "${METALEQ_WEBVIEW2_INCLUDE_DIR}")
+endif()
 
 target_link_libraries(${PROJECT_NAME}
     PRIVATE
@@ -202,10 +223,16 @@ target_compile_definitions(${PROJECT_NAME}
         JUCE_WEB_BROWSER=1
         JUCE_USE_CURL=0
         JUCE_VST3_CAN_REPLACE_VST2=0
-        JUCE_USE_WIN_WEBVIEW2_WITH_STATIC_LINKING=1
         METALEQ_UI_EMBEDDED=$<BOOL:${METALEQ_UI_EMBEDDED}>
         $<$<BOOL:${METALEQ_UI_DEV_SERVER}>:METALEQ_UI_DEV_SERVER=1>
 )
+
+# The static WebView2 loader is Windows-only; asking JUCE to use it on other
+# platforms produces a confusing failure deep inside the WebKit backend.
+if(WIN32)
+    target_compile_definitions(${PROJECT_NAME}
+        PRIVATE JUCE_USE_WIN_WEBVIEW2_WITH_STATIC_LINKING=1)
+endif()
 
 if(BUILD_TESTING)
   add_executable(MetalEQ_DspTests
@@ -244,10 +271,10 @@ if(BUILD_TESTING)
     target_include_directories(MetalEQ_UiBridgeTests PRIVATE "${METALEQ_UI_JUCELIB}")
   endif()
 
-  target_include_directories(MetalEQ_UiBridgeTests PRIVATE
-      Source
-      "${METALEQ_WEBVIEW2_INCLUDE_DIR}"
-  )
+  target_include_directories(MetalEQ_UiBridgeTests PRIVATE Source)
+  if(METALEQ_WEBVIEW2_INCLUDE_DIR)
+    target_include_directories(MetalEQ_UiBridgeTests PRIVATE "${METALEQ_WEBVIEW2_INCLUDE_DIR}")
+  endif()
   if(MSVC)
     target_compile_options(MetalEQ_UiBridgeTests PRIVATE /W4 /permissive-)
   endif()

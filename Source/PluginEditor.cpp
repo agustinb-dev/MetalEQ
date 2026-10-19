@@ -13,6 +13,26 @@ namespace
     const juce::Colour background { 0xff111419 };
 }
 
+// The web UI runs on WebView2 on Windows and on the system WebKitGTK engine
+// everywhere else. The two backends expose different option structs, so the
+// platform-specific parts are assembled by a helper that returns a
+// fully-built Options object.
+static juce::WebBrowserComponent::Options makeWebUiOptions()
+{
+   #if defined (_WIN32) || defined (_WIN64)
+    return juce::WebBrowserComponent::Options {}
+                .withBackend (juce::WebBrowserComponent::Options::Backend::webview2)
+                .withWinWebView2Options (
+                    juce::WebBrowserComponent::Options::WinWebView2 {}
+                        .withUserDataFolder (juce::File::getSpecialLocation (
+                            juce::File::SpecialLocationType::tempDirectory)
+                                                .getChildFile ("MetalEQ-WebView2")));
+   #else
+    return juce::WebBrowserComponent::Options {}
+                .withBackend (juce::WebBrowserComponent::Options::Backend::webkit);
+   #endif
+}
+
 //==============================================================================
 bool MetalEQAudioProcessorEditor::UiBrowser::pageAboutToLoad (const juce::String& newURL)
 {
@@ -33,13 +53,7 @@ bool MetalEQAudioProcessorEditor::UiBrowser::pageAboutToLoad (const juce::String
 //==============================================================================
 MetalEQAudioProcessorEditor::MetalEQAudioProcessorEditor (MetalEQAudioProcessor& p)
     : AudioProcessorEditor (&p), processorRef (p),
-      webComponent (juce::WebBrowserComponent::Options {}
-                        .withBackend (juce::WebBrowserComponent::Options::Backend::webview2)
-                        .withWinWebView2Options (
-                            juce::WebBrowserComponent::Options::WinWebView2 {}
-                                .withUserDataFolder (juce::File::getSpecialLocation (
-                                    juce::File::SpecialLocationType::tempDirectory)
-                                                        .getChildFile ("MetalEQ-WebView2")))
+      webComponent (makeWebUiOptions()
                         .withNativeIntegrationEnabled()
                         .withOptionsFrom (bridge)
                         .withResourceProvider (

@@ -29,6 +29,10 @@ JuceLibraryCode/
 *.lib
 *.obj
 
+# WebView UI frontend (React + TypeScript via Vite)
+Gui/node_modules/
+Gui/dist/
+
 # User / OS files
 *.log
 .DS_Store

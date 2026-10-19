@@ -1,10 +1,35 @@
+/*
+    MetalEQ - WebView-based plugin editor.
+
+    The editor hosts the React front-end (Gui/, packaged into the binary via
+    CMake + juce_add_binary_data) in a juce::WebBrowserComponent and talks to
+    it through metaleq::ui::UiBridge (protocol documented in MetalEqUiBridge.h).
+
+    Responsibilities kept on the native side:
+    * the audio-thread-free tick timer (UiBridge::tick at 20 Hz),
+    * loading the page from the embedded archive and refusing navigation
+      anywhere else,
+    * a watchdog: if the page never calls uiReady() (broken WebView2 runtime,
+      missing assets) the editor swaps in the preserved native UI
+      (MetalEQNativeFallbackEditor) so the plugin always remains usable,
+    * resizing the host window when the front-end opens the Fine EQ panel.
+
+    The native fallback runs as a child component; its setSize() calls are
+    propagated to this top-level editor via a ComponentListener so window
+    resize semantics match the original editor exactly.
+*/
+
 #pragma once
 
 #include <juce_audio_utils/juce_audio_utils.h>
+
 #include "PluginProcessor.h"
+#include "native/MetalEQNativeFallbackEditor.h"
+#include "ui/MetalEqUiBridge.h"
 
 class MetalEQAudioProcessorEditor final : public juce::AudioProcessorEditor,
-                                          private juce::Timer
+                                          private juce::Timer,
+                                          private juce::ComponentListener
 {
 public:
     explicit MetalEQAudioProcessorEditor (MetalEQAudioProcessor&);
@@ -13,72 +38,51 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
+    /** Host-drag support: JUCE hosts call this while a resize is in flight. */
+    void parentHierarchyChanged() override;
+    void visibilityChanged() override;
+
 private:
-    class EQGraph final : public juce::Component
+    //==========================================================================
+    /** WebBrowserComponent restricted to our own pages (see pageAboutToLoad). */
+    class UiBrowser final : public juce::WebBrowserComponent
     {
     public:
-        explicit EQGraph (MetalEQAudioProcessor& p) : processor (p) {}
-        void paint (juce::Graphics&) override;
-        void setSuggestion (float amount, bool visible);
-    private:
-        MetalEQAudioProcessor& processor;
-        float suggestionAmount = 0.0f;
-        bool showSuggestion = false;
+        using WebBrowserComponent::WebBrowserComponent;
+
+        bool pageAboutToLoad (const juce::String& newURL) override;
     };
 
     void timerCallback() override;
-    void updateAnalyzerUi();
-    void applyShape (int shapeIndex);
-    void updateAdvancedVisibility();
-    void refreshPresetList();
-    void saveAsPreset();
-    void savePresetNamed (const juce::String& name, bool overwrite);
-    void renameSelectedPreset();
-    void deleteSelectedPreset();
-    void showPresetManagementMenu();
-    void showPresetError (const juce::String& message);
-    void setParameterPlainValue (const char* id, float value);
 
-    MetalEQAudioProcessor& audioProcessor;
-    EQGraph eqGraph;
+    // ComponentListener for the nested native fallback editor: forwards its
+    // resize (FINE EQ expand) to this top-level editor.
+    void componentMovedOrResized (juce::Component& component, bool, bool) override;
+    void componentParentHierarchyChanged (juce::Component& component) override;
 
-    juce::ComboBox presetCombo, targetCombo, lpSlopeCombo;
-    juce::ComboBox hpSlopeCombo;
-    juce::Label presetLabel, targetLabel, lpLabel, hpLabel, presetStateLabel;
-    juce::ToggleButton bypassButton { "Bypass" }, abButton { "A/B" }, lpToggle { "Enabled" };
-    juce::ToggleButton tightenButton { "TIGHTEN" }, scoopButton { "SCOOP" },
-        midPunchButton { "MID PUNCH" }, pickAttackButton { "PICK ATTACK" },
-        fizzButton { "FIZZ TAMER" }, brightenButton { "BRIGHTEN" };
-    juce::TextButton resetButton { "RESET EQ" }, advancedButton { "FINE EQ +" },
-        saveButton { "Save" }, managePresetsButton { "Manage" };
+    void buildWebview();
+    void attachNativeFallback();
+    void detachNativeFallback();
+    void updateCollapsedHeight (bool expanded);
 
-    juce::Slider tightSlider, bodySlider, scoopSlider, biteSlider, fizzSlider, trimSlider,
-        hpFreqSlider, lpFreqSlider;
-    juce::Label tightLabel, bodyLabel, scoopMacroLabel, biteLabel, fizzLabel, trimLabel, lpFreqLabel, hpFreqLabel;
-    std::array<juce::Slider, metaleq::kNumBands> bandFreqSliders, bandGainSliders, bandQSliders;
-    std::array<juce::ToggleButton, metaleq::kNumBands> bandEnabledButtons;
-    std::array<juce::Label, metaleq::kNumBands> bandLabels;
-    std::array<juce::Label, metaleq::kNumBands> bandFreqLabels, bandGainLabels, bandQLabels;
-    std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>, metaleq::kNumBands> bandFreqAttachments,
-        bandGainAttachments, bandQAttachments;
-    std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>, metaleq::kNumBands> bandEnabledAttachments;
-    bool advancedVisible = false;
-    juce::TextButton captureButton { "Capture 8 seconds" }, applyButton { "Apply suggestion" };
-    juce::Slider amountSlider;
-    juce::Label amountLabel, analyzerStatusLabel, analyzerDisclaimer;
-    juce::StringArray userPresetNames;
-    int currentUserPresetItem = 0;
-    float lastInputPeak = 0.0f, lastOutputPeak = 0.0f;
-    juce::Rectangle<int> inputMeterBounds, outputMeterBounds;
+    MetalEQAudioProcessor& processorRef;
 
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> tightAttachment,
-        bodyAttachment, scoopAttachment, biteAttachment, fizzAttachment, trimAttachment, hpFreqAttachment, lpFreqAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bypassAttachment,
-        abAttachment, lpAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> hpSlopeAttachment;
-    std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>, 6> shapeAttachments;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> lpSlopeAttachment;
+    metaleq::ui::UiBridge bridge { processorRef };
+
+    UiBrowser webComponent;
+    std::unique_ptr<MetalEQNativeFallbackEditor> fallbackEditor;
+
+    // Fine EQ expansion, mirroring the native editor's sizing rules.
     int collapsedHeight = 900;
+    bool fineExpanded = false;
+    bool fallbackActive = false;
+
+    // uiReady watchdog: if the page has not checked in after a few seconds
+    // we assume it cannot run and switch to the native fallback.
+    static constexpr int watchdogTicksLimit = 100; // 5 s at 20 Hz
+    int watchdogTicks = 0;
+
+    bool wasVisible = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MetalEQAudioProcessorEditor)
 };

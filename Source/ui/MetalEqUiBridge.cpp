@@ -1,0 +1,612 @@
+#include "MetalEqUiBridge.h"
+
+#include <cmath>
+
+namespace metaleq::ui
+{
+
+namespace
+{
+    bool isChoiceParameter (const juce::AudioProcessorParameter* p)
+    {
+        return dynamic_cast<const juce::AudioParameterChoice*> (p) != nullptr;
+    }
+
+    bool isBoolParameter (const juce::AudioProcessorParameter* p)
+    {
+        return dynamic_cast<const juce::AudioParameterBool*> (p) != nullptr;
+    }
+
+    juce::var numberOrNull (const juce::Array<juce::var>& args, size_t index)
+    {
+        if (index >= args.size())
+            return {};
+        const auto& v = args[index];
+        if (v.isInt() || v.isInt64() || v.isDouble())
+            return v;
+        return {};
+    }
+
+    bool nearlyEqual (double a, double b) noexcept
+    {
+        const double scale = juce::jmax (1.0, std::abs (b));
+        return std::abs (a - b) <= 1.0e-6 * scale;
+    }
+}
+
+//==============================================================================
+std::optional<double> validateParameterWrite (juce::AudioProcessorValueTreeState& apvts,
+                                              const juce::String& id,
+                                              const juce::var& value,
+                                              juce::String& error)
+{
+    auto* parameter = apvts.getParameter (id);
+
+    if (parameter == nullptr)
+    {
+        error = "Unknown parameter id: " + id;
+        return std::nullopt;
+    }
+
+    if (! (value.isInt() || value.isInt64() || value.isDouble()))
+    {
+        error = "Value for " + id + " must be a finite number.";
+        return std::nullopt;
+    }
+
+    const double plain = static_cast<double> (value);
+
+    if (! metaleq::isFiniteValue (plain))
+    {
+        error = "Value for " + id + " must be a finite number.";
+        return std::nullopt;
+    }
+
+    if (isBoolParameter (parameter))
+        return plain >= 0.5 ? 1.0 : 0.0;
+
+    if (isChoiceParameter (parameter))
+    {
+        const auto* choice = dynamic_cast<const juce::AudioParameterChoice*> (parameter);
+        const auto last = static_cast<double> (choice->choices.size() - 1);
+        return juce::jlimit (0.0, last, std::round (plain));
+    }
+
+    const auto& range = parameter->getNormalisableRange();
+    return juce::jlimit (static_cast<double> (range.start), static_cast<double> (range.end), plain);
+}
+
+//==============================================================================
+UiBridge::UiBridge (MetalEQAudioProcessor& p)
+    : processor (p)
+{
+    for (const auto& id : MetalEQAudioProcessor::ParameterIDs::allEqParameterIds())
+        lastSentValues.emplace_back (id, std::numeric_limits<double>::quiet_NaN());
+
+    // bypass and abCompare are part of the same diff stream.
+    lastSentValues.emplace_back (MetalEQAudioProcessor::ParameterIDs::bypass,
+                                 std::numeric_limits<double>::quiet_NaN());
+    lastSentValues.emplace_back (MetalEQAudioProcessor::ParameterIDs::abCompare,
+                                 std::numeric_limits<double>::quiet_NaN());
+
+    for (auto& g : lastSuggestion)
+        g = 0.0f;
+}
+
+UiBridge::~UiBridge() = default;
+
+juce::var UiBridge::okResult()
+{
+    auto* obj = new juce::DynamicObject();
+    obj->setProperty ("ok", true);
+    return juce::var (obj);
+}
+
+juce::var UiBridge::errorResult (const juce::String& message)
+{
+    auto* obj = new juce::DynamicObject();
+    obj->setProperty ("ok", false);
+    obj->setProperty ("error", message);
+    return juce::var (obj);
+}
+
+juce::WebBrowserComponent::Options UiBridge::addOptions (juce::WebBrowserComponent::Options options)
+{
+    auto* self = this;
+
+    return options
+        .withNativeFunction ("uiReady",
+            [self] (const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion complete)
+            {
+                complete (self->handleUiReady());
+            })
+        .withNativeFunction ("setParameter",
+            [self] (const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion complete)
+            {
+                complete (self->handleSetParameter (args));
+            })
+        .withNativeFunction ("applyPreset",
+            [self] (const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion complete)
+            {
+                complete (self->handleApplyPreset (args));
+            })
+        .withNativeFunction ("loadUserPreset",
+            [self] (const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion complete)
+            {
+                complete (self->handleLoadUserPreset (args));
+            })
+        .withNativeFunction ("saveUserPreset",
+            [self] (const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion complete)
+            {
+                complete (self->handleSaveUserPreset (args));
+            })
+        .withNativeFunction ("renameUserPreset",
+            [self] (const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion complete)
+            {
+                complete (self->handleRenameUserPreset (args));
+            })
+        .withNativeFunction ("deleteUserPreset",
+            [self] (const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion complete)
+            {
+                complete (self->handleDeleteUserPreset (args));
+            })
+        .withNativeFunction ("revertToPreset",
+            [self] (const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion complete)
+            {
+                complete (self->handleRevertToPreset());
+            })
+        .withNativeFunction ("resetToNeutral",
+            [self] (const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion complete)
+            {
+                complete (self->handleResetToNeutral());
+            })
+        .withNativeFunction ("startAnalyzerCapture",
+            [self] (const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion complete)
+            {
+                complete (self->handleStartAnalyzerCapture (args));
+            })
+        .withNativeFunction ("cancelAnalyzerCapture",
+            [self] (const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion complete)
+            {
+                complete (self->handleCancelAnalyzerCapture());
+            })
+        .withNativeFunction ("applyAnalyzerSuggestion",
+            [self] (const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion complete)
+            {
+                complete (self->handleApplyAnalyzerSuggestion (args));
+            })
+        .withNativeFunction ("getSuggestionCurve",
+            [self] (const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion complete)
+            {
+                complete (self->handleGetSuggestionCurve (args));
+            })
+        .withNativeFunction ("setEditorExpanded",
+            [self] (const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion complete)
+            {
+                complete (self->handleSetEditorExpanded (args));
+            });
+}
+
+//==============================================================================
+double UiBridge::readPlainValue (const char* paramId) const
+{
+    if (const auto* parameter = processor.getValueTreeState().getParameter (paramId))
+        return static_cast<double> (parameter->convertFrom0to1 (parameter->getValue()));
+    return 0.0;
+}
+
+juce::var UiBridge::handleUiReady()
+{
+    uiReady = true;
+    fullSyncRequired = true;
+    return buildFullSnapshot();
+}
+
+juce::var UiBridge::handleSetParameter (const juce::Array<juce::var>& args)
+{
+    if (args.size() != 2 || ! args[0].isString())
+        return errorResult ("setParameter expects (id, value).");
+
+    const auto id = args[0].toString();
+    juce::String error;
+    const auto validated = validateParameterWrite (processor.getValueTreeState(), id, numberOrNull (args, 1), error);
+
+    if (! validated.has_value())
+        return errorResult (error);
+
+    auto& apvts = processor.getValueTreeState();
+
+    if (auto* parameter = apvts.getParameter (id))
+    {
+        if (isChoiceParameter (parameter))
+        {
+            if (auto* choice = dynamic_cast<juce::AudioParameterChoice*> (parameter))
+            {
+                const auto index = static_cast<int> (*validated);
+                choice->setValueNotifyingHost (
+                    static_cast<float> (index) / static_cast<float> (juce::jmax (1, choice->choices.size() - 1)));
+            }
+        }
+        else
+        {
+            const auto& range = parameter->getNormalisableRange();
+            parameter->setValueNotifyingHost (range.convertTo0to1 (static_cast<float> (*validated)));
+        }
+    }
+
+    markCurveDirty();
+
+    // Side effect of MetalEQAudioProcessor::setLowPassEnabled: enabling the
+    // low-pass while the slope is Off jumps it to 24 dB/oct, so the filter is
+    // audible immediately instead of silently doing nothing. The web UI writes
+    // lpOn through setParameter (it has no direct processor access), so the
+    // bridge must reproduce the same behaviour as the native toggle.
+    if (id == MetalEQAudioProcessor::ParameterIDs::lpOn && *validated >= 0.5)
+    {
+        if (auto* slopeParameter = dynamic_cast<juce::AudioParameterChoice*> (
+                apvts.getParameter (MetalEQAudioProcessor::ParameterIDs::lpSlope)))
+        {
+            const auto slopeIndex = static_cast<int> (slopeParameter->getIndex());
+            if (slopeIndex < 1)
+                slopeParameter->setValueNotifyingHost (
+                    2.0 / static_cast<double> (juce::jmax (1, slopeParameter->choices.size() - 1)));
+        }
+    }
+
+    auto* obj = new juce::DynamicObject();
+    obj->setProperty ("ok", true);
+    obj->setProperty ("value", readPlainValue (id.toRawUTF8()));
+    return juce::var (obj);
+}
+
+juce::var UiBridge::handleApplyPreset (const juce::Array<juce::var>& args)
+{
+    const auto indexVar = numberOrNull (args, 0);
+    if (indexVar.isVoid())
+        return errorResult ("applyPreset expects a preset index.");
+
+    processor.applyPreset (static_cast<int> (static_cast<double> (indexVar)));
+    markCurveDirty();
+    markUserPresetsChanged();
+    return okResult();
+}
+
+juce::var UiBridge::handleLoadUserPreset (const juce::Array<juce::var>& args)
+{
+    if (args.size() < 1 || ! args[0].isString())
+        return errorResult ("loadUserPreset expects a preset name.");
+
+    juce::String error;
+    if (! processor.loadUserPreset (args[0].toString(), error))
+        return errorResult (error);
+
+    markCurveDirty();
+    return okResult();
+}
+
+juce::var UiBridge::handleSaveUserPreset (const juce::Array<juce::var>& args)
+{
+    if (args.size() < 1 || ! args[0].isString())
+        return errorResult ("saveUserPreset expects (name, overwrite).");
+
+    const bool overwrite = args.size() > 1 && static_cast<bool> (static_cast<double> (args[1]));
+    juce::String error;
+
+    if (! processor.saveUserPreset (args[0].toString(), overwrite, error))
+        return errorResult (error);
+
+    markUserPresetsChanged();
+    return okResult();
+}
+
+juce::var UiBridge::handleRenameUserPreset (const juce::Array<juce::var>& args)
+{
+    if (args.size() < 2 || ! args[0].isString() || ! args[1].isString())
+        return errorResult ("renameUserPreset expects (oldName, newName).");
+
+    juce::String error;
+    if (! processor.renameUserPreset (args[0].toString(), args[1].toString(), error))
+        return errorResult (error);
+
+    markUserPresetsChanged();
+    return okResult();
+}
+
+juce::var UiBridge::handleDeleteUserPreset (const juce::Array<juce::var>& args)
+{
+    if (args.size() < 1 || ! args[0].isString())
+        return errorResult ("deleteUserPreset expects a preset name.");
+
+    juce::String error;
+    if (! processor.deleteUserPreset (args[0].toString(), error))
+        return errorResult (error);
+
+    markUserPresetsChanged();
+    return okResult();
+}
+
+juce::var UiBridge::handleRevertToPreset()
+{
+    processor.revertToLoadedPreset();
+    markCurveDirty();
+    return okResult();
+}
+
+juce::var UiBridge::handleResetToNeutral()
+{
+    processor.resetToNeutral();
+    markCurveDirty();
+    return okResult();
+}
+
+juce::var UiBridge::handleStartAnalyzerCapture (const juce::Array<juce::var>& args)
+{
+    const auto profile = numberOrNull (args, 0);
+    if (profile.isVoid())
+        return errorResult ("startAnalyzerCapture expects a target profile index.");
+
+    processor.startAnalyzerCapture (juce::jlimit (0, 3, static_cast<int> (static_cast<double> (profile))));
+    return okResult();
+}
+
+juce::var UiBridge::handleCancelAnalyzerCapture()
+{
+    processor.cancelAnalyzerCapture();
+    return okResult();
+}
+
+juce::var UiBridge::handleApplyAnalyzerSuggestion (const juce::Array<juce::var>& args)
+{
+    const auto amount = numberOrNull (args, 0);
+    if (amount.isVoid())
+        return errorResult ("applyAnalyzerSuggestion expects an amount in 0..1.");
+
+    processor.applyAnalyzerSuggestion (static_cast<float> (juce::jlimit (0.0, 1.0, static_cast<double> (amount))));
+    markCurveDirty();
+    return okResult();
+}
+
+juce::var UiBridge::handleGetSuggestionCurve (const juce::Array<juce::var>& args)
+{
+    const auto amount = numberOrNull (args, 0);
+    if (amount.isVoid())
+        return errorResult ("getSuggestionCurve expects an amount in 0..1.");
+
+    const auto clamped = static_cast<float> (juce::jlimit (0.0, 1.0, static_cast<double> (amount)));
+    juce::Array<juce::var> curve;
+
+    for (int i = 0; i < numCurvePoints; ++i)
+    {
+        const double unit = static_cast<double> (i) / (numCurvePoints - 1);
+        const double freq = metaleq::kGraphMinFreq
+                          * std::pow (metaleq::kGraphMaxFreq / metaleq::kGraphMinFreq, unit);
+        curve.add (processor.getAnalyzerResponseDb (freq, clamped));
+    }
+
+    auto* obj = new juce::DynamicObject();
+    obj->setProperty ("ok", true);
+    obj->setProperty ("curve", curve);
+    return juce::var (obj);
+}
+
+juce::var UiBridge::handleSetEditorExpanded (const juce::Array<juce::var>& args)
+{
+    const auto expanded = numberOrNull (args, 0);
+    if (expanded.isVoid())
+        return errorResult ("setEditorExpanded expects a boolean.");
+
+    if (expansionHandler != nullptr)
+        expansionHandler (static_cast<double> (expanded) >= 0.5);
+
+    return okResult();
+}
+
+//==============================================================================
+juce::var UiBridge::buildParamsObject (bool includeAll)
+{
+    auto* obj = new juce::DynamicObject();
+
+    for (auto& entry : lastSentValues)
+    {
+        const double plain = readPlainValue (entry.first.toRawUTF8());
+
+        if (includeAll || ! nearlyEqual (plain, entry.second))
+        {
+            obj->setProperty (entry.first, plain);
+            entry.second = plain;
+        }
+    }
+
+    return juce::var (obj);
+}
+
+juce::var UiBridge::buildPresetObject()
+{
+    const auto state = processor.getDisplayState();
+
+    auto* obj = new juce::DynamicObject();
+    obj->setProperty ("index", state.presetIndex);
+    obj->setProperty ("name", state.presetName);
+    obj->setProperty ("kind", state.userPreset ? "user"
+                        : (state.presetIndex > 0 ? "factory" : "custom"));
+    obj->setProperty ("dirty", state.presetDirty);
+    return juce::var (obj);
+}
+
+juce::var UiBridge::buildAnalyzerObject()
+{
+    using Status = MetalEQAudioProcessor::AnalyzerStatus;
+    const auto status = processor.getAnalyzerStatus();
+    const auto progress = processor.getAnalyzerProgress();
+
+    std::array<float, metaleq::kNumBands> suggestion {};
+    processor.getAnalyzerSuggestion (suggestion);
+
+    auto* obj = new juce::DynamicObject();
+    obj->setProperty ("status", static_cast<int> (status));
+    obj->setProperty ("progress", progress);
+
+    juce::Array<juce::var> gains;
+    for (const auto g : suggestion)
+        gains.add (g);
+    obj->setProperty ("suggestion", gains);
+
+    const bool changed = static_cast<int> (status) != lastAnalyzerStatus
+                      || ! nearlyEqual (progress, lastAnalyzerProgress);
+
+    for (int i = 0; i < metaleq::kNumBands; ++i)
+        if (! nearlyEqual (suggestion[static_cast<size_t> (i)], lastSuggestion[static_cast<size_t> (i)]))
+        {
+            lastSuggestion[static_cast<size_t> (i)] = suggestion[static_cast<size_t> (i)];
+            obj->setProperty ("changed", true);
+            return juce::var (obj);
+        }
+
+    lastAnalyzerStatus = static_cast<int> (status);
+    lastAnalyzerProgress = progress;
+
+    if (! changed && ! fullSyncRequired)
+        return {};
+
+    return juce::var (obj);
+}
+
+juce::var UiBridge::buildCurveArray()
+{
+    const auto state = processor.getDisplayState();
+    const double sampleRate = processor.getDisplaySampleRate();
+
+    metaleq::ChainSpec chain;
+    metaleq::buildChain (chain, state.eq, state.macros, sampleRate);
+
+    juce::Array<juce::var> curve;
+    double minDb = 0.0, maxDb = 0.0;
+
+    for (int i = 0; i < numCurvePoints; ++i)
+    {
+        const double unit = static_cast<double> (i) / (numCurvePoints - 1);
+        const double freq = metaleq::kGraphMinFreq
+                          * std::pow (metaleq::kGraphMaxFreq / metaleq::kGraphMinFreq, unit);
+        const double db = metaleq::chainResponseDb (chain, sampleRate, freq);
+
+        curve.add (db);
+        minDb = juce::jmin (minDb, db);
+        maxDb = juce::jmax (maxDb, db);
+    }
+
+    auto* obj = new juce::DynamicObject();
+
+    // Fixed guitar-EQ range with deterministic expansion when the response
+    // (trim plus stacked boosts) exceeds it, so nothing is silently clipped.
+    const double rangeMin = juce::jmin (-18.0, std::floor ((minDb - 2.0) / 3.0) * 3.0);
+    const double rangeMax = juce::jmax (12.0, std::ceil ((maxDb + 2.0) / 3.0) * 3.0);
+
+    obj->setProperty ("points", curve);
+    obj->setProperty ("minDb", rangeMin);
+    obj->setProperty ("maxDb", rangeMax);
+    obj->setProperty ("sampleRate", sampleRate);
+    return juce::var (obj);
+}
+
+juce::var UiBridge::buildFactoryPresetList()
+{
+    juce::Array<juce::var> presets;
+
+    for (int i = 0; i < metaleq::getNumPresets(); ++i)
+    {
+        const auto& preset = metaleq::getPreset (i);
+        auto* obj = new juce::DynamicObject();
+        obj->setProperty ("index", i + 1); // 0 is reserved for Custom
+        obj->setProperty ("name", preset.name);
+        obj->setProperty ("placement", metaleq::placementToString (preset.placement));
+        obj->setProperty ("description", preset.description);
+        presets.add (juce::var (obj));
+    }
+
+    return juce::var (presets);
+}
+
+juce::var UiBridge::buildFullSnapshot()
+{
+    auto* obj = new juce::DynamicObject();
+
+    obj->setProperty ("protocolVersion", protocolVersion);
+    obj->setProperty ("params", buildParamsObject (true));
+    obj->setProperty ("preset", buildPresetObject());
+    obj->setProperty ("factoryPresets", buildFactoryPresetList());
+
+    lastUserPresets = processor.getUserPresetNames();
+    juce::Array<juce::var> userPresets;
+    for (const auto& name : lastUserPresets)
+        userPresets.add (name);
+    obj->setProperty ("userPresets", userPresets);
+
+    if (const auto analyzer = buildAnalyzerObject())
+        obj->setProperty ("analyzer", analyzer);
+    else
+        obj->setProperty ("analyzer", buildAnalyzerObject());
+
+    if (const auto curve = buildCurveArray())
+        obj->setProperty ("curve", curve);
+
+    userPresetsDirty = false;
+    curveDirty = false;
+    fullSyncRequired = false;
+
+    return juce::var (obj);
+}
+
+//==============================================================================
+void UiBridge::tick()
+{
+    if (! uiReady || webComponent == nullptr)
+        return;
+
+    ++seq;
+
+    auto* obj = new juce::DynamicObject();
+    obj->setProperty ("seq", seq);
+
+    const bool sendAll = fullSyncRequired;
+    fullSyncRequired = false;
+
+    obj->setProperty ("params", buildParamsObject (sendAll));
+    obj->setProperty ("preset", buildPresetObject());
+
+    if (userPresetsDirty || sendAll)
+    {
+        lastUserPresets = processor.getUserPresetNames();
+        juce::Array<juce::var> userPresets;
+        for (const auto& name : lastUserPresets)
+            userPresets.add (name);
+        obj->setProperty ("userPresets", userPresets);
+        userPresetsDirty = false;
+    }
+
+    {
+        auto* meters = new juce::DynamicObject();
+        meters->setProperty ("in", juce::jmax (processor.getInputPeakLevel (0), processor.getInputPeakLevel (1)));
+        meters->setProperty ("out", juce::jmax (processor.getPeakLevel (0), processor.getPeakLevel (1)));
+        obj->setProperty ("meters", juce::var (meters));
+    }
+
+    if (const auto analyzer = buildAnalyzerObject())
+        obj->setProperty ("analyzer", analyzer);
+
+    const double sampleRate = processor.getDisplaySampleRate();
+    if (sampleRate != lastSampleRate)
+    {
+        lastSampleRate = sampleRate;
+        curveDirty = true;
+    }
+
+    if (curveDirty)
+    {
+        obj->setProperty ("curve", buildCurveArray());
+        curveDirty = false;
+    }
+
+    webComponent->emitEventIfBrowserIsVisible ("metaleq.tick", juce::var (obj));
+}
+
+} // namespace metaleq::ui

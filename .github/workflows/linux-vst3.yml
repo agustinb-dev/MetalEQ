@@ -69,9 +69,20 @@ jobs:
       - name: Collect VST3 bundle
         run: |
           mkdir -p dist
-          # juce_add_plugin produces a self-contained .vst3 directory, which is
-          # what hosts expect to drop into their VST3 folder.
-          cp -r build/MetalEQ_artefacts/Release/MetalEQ.vst3 dist/
+          # juce_add_plugin writes the bundle to
+          #   <build>/MetalEQ_artefacts/<Config>/<Format>/MetalEQ.vst3
+          # i.e. nested under a VST3/ directory. Locate it rather than
+          # hardcoding the path so a layout change fails loudly here.
+          bundle=$(find build/MetalEQ_artefacts -maxdepth 4 -name 'MetalEQ.vst3' -type d | head -n 1)
+          if [ -z "$bundle" ]; then
+            echo "No MetalEQ.vst3 bundle found. Artefacts tree:"
+            find build/MetalEQ_artefacts -maxdepth 4 | sort
+            exit 1
+          fi
+          echo "Found bundle: $bundle"
+          # A .vst3 bundle is a self-contained directory, which is what hosts
+          # expect to drop into their VST3 folder.
+          cp -r "$bundle" dist/
           find dist -type f | sort
 
       - name: Package

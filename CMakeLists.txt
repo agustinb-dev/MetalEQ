@@ -167,11 +167,17 @@ else()
 endif()
 
 # Now we can use juce_add_plugin
+# NEEDS_WEB_BROWSER tells JUCE this target embeds a browser. On Linux that
+# makes JUCE define JUCE_WEB_BROWSER=1 *and* link its webkit/gtk pkg-config
+# target (JUCE_BROWSER_LINUX_DEPS), which supplies the include dirs for
+# webkit2gtk-4.1 and gtk+-x11-3.0. Without it the WebBrowserComponent type
+# does not exist at all and the browser headers are never on the include path.
 juce_add_plugin(${PROJECT_NAME}
     PLUGIN_MANUFACTURER_CODE "METL"  # Four-character manufacturer code
     PLUGIN_CODE "MTL0"               # Four-character plugin code (exactly one uppercase)
     FORMATS VST3                     # We want to build a VST3 plugin
     PRODUCT_NAME "MetalEQ"
+    NEEDS_WEB_BROWSER TRUE
 )
 
 # Add source files to the plugin target

@@ -29,6 +29,7 @@ jobs:
             ca-certificates \
             libasound2-dev \
             libfreetype6-dev \
+            libgtk-3-dev \
             libx11-dev \
             libxcomposite-dev \
             libxcursor-dev \

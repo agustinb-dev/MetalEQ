@@ -218,9 +218,12 @@ if(WIN32 AND EXISTS "${METALEQ_WEBVIEW2_LOADER_LIB}")
 endif()
 
 # Optional: set some compile definitions to reduce warnings
+# NOTE: JUCE_WEB_BROWSER is deliberately not set here. juce_add_plugin
+# detects whether a web backend is usable on the target and defines it
+# accordingly; defining it here as well would silently override that
+# detection (and force the Linux WebKit code path on without the headers).
 target_compile_definitions(${PROJECT_NAME}
     PRIVATE
-        JUCE_WEB_BROWSER=1
         JUCE_USE_CURL=0
         JUCE_VST3_CAN_REPLACE_VST2=0
         METALEQ_UI_EMBEDDED=$<BOOL:${METALEQ_UI_EMBEDDED}>

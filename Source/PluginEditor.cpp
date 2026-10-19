@@ -28,8 +28,11 @@ static juce::WebBrowserComponent::Options makeWebUiOptions()
                             juce::File::SpecialLocationType::tempDirectory)
                                                 .getChildFile ("MetalEQ-WebView2")));
    #else
+    // There is no explicit "webkit" backend: defaultBackend resolves to
+    // gtk-webkit2 on Linux and WKWebView on macOS, which is what we want
+    // everywhere that is not Windows.
     return juce::WebBrowserComponent::Options {}
-                .withBackend (juce::WebBrowserComponent::Options::Backend::webkit);
+                .withBackend (juce::WebBrowserComponent::Options::Backend::defaultBackend);
    #endif
 }
 

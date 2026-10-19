@@ -243,6 +243,65 @@ if(WIN32)
         PRIVATE JUCE_USE_WIN_WEBVIEW2_WITH_STATIC_LINKING=1)
 endif()
 
+# The test executables link JUCE modules directly, so each one compiles its own
+# copy of juce_gui_extra.cpp — including the WebKit browser backend on Linux.
+# juce_add_plugin's NEEDS_WEB_BROWSER only applies to the plugin target, so the
+# browser include dirs have to be attached to the tests too, or they fail with
+# "gtk/gtk.h: No such file or directory".
+#
+# juce::pkgconfig_JUCE_BROWSER_LINUX_DEPS is created by JUCE on Linux/BSD only.
+# It is built with NOLINK, so it contributes include dirs and compile options
+# but no link libraries — correct, because JUCE dlopen()s webkit at runtime.
+function(metaleq_enable_web_browser target)
+    if(TARGET juce::pkgconfig_JUCE_BROWSER_LINUX_DEPS)
+        target_link_libraries(${target} PRIVATE juce::pkgconfig_JUCE_BROWSER_LINUX_DEPS)
+    endif()
+endfunction()
+
+# The test executables link the plugin's shared-code library rather than
+# recompiling its sources, so they must NOT link the JUCE module targets.
+#
+# Each JUCE module target contributes its module's .cpp file as a source, so
+# linking one makes the test compile its own copy of that module. The plugin's
+# shared-code library already contains a compiled copy of every module it uses.
+# Because the library is a static lib the linker pulls its copy in to satisfy
+# references coming from the plugin's own objects (e.g. PluginEditor.obj ->
+# juce::WebBrowserComponent), and the two definitions collide: LNK2005 on MSVC,
+# "multiple definition" on GCC/Clang.
+#
+# The test still needs the module headers, which the shared-code library does
+# not re-export (its module links are PRIVATE, so no usage requirements reach
+# consumers), so the modules directory is added to the include path directly.
+#
+# It also inherits JUCE_USE_WIN_WEBVIEW2_WITH_STATIC_LINKING from the library,
+# which makes juce_gui_extra.h pull in WebView2.h, hence the WebView2 include
+# dir and static loader below.
+function(metaleq_link_plugin_shared_code target)
+    target_include_directories(${target} PRIVATE
+        Source
+        "${juce_SOURCE_DIR}/modules"
+    )
+
+    target_link_libraries(${target} PRIVATE
+        ${PROJECT_NAME}
+        juce::juce_recommended_config_flags
+    )
+
+    # On Linux the shared-code library's browser backend needs webkit2gtk and
+    # gtk headers; juce_add_plugin's NEEDS_WEB_BROWSER only covers the plugin
+    # target, so the same pkg-config deps have to be attached here too or the
+    # test fails with "gtk/gtk.h: No such file or directory".
+    metaleq_enable_web_browser(${target})
+
+    if(METALEQ_WEBVIEW2_INCLUDE_DIR)
+        target_include_directories(${target} PRIVATE "${METALEQ_WEBVIEW2_INCLUDE_DIR}")
+    endif()
+
+    if(WIN32 AND EXISTS "${METALEQ_WEBVIEW2_LOADER_LIB}")
+        target_link_libraries(${target} PRIVATE "${METALEQ_WEBVIEW2_LOADER_LIB}")
+    endif()
+endfunction()
+
 if(BUILD_TESTING)
   add_executable(MetalEQ_DspTests
       Tests/MetalEqTests.cpp
@@ -257,13 +316,7 @@ if(BUILD_TESTING)
 
   add_executable(MetalEQ_StateTests Tests/MetalEqStateTests.cpp)
   target_compile_features(MetalEQ_StateTests PRIVATE cxx_std_17)
-  target_include_directories(MetalEQ_StateTests PRIVATE Source)
-  target_link_libraries(MetalEQ_StateTests PRIVATE
-      ${PROJECT_NAME}
-      juce::juce_audio_utils
-      juce::juce_dsp
-      juce::juce_recommended_config_flags
-  )
+  metaleq_link_plugin_shared_code(MetalEQ_StateTests)
   add_test(NAME MetalEQ_StateTests COMMAND MetalEQ_StateTests)
 
   # UI bridge tests: validateParameterWrite clamping, the lpOn side effect, and
@@ -271,32 +324,18 @@ if(BUILD_TESTING)
   add_executable(MetalEQ_UiBridgeTests Tests/MetalEqUiBridgeTests.cpp)
   target_compile_features(MetalEQ_UiBridgeTests PRIVATE cxx_std_17)
 
-  # The test links the plugin's shared-code lib, so it needs the same objects
-  # and include dirs that satisfy that lib's references: the generated
-  # BinaryData object (embedded UI zip) and the WebView2 headers/loader.
+  # The test links the plugin's shared-code lib, so it needs the generated
+  # BinaryData object (the embedded UI zip) that the lib references.
   if(TARGET metaleq_ui_assets)
     add_dependencies(MetalEQ_UiBridgeTests metaleq_ui_assets)
     target_sources(MetalEQ_UiBridgeTests PRIVATE "${METALEQ_UI_BINDATA_CPP}")
     target_include_directories(MetalEQ_UiBridgeTests PRIVATE "${METALEQ_UI_JUCELIB}")
   endif()
 
-  target_include_directories(MetalEQ_UiBridgeTests PRIVATE Source)
-  if(METALEQ_WEBVIEW2_INCLUDE_DIR)
-    target_include_directories(MetalEQ_UiBridgeTests PRIVATE "${METALEQ_WEBVIEW2_INCLUDE_DIR}")
-  endif()
   if(MSVC)
     target_compile_options(MetalEQ_UiBridgeTests PRIVATE /W4 /permissive-)
   endif()
 
-  if(WIN32 AND EXISTS "${METALEQ_WEBVIEW2_LOADER_LIB}")
-    target_link_libraries(MetalEQ_UiBridgeTests PRIVATE "${METALEQ_WEBVIEW2_LOADER_LIB}")
-  endif()
-
-  target_link_libraries(MetalEQ_UiBridgeTests PRIVATE
-      ${PROJECT_NAME}
-      juce::juce_audio_utils
-      juce::juce_dsp
-      juce::juce_recommended_config_flags
-  )
+  metaleq_link_plugin_shared_code(MetalEQ_UiBridgeTests)
   add_test(NAME MetalEQ_UiBridgeTests COMMAND MetalEQ_UiBridgeTests)
 endif()

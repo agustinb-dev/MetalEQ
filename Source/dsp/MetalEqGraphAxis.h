@@ -14,6 +14,9 @@ inline constexpr std::array<double, 23> guitarLandmarks
       800.0, 1000.0, 1500.0, 2000.0, 3000.0, 4000.0, 5000.0, 6000.0,
       8000.0, 10000.0, 12000.0, 16000.0, 20000.0 };
 
+inline constexpr double kGraphMinDb = -15.0;
+inline constexpr double kGraphMaxDb = 15.0;
+
 inline double frequencyToUnit (double frequency) noexcept
 {
     frequency = clampValue (frequency, kGraphMinFreq, kGraphMaxFreq);
@@ -26,7 +29,7 @@ inline double unitToFrequency (double unit) noexcept
     return kGraphMinFreq * std::pow (kGraphMaxFreq / kGraphMinFreq, unit);
 }
 
-inline double dbToUnit (double db, double minDb = -18.0, double maxDb = 12.0) noexcept
+inline double dbToUnit (double db, double minDb = kGraphMinDb, double maxDb = kGraphMaxDb) noexcept
 {
     return clampValue ((db - minDb) / (maxDb - minDb), 0.0, 1.0);
 }

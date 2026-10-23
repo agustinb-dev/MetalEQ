@@ -47,8 +47,8 @@
           analyzerTargets,// stable target ids/labels on the uiReady snapshot only
           meters,         // { in, out } every tick (cheap atomics)
           analyzer,       // { status, progress, suggestion[5] } when changed
-          curve,          // [ dB x 240 ] when EQ-relevant params changed
-          curveRange      // { minDb, maxDb } with the curve
+          curve           // { points: [dB x 240], minDb: -15, maxDb: 15 }
+                          // when EQ-relevant params changed
         }
 
     Design rules

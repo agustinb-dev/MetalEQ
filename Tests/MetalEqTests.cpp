@@ -35,7 +35,11 @@ void testGraphAxis()
           1.0e-12, "1 kHz uses logarithmic placement");
     near (metaleq::graph::unitToFrequency (metaleq::graph::frequencyToUnit (3500.0)),
           3500.0, 1.0e-8, "frequency graph mapping round-trips");
-    near (metaleq::graph::dbToUnit (0.0), 0.6, 1.0e-12, "0 dB vertical mapping");
+    near (metaleq::graph::dbToUnit (-15.0), 0.0, 1.0e-12, "-15 dB maps to graph bottom");
+    near (metaleq::graph::dbToUnit (0.0), 0.5, 1.0e-12, "0 dB vertical mapping");
+    near (metaleq::graph::dbToUnit (15.0), 1.0, 1.0e-12, "+15 dB maps to graph top");
+    near (metaleq::graph::dbToUnit (-60.0), 0.0, 1.0e-12, "response below -15 dB clips at graph bottom");
+    near (metaleq::graph::dbToUnit (60.0), 1.0, 1.0e-12, "response above +15 dB clips at graph top");
     check (metaleq::graph::visibleLabelIndices (900.0, 52.0).size()
            < metaleq::graph::visibleLabelIndices (1800.0, 52.0).size(),
            "narrow graph uses fewer frequency labels");

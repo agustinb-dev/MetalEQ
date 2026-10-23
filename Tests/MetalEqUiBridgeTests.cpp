@@ -24,6 +24,7 @@
 #include <limits>
 
 #include "../Source/PluginProcessor.h"
+#include "../Source/dsp/MetalEqGraphAxis.h"
 #include "../Source/ui/MetalEqUiBridge.h"
 
 namespace
@@ -252,6 +253,49 @@ static void testApplyPresetIndexMapping (MetalEQAudioProcessor& processor)
 }
 
 //==============================================================================
+static void testCurveRangeIsFixed (MetalEQAudioProcessor& processor)
+{
+    // Create a response that reaches well outside both graph edges: a steep
+    // high-pass drops the low end far below -15 dB, while stacked boosts push
+    // the midrange above +15 dB. The bridge must still report a fixed window.
+    setPlain (processor, "hpSlope", 3.0f);
+    setPlain (processor, "hpFreq", 180.0f);
+    setPlain (processor, "lsGain", 12.0f);
+    setPlain (processor, "hsGain", 12.0f);
+
+    const char* const gainIds[] = { "band1Gain", "band2Gain", "band3Gain", "band4Gain", "band5Gain" };
+    const char* const freqIds[] = { "band1Freq", "band2Freq", "band3Freq", "band4Freq", "band5Freq" };
+    for (int i = 0; i < metaleq::kNumBands; ++i)
+    {
+        setPlain (processor, freqIds[i], 1000.0f);
+        setPlain (processor, gainIds[i], 12.0f);
+    }
+
+    check (processor.getResponseDb (20.0) < metaleq::graph::kGraphMinDb,
+           "the test response extends below the graph floor");
+    check (processor.getResponseDb (1000.0) > metaleq::graph::kGraphMaxDb,
+           "the test response extends above the graph ceiling");
+
+    metaleq::ui::UiBridge bridge (processor);
+    juce::var snapshot;
+    check (callNative (bridge, "uiReady", juce::Array<juce::var> {}, snapshot),
+           "uiReady is registered for the fixed curve-range test");
+
+    const auto curve = getProperty (snapshot, "curve");
+    check (curve.isObject(), "snapshot contains the response curve object");
+    checkNear (static_cast<double> (getProperty (curve, "minDb")),
+               metaleq::graph::kGraphMinDb, 1.0e-12,
+               "curve metadata keeps the fixed -15 dB graph floor");
+    checkNear (static_cast<double> (getProperty (curve, "maxDb")),
+               metaleq::graph::kGraphMaxDb, 1.0e-12,
+               "curve metadata keeps the fixed +15 dB graph ceiling");
+
+    const auto points = getProperty (curve, "points");
+    check (points.isArray() && points.size() == metaleq::ui::UiBridge::numCurvePoints,
+           "curve contains the expected number of response points");
+}
+
+//==============================================================================
 static void testSnapshotV2 (MetalEQAudioProcessor& processor)
 {
     metaleq::ui::UiBridge bridge (processor);
@@ -317,6 +361,11 @@ int main()
     {
         MetalEQAudioProcessor processor;
         testApplyPresetIndexMapping (processor);
+    }
+
+    {
+        MetalEQAudioProcessor processor;
+        testCurveRangeIsFixed (processor);
     }
 
     {

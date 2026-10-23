@@ -1,5 +1,7 @@
 #include "MetalEqUiBridge.h"
 
+#include "../dsp/MetalEqGraphAxis.h"
+
 #include <cmath>
 
 namespace metaleq::ui
@@ -545,30 +547,23 @@ juce::var UiBridge::buildCurveArray()
     metaleq::buildChain (chain, state.eq, state.macros, sampleRate);
 
     juce::Array<juce::var> curve;
-    double minDb = 0.0, maxDb = 0.0;
 
     for (int i = 0; i < numCurvePoints; ++i)
     {
         const double unit = static_cast<double> (i) / (numCurvePoints - 1);
         const double freq = metaleq::kGraphMinFreq
                           * std::pow (metaleq::kGraphMaxFreq / metaleq::kGraphMinFreq, unit);
-        const double db = metaleq::chainResponseDb (chain, sampleRate, freq);
-
-        curve.add (db);
-        minDb = juce::jmin (minDb, db);
-        maxDb = juce::jmax (maxDb, db);
+        curve.add (metaleq::chainResponseDb (chain, sampleRate, freq));
     }
 
     auto* obj = new juce::DynamicObject();
 
-    // Fixed guitar-EQ range with deterministic expansion when the response
-    // (trim plus stacked boosts) exceeds it, so nothing is silently clipped.
-    const double rangeMin = juce::jmin (-18.0, std::floor ((minDb - 2.0) / 3.0) * 3.0);
-    const double rangeMax = juce::jmax (12.0, std::ceil ((maxDb + 2.0) / 3.0) * 3.0);
-
+    // The graph always uses a fixed -15..+15 dB window. Steep pass-band
+    // rolloff and stacked boosts are clipped at the edges instead of scaling
+    // the useful EQ range down to a few pixels.
     obj->setProperty ("points", curve);
-    obj->setProperty ("minDb", rangeMin);
-    obj->setProperty ("maxDb", rangeMax);
+    obj->setProperty ("minDb", metaleq::graph::kGraphMinDb);
+    obj->setProperty ("maxDb", metaleq::graph::kGraphMaxDb);
     obj->setProperty ("sampleRate", sampleRate);
     return juce::var (obj);
 }

@@ -29,6 +29,7 @@ import type {
 import { PROTOCOL_VERSION } from './types';
 import { PARAMS, clampPlain, getSpec, snapPlain, defaultParams } from './params';
 import { buildChain, chainResponseDb, NUM_BANDS, type EqSettings, type MacroSettings } from './dspMirror';
+import { GRAPH_MAX_DB, GRAPH_MIN_DB } from './graphAxis';
 import { ANALYZER_TARGETS, FACTORY_PRESETS, factoryPresetInfos, neutralEq } from './presets';
 
 interface AbSlotSnapshot {
@@ -111,19 +112,14 @@ function paramsToMacros(p: Record<string, number>): MacroSettings {
 function buildCurve(p: Record<string, number>, sampleRate: number): CurveInfo {
   const chain = buildChain(paramsToEq(p), paramsToMacros(p), sampleRate);
   const points: number[] = [];
-  let minDb = 0;
-  let maxDb = 0;
   for (let i = 0; i < CURVE_POINTS; i++) {
     const unit = i / (CURVE_POINTS - 1);
     const freq = GRAPH_MIN * Math.pow(GRAPH_MAX / GRAPH_MIN, unit);
-    const db = chainResponseDb(chain, sampleRate, freq);
-    points.push(db);
-    minDb = Math.min(minDb, db);
-    maxDb = Math.max(maxDb, db);
+    points.push(chainResponseDb(chain, sampleRate, freq));
   }
-  const rangeMin = Math.min(-18, Math.floor((minDb - 2) / 3) * 3);
-  const rangeMax = Math.max(12, Math.ceil((maxDb + 2) / 3) * 3);
-  return { points, minDb: rangeMin, maxDb: rangeMax, sampleRate };
+  // Fixed graph window, matching the native bridge: values outside the range
+  // are clipped by the renderer instead of rescaling the whole graph.
+  return { points, minDb: GRAPH_MIN_DB, maxDb: GRAPH_MAX_DB, sampleRate };
 }
 
 function nearlyEqual(a: number, b: number): boolean {

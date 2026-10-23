@@ -77,8 +77,8 @@ export interface AnalyzerInfo {
 
 export interface CurveInfo {
   points: number[]; // 240 dB values, evenly spaced in log-frequency
-  minDb: number;
-  maxDb: number;
+  minDb: number; // fixed -15 dB graph floor (values below it are clipped)
+  maxDb: number; // fixed +15 dB graph ceiling (values above it are clipped)
   sampleRate?: number;
 }
 

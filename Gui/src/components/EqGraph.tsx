@@ -6,12 +6,16 @@
       * drag the HP/LP -3 dB markers to change their cutoff
       * everything remains available as numeric controls in Advanced view
 
-    The dB range comes from the native curve ({minDb, maxDb}) instead of being
-    fixed, so stacked boosts are never clipped.
+    The vertical range is fixed at -15..+15 dB so steep high-pass/low-pass
+    rolloff and stacked boosts cannot shrink the useful EQ shapes. Response
+    outside that window is clipped at the graph edge.
 */
 
 import { useMemo, useRef, useState } from 'react';
 import {
+  GRAPH_DB_LINES,
+  GRAPH_MAX_DB,
+  GRAPH_MIN_DB,
   GUITAR_LANDMARKS,
   REGIONS,
   dbToUnit,
@@ -76,15 +80,12 @@ export function EqGraph({
     return { x: PLOT_MARGIN.left, y: PLOT_MARGIN.top, w, h };
   }, [width, height]);
 
-  const minDb = curve?.minDb ?? -18;
-  const maxDb = curve?.maxDb ?? 12;
-
   if (plot.w < 80 || plot.h < 60 || !curve) {
     return <svg className="eq-graph" width={width} height={height} />;
   }
 
   const freqToX = (hz: number) => plot.x + plot.w * frequencyToUnit(hz);
-  const dbToY = (db: number) => plot.y + plot.h * (1 - dbToUnit(db, minDb, maxDb));
+  const dbToY = (db: number) => plot.y + plot.h * (1 - dbToUnit(db));
 
   const localPoint = (event: React.PointerEvent<SVGGElement>) => {
     const rect = svgRef.current?.getBoundingClientRect();
@@ -110,7 +111,7 @@ export function EqGraph({
     const freqUnit = (point.x - plot.x) / plot.w;
     const gainUnit = 1 - (point.y - plot.y) / plot.h;
     const freq = unitToFrequency(freqUnit);
-    const gain = minDb + Math.max(0, Math.min(1, gainUnit)) * (maxDb - minDb);
+    const gain = GRAPH_MIN_DB + Math.max(0, Math.min(1, gainUnit)) * (GRAPH_MAX_DB - GRAPH_MIN_DB);
     onBandChange?.(state.index, freq, Math.max(-12, Math.min(12, gain)));
   };
 
@@ -145,11 +146,7 @@ export function EqGraph({
     setDragging(null);
   };
 
-  // dB grid: native draws -18..12 step 6; extend when the native range grows.
-  const dbLines: number[] = [];
-  const startDb = Math.ceil(minDb / 6) * 6;
-  for (let db = startDb; db <= maxDb + 1e-9; db += 6) dbLines.push(db);
-  if (!dbLines.includes(0) && 0 >= minDb && 0 <= maxDb) dbLines.push(0);
+  const dbLines: readonly number[] = GRAPH_DB_LINES;
 
   const responsePath =
     curve.points.length > 1
@@ -246,8 +243,8 @@ export function EqGraph({
               stroke={zero ? '#78818b' : '#363c44'}
               strokeWidth={1}
             />
-            <text x={2} y={y - 7 + 7} textAnchor="start" dominantBaseline="middle" className={zero ? 'graph-db-label zero' : 'graph-db-label'}>
-              {db} dB
+            <text x={2} y={y} textAnchor="start" dominantBaseline="middle" className={zero ? 'graph-db-label zero' : 'graph-db-label'}>
+              {db > 0 ? `+${db}` : db} dB
             </text>
           </g>
         );

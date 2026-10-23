@@ -11,6 +11,12 @@ export const GUITAR_LANDMARKS = [
   4000, 5000, 6000, 8000, 10000, 12000, 16000, 20000,
 ] as const;
 
+export const GRAPH_MIN_DB = -15;
+export const GRAPH_MAX_DB = 15;
+
+/** Horizontal dB lines for the fixed graph window. */
+export const GRAPH_DB_LINES = [-15, -10, -5, 0, 5, 10, 15] as const;
+
 const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
 
 export function frequencyToUnit(frequency: number): number {
@@ -23,7 +29,7 @@ export function unitToFrequency(unit: number): number {
   return GRAPH_MIN_FREQ * Math.pow(GRAPH_MAX_FREQ / GRAPH_MIN_FREQ, u);
 }
 
-export function dbToUnit(db: number, minDb: number, maxDb: number): number {
+export function dbToUnit(db: number, minDb = GRAPH_MIN_DB, maxDb = GRAPH_MAX_DB): number {
   return clamp((db - minDb) / (maxDb - minDb), 0, 1);
 }
 

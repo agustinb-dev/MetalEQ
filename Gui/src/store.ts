@@ -15,6 +15,7 @@ import type {
   AnalyzerInfo,
   AnalyzerTargetInfo,
   CurveInfo,
+  DynamicReductionInfo,
   FactoryPresetInfo,
   MetersInfo,
   PresetInfo,
@@ -33,6 +34,7 @@ export interface UiState {
   analyzerTargets: AnalyzerTargetInfo[];
   userPresets: string[];
   meters: MetersInfo;
+  dynamicReduction: DynamicReductionInfo;
   analyzer: AnalyzerInfo;
   resonance: ResonanceInfo;
   curve: CurveInfo | null;
@@ -61,6 +63,7 @@ const initialState: UiState = {
   analyzerTargets: [],
   userPresets: [],
   meters: { in: 0, out: 0 },
+  dynamicReduction: [0, 0, 0, 0],
   analyzer: { status: 0, progress: 0, suggestion: [0, 0, 0, 0, 0] },
   resonance: { status: 0, progress: 0, enoughVariation: false, candidates: [] },
   curve: null,
@@ -96,6 +99,7 @@ class Store {
       factoryPresets: s.factoryPresets ?? [],
       analyzerTargets: s.analyzerTargets ?? [],
       userPresets: s.userPresets ?? [],
+      dynamicReduction: s.dynamicReduction ?? this.state.dynamicReduction,
       analyzer: s.analyzer ?? this.state.analyzer,
       resonance: s.resonance ?? this.state.resonance,
       curve: s.curve ?? this.state.curve,
@@ -112,6 +116,7 @@ class Store {
     if (t.preset) patch.preset = t.preset;
     if (t.userPresets) patch.userPresets = t.userPresets;
     if (t.meters) patch.meters = t.meters;
+    if (t.dynamicReduction) patch.dynamicReduction = t.dynamicReduction;
     if (t.analyzer) {
       patch.analyzer = {
         status: t.analyzer.status,

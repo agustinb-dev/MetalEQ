@@ -12,7 +12,7 @@ namespace
     bool isSupportedUserPresetSchema (const juce::var& schema)
     {
         const auto text = schema.toString();
-        return text == "1" || text == "2";
+        return text == "1" || text == "2" || text == "3";
     }
 
     bool parsePresetNumber (const juce::String& text, double& result)
@@ -93,6 +93,22 @@ const char* MetalEQAudioProcessor::ParameterIDs::resQ[metaleq::kNumSurgicalBands
     { "res1Q", "res2Q", "res3Q", "res4Q", "res5Q", "res6Q" };
 const char* MetalEQAudioProcessor::ParameterIDs::resOn[metaleq::kNumSurgicalBands] =
     { "res1On", "res2On", "res3On", "res4On", "res5On", "res6On" };
+const char* MetalEQAudioProcessor::ParameterIDs::dynFreq[metaleq::kNumDynamicBands] =
+    { "dyn1Freq", "dyn2Freq", "dyn3Freq", "dyn4Freq" };
+const char* MetalEQAudioProcessor::ParameterIDs::dynQ[metaleq::kNumDynamicBands] =
+    { "dyn1Q", "dyn2Q", "dyn3Q", "dyn4Q" };
+const char* MetalEQAudioProcessor::ParameterIDs::dynThreshold[metaleq::kNumDynamicBands] =
+    { "dyn1Threshold", "dyn2Threshold", "dyn3Threshold", "dyn4Threshold" };
+const char* MetalEQAudioProcessor::ParameterIDs::dynRatio[metaleq::kNumDynamicBands] =
+    { "dyn1Ratio", "dyn2Ratio", "dyn3Ratio", "dyn4Ratio" };
+const char* MetalEQAudioProcessor::ParameterIDs::dynAttack[metaleq::kNumDynamicBands] =
+    { "dyn1Attack", "dyn2Attack", "dyn3Attack", "dyn4Attack" };
+const char* MetalEQAudioProcessor::ParameterIDs::dynRelease[metaleq::kNumDynamicBands] =
+    { "dyn1Release", "dyn2Release", "dyn3Release", "dyn4Release" };
+const char* MetalEQAudioProcessor::ParameterIDs::dynRange[metaleq::kNumDynamicBands] =
+    { "dyn1Range", "dyn2Range", "dyn3Range", "dyn4Range" };
+const char* MetalEQAudioProcessor::ParameterIDs::dynOn[metaleq::kNumDynamicBands] =
+    { "dyn1On", "dyn2On", "dyn3On", "dyn4On" };
 const char* MetalEQAudioProcessor::ParameterIDs::shapeOn[6] =
     { "shapeTightenOn", "shapeScoopOn", "shapeMidPunchOn", "shapePickAttackOn", "shapeFizzTamerOn", "shapeBrightenOn" };
 const char* MetalEQAudioProcessor::ParameterIDs::trim     = "trim";
@@ -124,6 +140,18 @@ juce::StringArray MetalEQAudioProcessor::ParameterIDs::allEqParameterIds()
         ids.add (resGain[i]);
         ids.add (resQ[i]);
         ids.add (resOn[i]);
+    }
+
+    for (int i = 0; i < metaleq::kNumDynamicBands; ++i)
+    {
+        ids.add (dynFreq[i]);
+        ids.add (dynQ[i]);
+        ids.add (dynThreshold[i]);
+        ids.add (dynRatio[i]);
+        ids.add (dynAttack[i]);
+        ids.add (dynRelease[i]);
+        ids.add (dynRange[i]);
+        ids.add (dynOn[i]);
     }
 
     ids.add (trim);
@@ -168,9 +196,13 @@ MetalEQAudioProcessor::MetalEQAudioProcessor()
         level.store (0.0f, std::memory_order_relaxed);
     for (auto& level : inputPeakLevels)
         level.store (0.0f, std::memory_order_relaxed);
+    for (auto& reduction : dynamicReductionDb)
+        reduction.store (0.0f, std::memory_order_relaxed);
 
     engine.prepare (getSampleRate() > 0.0 ? getSampleRate() : 48000.0);
     auditionEngine.prepare (getSampleRate() > 0.0 ? getSampleRate() : 48000.0);
+    dynamicEngine.prepare (getSampleRate() > 0.0 ? getSampleRate() : 48000.0);
+    auditionDynamicEngine.prepare (getSampleRate() > 0.0 ? getSampleRate() : 48000.0);
     analyzerWorker = std::thread ([this] { analyzerWorkerLoop(); });
 }
 
@@ -286,6 +318,53 @@ juce::AudioProcessorValueTreeState::ParameterLayout MetalEQAudioProcessor::creat
             ParameterIDs::resOn[i], "Resonance " + juce::String (i + 1) + " On", false));
     }
 
+    //--- V3.1 dynamic resonance bands ---------------------------------------
+    const auto dynamicDefaults = metaleq::defaultDynamicBands();
+
+    for (int i = 0; i < metaleq::kNumDynamicBands; ++i)
+    {
+        const auto n = juce::String (i + 1);
+        const auto& defaults = dynamicDefaults[static_cast<size_t> (i)];
+
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            ParameterIDs::dynFreq[i], "Dynamic " + n + " Freq",
+            juce::NormalisableRange<float> ((float) p::dynamicFreqMin, (float) p::dynamicFreqMax, 0.01f, 0.4f),
+            (float) defaults.freq));
+
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            ParameterIDs::dynQ[i], "Dynamic " + n + " Q",
+            juce::NormalisableRange<float> ((float) p::dynamicQMin, (float) p::dynamicQMax, 0.01f),
+            (float) defaults.q));
+
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            ParameterIDs::dynThreshold[i], "Dynamic " + n + " Threshold",
+            juce::NormalisableRange<float> ((float) p::dynamicThresholdMin, (float) p::dynamicThresholdMax, 0.1f),
+            (float) defaults.thresholdDb));
+
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            ParameterIDs::dynRatio[i], "Dynamic " + n + " Ratio",
+            juce::NormalisableRange<float> ((float) p::dynamicRatioMin, (float) p::dynamicRatioMax, 0.1f),
+            (float) defaults.ratio));
+
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            ParameterIDs::dynAttack[i], "Dynamic " + n + " Attack",
+            juce::NormalisableRange<float> ((float) p::dynamicAttackMin, (float) p::dynamicAttackMax, 0.1f, 0.6f),
+            (float) defaults.attackMs));
+
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            ParameterIDs::dynRelease[i], "Dynamic " + n + " Release",
+            juce::NormalisableRange<float> ((float) p::dynamicReleaseMin, (float) p::dynamicReleaseMax, 1.0f, 0.5f),
+            (float) defaults.releaseMs));
+
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            ParameterIDs::dynRange[i], "Dynamic " + n + " Max Cut",
+            juce::NormalisableRange<float> ((float) p::dynamicCutMin, (float) p::dynamicCutMax, 0.1f),
+            (float) defaults.maxCutDb));
+
+        layout.add (std::make_unique<juce::AudioParameterBool> (
+            ParameterIDs::dynOn[i], "Dynamic " + n + " On", defaults.on));
+    }
+
     //--- output trim ---------------------------------------------------------
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         ParameterIDs::trim, "Output Trim",
@@ -355,13 +434,18 @@ void MetalEQAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
     cachedSampleRate = sampleRate > 0.0 ? sampleRate : 48000.0;
     chainCacheValid = true;
 
-    // The delta monitor runs a second, surgical-only engine. Prepare it with
+    dynamicEngine.prepare (cachedSampleRate);
+    dynamicEngine.setSettings (cachedEq.dynamic, 1);
+
+    // The delta monitor runs a second, resonance-only path. Prepare it with
     // the same sample rate and give both scratch buffers enough room for the
     // host's block size; no allocation happens in processBlock().
     auditionEngine.prepare (sampleRate > 0.0 ? sampleRate : 48000.0);
     metaleq::ChainSpec auditionChain;
     metaleq::buildSurgicalChain (auditionChain, cachedEq, cachedSampleRate);
     auditionEngine.setChain (auditionChain, 1);
+    auditionDynamicEngine.prepare (cachedSampleRate);
+    auditionDynamicEngine.setSettings (cachedEq.dynamic, 1);
     cachedAuditionEq = cachedEq;
     cachedAuditionSampleRate = cachedSampleRate;
     auditionChainCacheValid = true;
@@ -375,24 +459,36 @@ void MetalEQAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
         level.store (0.0f, std::memory_order_relaxed);
     for (auto& level : inputPeakLevels)
         level.store (0.0f, std::memory_order_relaxed);
+    for (auto& reduction : dynamicReductionDb)
+        reduction.store (0.0f, std::memory_order_relaxed);
 }
 
 void MetalEQAudioProcessor::releaseResources()
 {
     engine.reset();
     auditionEngine.reset();
+    dynamicEngine.reset();
+    auditionDynamicEngine.reset();
     chainCacheValid = false;
     auditionChainCacheValid = false;
     wasAuditioning = false;
+
+    for (auto& reduction : dynamicReductionDb)
+        reduction.store (0.0f, std::memory_order_relaxed);
 }
 
 void MetalEQAudioProcessor::reset()
 {
     engine.reset();
     auditionEngine.reset();
+    dynamicEngine.reset();
+    auditionDynamicEngine.reset();
     chainCacheValid = false;
     auditionChainCacheValid = false;
     wasAuditioning = false;
+
+    for (auto& reduction : dynamicReductionDb)
+        reduction.store (0.0f, std::memory_order_relaxed);
 }
 
 //==============================================================================
@@ -577,6 +673,28 @@ void MetalEQAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
 
     const bool bypassed = apvts->getRawParameterValue (ParameterIDs::bypass)->load() >= 0.5f;
 
+    if (bypassed)
+    {
+        // Keep the GUI meter meaningful while bypassed.
+        if (meteringEnabled.load (std::memory_order_relaxed))
+            for (int ch = 0; ch < numChannels; ++ch)
+                peakLevels[static_cast<size_t> (ch)].store (
+                    buffer.getMagnitude (ch, 0, numSamples), std::memory_order_relaxed);
+
+        for (auto& reduction : dynamicReductionDb)
+            reduction.store (0.0f, std::memory_order_relaxed);
+
+        // Drop the dynamic filters and force a clean rebuild on un-bypass so a
+        // stale detector state cannot apply an old cut to the first block.
+        dynamicEngine.reset();
+        auditionDynamicEngine.reset();
+        chainCacheValid = false;
+        auditionChainCacheValid = false;
+
+        wasAuditioning = false;
+        return;
+    }
+
     //--- rebuild the chain only when the sound actually changed ---------------
     auto eq      = readEqSettings();
     auto macros  = readMacroSettings();
@@ -596,55 +714,52 @@ void MetalEQAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
             static_cast<int> (sampleRate * 0.002)));
 
         engine.setChain (chain, rampLength);
+        dynamicEngine.setSettings (eq.dynamic, rampLength);
         cachedEq = eq;
         cachedMacros = macros;
         cachedSampleRate = sampleRate;
         chainCacheValid = true;
     }
 
-    if (bypassed)
-    {
-        // Keep the GUI meter meaningful while bypassed.
-        if (meteringEnabled.load (std::memory_order_relaxed))
-            for (int ch = 0; ch < numChannels; ++ch)
-                peakLevels[static_cast<size_t> (ch)].store (
-                    buffer.getMagnitude (ch, 0, numSamples), std::memory_order_relaxed);
-
-        wasAuditioning = false;
-        return;
-    }
-
     //--- optional delta monitor ---------------------------------------------
-    // The monitor plays dry minus surgical-only wet, so the player hears the
-    // resonance cuts in isolation. It is a monitoring aid, never saved with
-    // the tone. If no surgical band is active the monitor is a no-op.
-    bool hasSurgicalCut = false;
-    for (const auto& band : eq.surgical)
-        if (band.on && std::abs (band.gainDb) > 1.0e-3)
-            hasSurgicalCut = true;
+    // The monitor plays the post-static signal minus the same signal after the
+    // static surgical and dynamic resonance stages. That is exactly what the
+    // resonance section removes, and it includes both cut types. It is a
+    // monitoring aid, never saved with the tone.
+    const bool hasSurgicalCut = metaleq::hasActiveSurgicalCuts (eq);
+    const bool hasDynamicCut  = metaleq::hasActiveDynamicCuts (eq);
 
     const bool auditionRequested =
         apvts->getRawParameterValue (ParameterIDs::resAudition)->load() >= 0.5f;
     const bool audition = auditionRequested
-        && hasSurgicalCut
+        && (hasSurgicalCut || hasDynamicCut)
         && numSamples <= auditionDryBuffer.getNumSamples()
         && numSamples <= auditionWetBuffer.getNumSamples()
         && numChannels <= auditionDryBuffer.getNumChannels();
 
-    if (audition)
+    if (audition && ! wasAuditioning)
     {
-        if (! wasAuditioning)
-        {
-            auditionEngine.reset();
-            auditionChainCacheValid = false;
-        }
-
-        for (int ch = 0; ch < numChannels; ++ch)
-            auditionDryBuffer.copyFrom (ch, 0, buffer, ch, 0, numSamples);
+        auditionEngine.reset();
+        auditionDynamicEngine.reset();
+        auditionChainCacheValid = false;
     }
 
-    //--- run the EQ ----------------------------------------------------------
+    //--- run the static EQ ---------------------------------------------------
     engine.process (buffer.getArrayOfWritePointers(), numChannels, numSamples);
+
+    // The delta reference is the fully static-EQ'd signal, captured before the
+    // dynamic stage so the monitor compares like with like.
+    if (audition)
+        for (int ch = 0; ch < numChannels; ++ch)
+            auditionDryBuffer.copyFrom (ch, 0, buffer, ch, 0, numSamples);
+
+    //--- zero-latency dynamic resonance section ------------------------------
+    dynamicEngine.process (buffer.getArrayOfWritePointers(), numChannels, numSamples);
+
+    for (int i = 0; i < metaleq::kNumDynamicBands; ++i)
+        dynamicReductionDb[static_cast<size_t> (i)].store (
+            static_cast<float> (dynamicEngine.getGainReductionDb (i)),
+            std::memory_order_relaxed);
 
     if (audition)
     {
@@ -653,11 +768,13 @@ void MetalEQAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
 
         if (! auditionChainCacheValid
             || eq.surgical != cachedAuditionEq.surgical
+            || eq.dynamic != cachedAuditionEq.dynamic
             || sampleRate != cachedAuditionSampleRate)
         {
             metaleq::ChainSpec auditionChain;
             metaleq::buildSurgicalChain (auditionChain, eq, sampleRate);
             auditionEngine.setChain (auditionChain, rampLength);
+            auditionDynamicEngine.setSettings (eq.dynamic, rampLength);
             cachedAuditionEq = eq;
             cachedAuditionSampleRate = sampleRate;
             auditionChainCacheValid = true;
@@ -668,6 +785,8 @@ void MetalEQAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
 
         auditionEngine.process (auditionWetBuffer.getArrayOfWritePointers(),
                                 numChannels, numSamples);
+        auditionDynamicEngine.process (auditionWetBuffer.getArrayOfWritePointers(),
+                                       numChannels, numSamples);
 
         // 6 dB of monitor gain: the difference signal is naturally quiet.
         for (int ch = 0; ch < numChannels; ++ch)
@@ -704,6 +823,16 @@ void MetalEQAudioProcessor::processBlockBypassed (juce::AudioBuffer<float>& buff
             inputPeakLevels[static_cast<size_t> (ch)].store (peak, std::memory_order_relaxed);
             peakLevels[static_cast<size_t> (ch)].store (peak, std::memory_order_relaxed);
         }
+
+    dynamicEngine.reset();
+    auditionDynamicEngine.reset();
+    chainCacheValid = false;
+    auditionChainCacheValid = false;
+    wasAuditioning = false;
+
+    for (auto& reduction : dynamicReductionDb)
+        reduction.store (0.0f, std::memory_order_relaxed);
+
     juce::ignoreUnused (midiMessages);
 }
 
@@ -886,7 +1015,7 @@ void MetalEQAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 
     juce::ValueTree state ("MetalEQState");
 
-    state.setProperty ("version", 3, nullptr);
+    state.setProperty ("version", 4, nullptr);
     state.setProperty ("lastPresetId", lastPresetId, nullptr);
     state.setProperty ("lastPresetName", lastPresetName, nullptr);
     state.setProperty ("lastPresetIsUser", loadedPresetIsUser, nullptr);
@@ -974,6 +1103,25 @@ void MetalEQAudioProcessor::setStateInformation (const void* data, int sizeInByt
             setFloatParameter (ParameterIDs::resOn[i], 0.0);
         }
         setFloatParameter (ParameterIDs::resAudition, 0.0);
+    }
+
+    // V3.1 added the four dynamic bands. Old sessions must start with them
+    // disabled, not with whatever APVTS happened to contain.
+    if (version < 4)
+    {
+        const auto defaults = metaleq::defaultDynamicBands();
+        for (int i = 0; i < metaleq::kNumDynamicBands; ++i)
+        {
+            const auto& band = defaults[static_cast<size_t> (i)];
+            setFloatParameter (ParameterIDs::dynFreq[i], band.freq);
+            setFloatParameter (ParameterIDs::dynQ[i], band.q);
+            setFloatParameter (ParameterIDs::dynThreshold[i], band.thresholdDb);
+            setFloatParameter (ParameterIDs::dynRatio[i], band.ratio);
+            setFloatParameter (ParameterIDs::dynAttack[i], band.attackMs);
+            setFloatParameter (ParameterIDs::dynRelease[i], band.releaseMs);
+            setFloatParameter (ParameterIDs::dynRange[i], band.maxCutDb);
+            setFloatParameter (ParameterIDs::dynOn[i], band.on ? 1.0 : 0.0);
+        }
     }
 
     lastPresetName = tree.getProperty ("lastPresetName").toString().isNotEmpty()
@@ -1114,6 +1262,20 @@ metaleq::EqSettings MetalEQAudioProcessor::readEqSettings() const
         b.on     = load (ParameterIDs::resOn[i]) >= 0.5f;
     }
 
+    for (int i = 0; i < metaleq::kNumDynamicBands; ++i)
+    {
+        auto& b = eq.dynamic[static_cast<size_t> (i)];
+
+        b.freq        = metaleq::clampValue (static_cast<double> (load (ParameterIDs::dynFreq[i])), p::dynamicFreqMin, p::dynamicFreqMax);
+        b.q           = metaleq::clampValue (static_cast<double> (load (ParameterIDs::dynQ[i])), p::dynamicQMin, p::dynamicQMax);
+        b.thresholdDb = metaleq::clampValue (static_cast<double> (load (ParameterIDs::dynThreshold[i])), p::dynamicThresholdMin, p::dynamicThresholdMax);
+        b.ratio       = metaleq::clampValue (static_cast<double> (load (ParameterIDs::dynRatio[i])), p::dynamicRatioMin, p::dynamicRatioMax);
+        b.attackMs    = metaleq::clampValue (static_cast<double> (load (ParameterIDs::dynAttack[i])), p::dynamicAttackMin, p::dynamicAttackMax);
+        b.releaseMs   = metaleq::clampValue (static_cast<double> (load (ParameterIDs::dynRelease[i])), p::dynamicReleaseMin, p::dynamicReleaseMax);
+        b.maxCutDb    = metaleq::clampValue (static_cast<double> (load (ParameterIDs::dynRange[i])), p::dynamicCutMin, p::dynamicCutMax);
+        b.on          = load (ParameterIDs::dynOn[i]) >= 0.5f;
+    }
+
     for (int i = 0; i < static_cast<int> (eq.shapes.size()); ++i)
         eq.shapes[static_cast<size_t> (i)] = load (ParameterIDs::shapeOn[i]) >= 0.5f;
 
@@ -1239,6 +1401,20 @@ void MetalEQAudioProcessor::applyEqSettings (const metaleq::EqSettings& eq, bool
         setFloatParameter (ParameterIDs::resGain[i], b.gainDb);
         setFloatParameter (ParameterIDs::resQ[i], b.q);
         setFloatParameter (ParameterIDs::resOn[i], b.on ? 1.0 : 0.0);
+    }
+
+    for (int i = 0; i < metaleq::kNumDynamicBands; ++i)
+    {
+        const auto& b = eq.dynamic[static_cast<size_t> (i)];
+
+        setFloatParameter (ParameterIDs::dynFreq[i], b.freq);
+        setFloatParameter (ParameterIDs::dynQ[i], b.q);
+        setFloatParameter (ParameterIDs::dynThreshold[i], b.thresholdDb);
+        setFloatParameter (ParameterIDs::dynRatio[i], b.ratio);
+        setFloatParameter (ParameterIDs::dynAttack[i], b.attackMs);
+        setFloatParameter (ParameterIDs::dynRelease[i], b.releaseMs);
+        setFloatParameter (ParameterIDs::dynRange[i], b.maxCutDb);
+        setFloatParameter (ParameterIDs::dynOn[i], b.on ? 1.0 : 0.0);
     }
 
     if (includeCrossovers)
@@ -1440,6 +1616,14 @@ float MetalEQAudioProcessor::getInputPeakLevel (int channel) const noexcept
     return inputPeakLevels[static_cast<size_t> (channel)].load (std::memory_order_relaxed);
 }
 
+float MetalEQAudioProcessor::getDynamicGainReductionDb (int band) const noexcept
+{
+    if (band < 0 || band >= metaleq::kNumDynamicBands)
+        return 0.0f;
+
+    return dynamicReductionDb[static_cast<size_t> (band)].load (std::memory_order_relaxed);
+}
+
 double MetalEQAudioProcessor::getResponseDb (double freq) const
 {
     return metaleq::responseDb (readEqSettings(), readMacroSettings(), getDisplaySampleRate(), freq);
@@ -1566,7 +1750,7 @@ bool MetalEQAudioProcessor::saveUserPreset (const juce::String& rawName, bool ov
         return false;
     }
     juce::ValueTree root ("MetalEQUserPreset");
-    root.setProperty ("schemaVersion", 2, nullptr);
+    root.setProperty ("schemaVersion", 3, nullptr);
     root.setProperty ("name", name, nullptr);
     root.appendChild (getSoundParameterState(), nullptr);
     const auto xml = root.createXml();
@@ -1584,11 +1768,18 @@ bool MetalEQAudioProcessor::saveUserPreset (const juce::String& rawName, bool ov
     return true;
 }
 
-bool MetalEQAudioProcessor::isV3SurgicalParameterId (const juce::String& id)
+bool MetalEQAudioProcessor::isOptionalResonanceParameterId (const juce::String& id)
 {
     for (int i = 0; i < metaleq::kNumSurgicalBands; ++i)
         if (id == ParameterIDs::resFreq[i] || id == ParameterIDs::resGain[i]
             || id == ParameterIDs::resQ[i] || id == ParameterIDs::resOn[i])
+            return true;
+
+    for (int i = 0; i < metaleq::kNumDynamicBands; ++i)
+        if (id == ParameterIDs::dynFreq[i] || id == ParameterIDs::dynQ[i]
+            || id == ParameterIDs::dynThreshold[i] || id == ParameterIDs::dynRatio[i]
+            || id == ParameterIDs::dynAttack[i] || id == ParameterIDs::dynRelease[i]
+            || id == ParameterIDs::dynRange[i] || id == ParameterIDs::dynOn[i])
             return true;
 
     return false;
@@ -1619,10 +1810,11 @@ juce::ValueTree MetalEQAudioProcessor::migrateSoundParameterState (const juce::V
         if (found)
             continue;
 
-        // Never invent values for the original schema. Only the V3 surgical
-        // parameters may be missing from a state written by an older build;
-        // anything else is damaged or unsupported and must fail validation.
-        if (! isV3SurgicalParameterId (id))
+        // Never invent values for the original schema. Only the V3 surgical and
+        // V3.1 dynamic parameters may be missing from a state written by an
+        // older build; anything else is damaged or unsupported and must fail
+        // validation.
+        if (! isOptionalResonanceParameterId (id))
             return state;
 
         const auto* parameter = apvts->getParameter (id);

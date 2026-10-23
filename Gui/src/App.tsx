@@ -30,11 +30,16 @@ import type {
 } from './types';
 import {
   NUM_BANDS,
+  NUM_DYNAMIC_BANDS,
   NUM_SURGICAL_BANDS,
+  formatCut,
   formatFreqPlain,
   formatGain,
   formatPercent,
   formatQ,
+  formatRatio,
+  formatThreshold,
+  formatTimeMs,
   formatTrim,
   getSpec,
   snapPlain,
@@ -168,6 +173,7 @@ function ResonancePanel({
   selected,
   hovered,
   surgicalActive,
+  dynamicActive,
   audition,
   onScan,
   onCancel,
@@ -181,6 +187,7 @@ function ResonancePanel({
   selected: number[];
   hovered: number | null;
   surgicalActive: boolean;
+  dynamicActive: boolean;
   audition: boolean;
   onScan: () => void;
   onCancel: () => void;
@@ -219,10 +226,10 @@ function ResonancePanel({
         <Toggle
           label="HEAR REMOVED"
           checked={audition}
-          disabled={!surgicalActive}
+          disabled={!surgicalActive && !dynamicActive}
           variant="accent"
           onChange={onAudition}
-          tip="Monitor the surgical cuts in isolation. This listening aid is never saved with the preset."
+          tip="Monitor the static and dynamic resonance cuts in isolation. This listening aid is never saved with the preset."
         />
         <button
           type="button"
@@ -357,6 +364,141 @@ function SurgicalPanel({
               onDragStateChange={(dragging) => onDrag(qId, dragging)}
               onChange={(value) => onParam(qId, snapPlain(qSpec, value))}
             />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function DynamicPanel({
+  params,
+  reductions,
+  onParam,
+  onDrag,
+}: {
+  params: Record<string, number>;
+  reductions: number[];
+  onParam: (id: string, value: number) => void;
+  onDrag: (id: string, dragging: boolean) => void;
+}) {
+  return (
+    <div className="dynamic-panel" role="group" aria-label="Dynamic resonance bands">
+      {Array.from({ length: NUM_DYNAMIC_BANDS }, (_, i) => {
+        const n = i + 1;
+        const freqId = `dyn${n}Freq`;
+        const qId = `dyn${n}Q`;
+        const thresholdId = `dyn${n}Threshold`;
+        const ratioId = `dyn${n}Ratio`;
+        const attackId = `dyn${n}Attack`;
+        const releaseId = `dyn${n}Release`;
+        const rangeId = `dyn${n}Range`;
+        const onId = `dyn${n}On`;
+        const freqSpec = specOf(freqId);
+        const qSpec = specOf(qId);
+        const thresholdSpec = specOf(thresholdId);
+        const ratioSpec = specOf(ratioId);
+        const attackSpec = specOf(attackId);
+        const releaseSpec = specOf(releaseId);
+        const rangeSpec = specOf(rangeId);
+        const enabled = (params[onId] ?? 0) >= 0.5;
+        const reduction = Math.max(0, reductions[i] ?? 0);
+        const maxCut = params[rangeId] ?? rangeSpec.def;
+        const meterPercent = maxCut > 0 ? Math.min(1, reduction / maxCut) : 0;
+        return (
+          <div className={`dynamic-card${enabled ? ' enabled' : ''}`} key={n}>
+            <div className="dynamic-card-head">
+              <span className="dynamic-index">{n}</span>
+              <div className="dynamic-title">DYNAMIC {n}</div>
+              <Toggle
+                label="ON"
+                checked={enabled}
+                onChange={(value) => onParam(onId, value ? 1 : 0)}
+                tip="Enable this zero-latency dynamic resonance cut."
+              />
+            </div>
+            <Slider
+              label="FREQ"
+              value={params[freqId] ?? freqSpec.def}
+              min={freqSpec.min}
+              max={freqSpec.max}
+              skew={freqSpec.skew}
+              format={formatFreqPlain}
+              tip="Centre of the band that will be cut when it runs hotter than its neighbours."
+              onDragStateChange={(dragging) => onDrag(freqId, dragging)}
+              onChange={(value) => onParam(freqId, snapPlain(freqSpec, value))}
+            />
+            <Slider
+              label="Q"
+              value={params[qId] ?? qSpec.def}
+              min={qSpec.min}
+              max={qSpec.max}
+              format={formatQ}
+              tip="Width of the dynamic cut. Lower Q removes a broader region."
+              onDragStateChange={(dragging) => onDrag(qId, dragging)}
+              onChange={(value) => onParam(qId, snapPlain(qSpec, value))}
+            />
+            <Slider
+              label="THRESH"
+              value={params[thresholdId] ?? thresholdSpec.def}
+              min={thresholdSpec.min}
+              max={thresholdSpec.max}
+              format={formatThreshold}
+              tip="How far this band must exceed the adjacent half-octave bands before it cuts. Relative, so playing louder does not trigger it."
+              onDragStateChange={(dragging) => onDrag(thresholdId, dragging)}
+              onChange={(value) => onParam(thresholdId, snapPlain(thresholdSpec, value))}
+            />
+            <Slider
+              label="RATIO"
+              value={params[ratioId] ?? ratioSpec.def}
+              min={ratioSpec.min}
+              max={ratioSpec.max}
+              format={formatRatio}
+              tip="How strongly excess energy is reduced. 1:1 is off; higher ratios cut closer to the maximum."
+              onDragStateChange={(dragging) => onDrag(ratioId, dragging)}
+              onChange={(value) => onParam(ratioId, snapPlain(ratioSpec, value))}
+            />
+            <Slider
+              label="ATTACK"
+              value={params[attackId] ?? attackSpec.def}
+              min={attackSpec.min}
+              max={attackSpec.max}
+              skew={attackSpec.skew}
+              format={formatTimeMs}
+              tip="How quickly the cut engages after excess energy appears."
+              onDragStateChange={(dragging) => onDrag(attackId, dragging)}
+              onChange={(value) => onParam(attackId, snapPlain(attackSpec, value))}
+            />
+            <Slider
+              label="RELEASE"
+              value={params[releaseId] ?? releaseSpec.def}
+              min={releaseSpec.min}
+              max={releaseSpec.max}
+              skew={releaseSpec.skew}
+              format={formatTimeMs}
+              tip="How quickly the cut recovers after the excess energy stops."
+              onDragStateChange={(dragging) => onDrag(releaseId, dragging)}
+              onChange={(value) => onParam(releaseId, snapPlain(releaseSpec, value))}
+            />
+            <Slider
+              label="MAX CUT"
+              value={params[rangeId] ?? rangeSpec.def}
+              min={rangeSpec.min}
+              max={rangeSpec.max}
+              format={formatCut}
+              tip="Ceiling for this band's gain reduction. The engine only ever cuts."
+              onDragStateChange={(dragging) => onDrag(rangeId, dragging)}
+              onChange={(value) => onParam(rangeId, snapPlain(rangeSpec, value))}
+            />
+            <div className="dynamic-gr" title="Live gain reduction for this band.">
+              <span className="dynamic-gr-label">GR</span>
+              <div className="dynamic-gr-track">
+                <div className="dynamic-gr-fill" style={{ width: `${meterPercent * 100}%` }} />
+              </div>
+              <span className="dynamic-gr-value">
+                {reduction > 0.05 ? `-${reduction.toFixed(1)} dB` : '0.0 dB'}
+              </span>
+            </div>
           </div>
         );
       })}
@@ -944,6 +1086,18 @@ export function App(): React.JSX.Element {
     for (let i = 0; i < NUM_SURGICAL_BANDS; i++) {
       const n = i + 1;
       if ((state.params[`res${n}On`] ?? 0) >= 0.5 && Math.abs(state.params[`res${n}Gain`] ?? 0) > 1e-3) {
+        return true;
+      }
+    }
+    return false;
+  }, [state.params]);
+
+  const dynamicActive = useMemo(() => {
+    for (let i = 0; i < NUM_DYNAMIC_BANDS; i++) {
+      const n = i + 1;
+      if ((state.params[`dyn${n}On`] ?? 0) >= 0.5
+        && (state.params[`dyn${n}Range`] ?? 0) > 1e-3
+        && (state.params[`dyn${n}Ratio`] ?? 0) > 1.000001) {
         return true;
       }
     }
@@ -1605,6 +1759,7 @@ export function App(): React.JSX.Element {
             selected={selectedCandidates}
             hovered={hoveredCandidate}
             surgicalActive={surgicalActive}
+            dynamicActive={dynamicActive}
             audition={(state.params.resAudition ?? 0) >= 0.5}
             onScan={onResonanceScan}
             onCancel={onResonanceCancel}
@@ -1623,6 +1778,21 @@ export function App(): React.JSX.Element {
               </span>
             </div>
             <SurgicalPanel params={state.params} onParam={setParam} onDrag={knobDrag} />
+          </section>
+
+          <section className="parameter-section dynamic-section">
+            <div className="section-heading">
+              <span className="section-title">Dynamic resonance cuts</span>
+              <span className="section-hint">
+                four zero-latency bands · cut only when a band exceeds its neighbouring half-octaves
+              </span>
+            </div>
+            <DynamicPanel
+              params={state.params}
+              reductions={state.dynamicReduction}
+              onParam={setParam}
+              onDrag={knobDrag}
+            />
           </section>
 
           {analyzerPanel}

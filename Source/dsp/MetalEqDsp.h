@@ -31,6 +31,11 @@ inline constexpr int    kNumBands     = 5;
     player's tone moves.
 */
 inline constexpr int    kNumSurgicalBands = 6;
+/** Broad, zero-latency dynamic resonance bands (V3.1). Kept separate from the
+    static surgical bands: these respond to momentary excess energy rather than
+    to a fixed narrow peak.
+*/
+inline constexpr int    kNumDynamicBands = 4;
 // Worst case: 24 base/macro filters plus up to 18 filters from six shapes
 // plus six surgical resonance cuts.
 inline constexpr int    kMaxChainSize = 48;
@@ -66,7 +71,8 @@ enum class FilterType : uint8_t
     lowPass,
     lowShelf,
     highShelf,
-    peak
+    peak,
+    bandPass
 };
 
 /** One section of the EQ chain. `gainDb` is ignored by high/low pass sections. */
@@ -123,8 +129,10 @@ inline BiquadCoeffs designBiquad (FilterType type,
     q      = clampValue (q, 0.05, 40.0);
     gainDb = clampValue (gainDb, -48.0, 48.0);
 
-    // A flat shelf or peak is a straight-through: skip it entirely.
-    if (type != FilterType::highPass && type != FilterType::lowPass && std::abs (gainDb) < 1.0e-4)
+    // A flat shelf or peak is a straight-through: skip it entirely. A
+    // band-pass ignores gainDb and is always active.
+    if (type != FilterType::highPass && type != FilterType::lowPass
+        && type != FilterType::bandPass && std::abs (gainDb) < 1.0e-4)
         return identity;
 
     const double w0    = 2.0 * kPi * freq / sampleRate;
@@ -149,6 +157,17 @@ inline BiquadCoeffs designBiquad (FilterType type,
             b0 = (1.0 - cosW0) * 0.5;
             b1 = 1.0 - cosW0;
             b2 = b0;
+            a0 = 1.0 + alpha;
+            a1 = -2.0 * cosW0;
+            a2 = 1.0 - alpha;
+            break;
+
+        case FilterType::bandPass:
+            // Constant 0 dB peak gain. This is the detector and audio shape
+            // used by the dynamic resonance section.
+            b0 = alpha;
+            b1 = 0.0;
+            b2 = -alpha;
             a0 = 1.0 + alpha;
             a1 = -2.0 * cosW0;
             a2 = 1.0 - alpha;
@@ -258,6 +277,39 @@ struct SurgicalBandSettings
     bool   on     = false;
 };
 
+/** One broad dynamic resonance band.
+
+    `thresholdDb` is deliberately relative: the detector compares the energy at
+    `freq` with the energy in the adjacent half-octave bands. A band therefore
+    cuts only when it is disproportionately hot, not merely because the player
+    is loud. `maxCutDb` is a positive magnitude; the engine only ever cuts.
+*/
+struct DynamicBandSettings
+{
+    double freq        = 1000.0;
+    double q           = 1.2;
+    double thresholdDb = 6.0;
+    double ratio       = 4.0;
+    double attackMs    = 5.0;
+    double releaseMs   = 120.0;
+    double maxCutDb    = 6.0;
+    bool   on          = false;
+};
+
+/** The four neutral dynamic bands: useful starting frequencies, all disabled. */
+inline constexpr std::array<double, kNumDynamicBands> kDefaultDynamicFrequencies
+    { 250.0, 700.0, 3200.0, 7500.0 };
+
+inline constexpr std::array<DynamicBandSettings, kNumDynamicBands> defaultDynamicBands() noexcept
+{
+    std::array<DynamicBandSettings, kNumDynamicBands> bands {};
+
+    for (int i = 0; i < kNumDynamicBands; ++i)
+        bands[static_cast<size_t> (i)].freq = kDefaultDynamicFrequencies[static_cast<size_t> (i)];
+
+    return bands;
+}
+
 /** All user-facing EQ parameters (no macros). */
 struct EqSettings
 {
@@ -275,6 +327,8 @@ struct EqSettings
     std::array<BandSettings, kNumBands> bands {};
     /** V3 narrow resonance cuts, applied after the musical bands. */
     std::array<SurgicalBandSettings, kNumSurgicalBands> surgical {};
+    /** V3.1 zero-latency dynamic resonance cuts, applied after the static EQ. */
+    std::array<DynamicBandSettings, kNumDynamicBands> dynamic = defaultDynamicBands();
     // TIGHTEN, SCOOP, MID PUNCH, PICK ATTACK, FIZZ TAMER, BRIGHTEN.
     // Separate layers preserve the user's EQ and macro edits when toggled.
     std::array<bool, 6> shapes {};
@@ -310,6 +364,18 @@ inline bool operator!= (const SurgicalBandSettings& a, const SurgicalBandSetting
     return ! (a == b);
 }
 
+inline bool operator== (const DynamicBandSettings& a, const DynamicBandSettings& b) noexcept
+{
+    return a.freq == b.freq && a.q == b.q && a.thresholdDb == b.thresholdDb
+        && a.ratio == b.ratio && a.attackMs == b.attackMs && a.releaseMs == b.releaseMs
+        && a.maxCutDb == b.maxCutDb && a.on == b.on;
+}
+
+inline bool operator!= (const DynamicBandSettings& a, const DynamicBandSettings& b) noexcept
+{
+    return ! (a == b);
+}
+
 inline bool operator== (const EqSettings& a, const EqSettings& b) noexcept
 {
     return a.hpFreq == b.hpFreq && a.lpFreq == b.lpFreq
@@ -318,6 +384,7 @@ inline bool operator== (const EqSettings& a, const EqSettings& b) noexcept
         && a.lsFreq == b.lsFreq && a.lsGainDb == b.lsGainDb
         && a.hsFreq == b.hsFreq && a.hsGainDb == b.hsGainDb
         && a.bands == b.bands && a.surgical == b.surgical
+        && a.dynamic == b.dynamic
         && a.shapes == b.shapes
         && a.trimDb == b.trimDb;
 }
@@ -545,6 +612,26 @@ inline void buildSurgicalChain (ChainSpec& chain, const EqSettings& eq, double s
     }
 
     chain.trimDb = 0.0;
+}
+
+/** True when at least one static surgical band will actually cut. */
+inline bool hasActiveSurgicalCuts (const EqSettings& eq) noexcept
+{
+    for (const auto& b : eq.surgical)
+        if (b.on && std::abs (b.gainDb) > 1.0e-3)
+            return true;
+
+    return false;
+}
+
+/** True when at least one dynamic band is enabled and able to cut. */
+inline bool hasActiveDynamicCuts (const EqSettings& eq) noexcept
+{
+    for (const auto& b : eq.dynamic)
+        if (b.on && b.maxCutDb > 1.0e-3 && b.ratio > 1.0 + 1.0e-6)
+            return true;
+
+    return false;
 }
 
 /** Response of a whole chain at one frequency. Pure function, used by the GUI
@@ -981,6 +1068,375 @@ private:
     std::array<TrimState, kMaxChannels> trim_ {};
     float trimGain_ = 1.0f;
     float trimRampStart_ = 1.0f;
+};
+
+//==============================================================================
+/** Zero-latency dynamic resonance section.
+
+    Each band detects excess energy relative to two adjacent half-octave
+    reference bands, then applies a smooth band-pass-shaped cut. The detector
+    and gain smoother are stereo-linked, while the audio band-pass state stays
+    per-channel. There is no lookahead: sample 0 is processed with sample 0's
+    input, and the detector only starts to react after it has seen energy.
+
+    The audio cut is implemented as `x + (gain - 1) * bandpass(x)` rather than
+    by redesigning a high-Q peaking biquad every sample. That keeps the
+    coefficient maths on the message/block boundary and makes the real-time
+    path branch-light.
+*/
+class DynamicResonanceEngine
+{
+public:
+    void prepare (double sampleRate) noexcept
+    {
+        sampleRate_ = (sampleRate > 0.0) ? sampleRate : 44100.0;
+        detectorAttackCoeff_  = onePoleCoeff (0.5);
+        detectorReleaseCoeff_ = onePoleCoeff (5.0);
+        reset();
+    }
+
+    void reset() noexcept
+    {
+        for (auto& b : bands_)
+            resetBand (b);
+
+        for (auto& value : reductionDb_)
+            value = 0.0;
+    }
+
+    /** Install new settings. Called from the audio thread when the cached
+        parameter snapshot changes; coefficient design happens here, never
+        inside the per-sample loop.
+    */
+    void setSettings (const std::array<DynamicBandSettings, kNumDynamicBands>& settings,
+                      int rampLength) noexcept
+    {
+        const int len = clampValue (rampLength, 1, 1 << 20);
+
+        for (int i = 0; i < kNumDynamicBands; ++i)
+        {
+            const auto& s = settings[static_cast<size_t> (i)];
+            auto& b = bands_[static_cast<size_t> (i)];
+
+            b.freq        = clampValue (s.freq, 80.0, 14000.0);
+            b.q           = clampValue (s.q, 0.5, 6.0);
+            b.thresholdDb = clampValue (s.thresholdDb, 0.0, 24.0);
+            b.ratio       = clampValue (s.ratio, 1.0, 10.0);
+            b.maxCutDb    = clampValue (s.maxCutDb, 0.0, 12.0);
+            b.attackCoeff  = onePoleCoeff (clampValue (s.attackMs, 0.5, 50.0));
+            b.releaseCoeff = onePoleCoeff (clampValue (s.releaseMs, 20.0, 1000.0));
+            b.enabled = s.on && b.maxCutDb > 1.0e-4 && b.ratio > 1.0 + 1.0e-6;
+
+            if (! b.enabled && b.grDb <= 1.0e-4)
+            {
+                resetBand (b);
+                continue;
+            }
+
+            if (! b.enabled)
+                continue; // keep the current filters alive while the cut fades
+
+            const double refLowFreq  = b.freq * 0.70710678118654752440;
+            const double refHighFreq = b.freq * 1.41421356237309504880;
+
+            // Detection uses a fixed, narrow analysis bandwidth so the user's
+            // cut Q cannot make the relative detector deaf to narrow peaks.
+            // The audible cut gets its own band-pass with the user's Q.
+            b.audioRamp.setTarget (designBiquad (FilterType::bandPass, sampleRate_,
+                                                b.freq, b.q, 0.0), len);
+            b.centerRamp.setTarget (designBiquad (FilterType::bandPass, sampleRate_,
+                                                  b.freq, kDetectorQ, 0.0), len);
+            b.lowRamp.setTarget (designBiquad (FilterType::bandPass, sampleRate_,
+                                               refLowFreq, kDetectorQ, 0.0), len);
+            b.highRamp.setTarget (designBiquad (FilterType::bandPass, sampleRate_,
+                                                refHighFreq, kDetectorQ, 0.0), len);
+        }
+    }
+
+    void process (float* const* channelData, int numChannels, int numSamples) noexcept
+    {
+        if (channelData == nullptr || numChannels <= 0 || numSamples <= 0)
+            return;
+
+        numChannels = clampValue (numChannels, 0, kMaxChannels);
+
+        for (int bandIndex = 0; bandIndex < kNumDynamicBands; ++bandIndex)
+        {
+            auto& b = bands_[static_cast<size_t> (bandIndex)];
+
+            if (! b.enabled && b.grDb <= 1.0e-4)
+            {
+                reductionDb_[static_cast<size_t> (bandIndex)] = 0.0;
+                continue;
+            }
+
+            double blockMaxGr = b.grDb;
+            double audioOut[kMaxChannels] {};
+            double lowSq[kMaxChannels] {};
+            double highSq[kMaxChannels] {};
+
+            for (int i = 0; i < numSamples; ++i)
+            {
+                for (int ch = 0; ch < numChannels; ++ch)
+                {
+                    float* data = channelData[ch];
+                    if (data == nullptr)
+                        continue;
+
+                    const double x = data[i];
+                    const double audio = processBiquad (x, b.audioState[static_cast<size_t> (ch)],
+                                                        b.audioRamp.current);
+                    const double center = processBiquad (x, b.centerState[static_cast<size_t> (ch)],
+                                                         b.centerRamp.current);
+                    const double low = processBiquad (x, b.lowState[static_cast<size_t> (ch)],
+                                                      b.lowRamp.current);
+                    const double high = processBiquad (x, b.highState[static_cast<size_t> (ch)],
+                                                       b.highRamp.current);
+
+                    audioOut[ch] = audio;
+                    lowSq[ch]  = low * low;
+                    highSq[ch] = high * high;
+
+                    b.centerEnv[static_cast<size_t> (ch)] = updateEnvelope (
+                        b.centerEnv[static_cast<size_t> (ch)], center * center,
+                        detectorAttackCoeff_, detectorReleaseCoeff_);
+                    b.lowEnv[static_cast<size_t> (ch)] = updateEnvelope (
+                        b.lowEnv[static_cast<size_t> (ch)], lowSq[ch],
+                        detectorAttackCoeff_, detectorReleaseCoeff_);
+                    b.highEnv[static_cast<size_t> (ch)] = updateEnvelope (
+                        b.highEnv[static_cast<size_t> (ch)], highSq[ch],
+                        detectorAttackCoeff_, detectorReleaseCoeff_);
+                }
+
+                double linkedCenter = 0.0;
+                double linkedLow    = 0.0;
+                double linkedHigh   = 0.0;
+
+                for (int ch = 0; ch < numChannels; ++ch)
+                {
+                    linkedCenter = std::max (linkedCenter, b.centerEnv[static_cast<size_t> (ch)]);
+                    linkedLow    = std::max (linkedLow,    b.lowEnv[static_cast<size_t> (ch)]);
+                    linkedHigh   = std::max (linkedHigh,   b.highEnv[static_cast<size_t> (ch)]);
+                }
+
+                const double reference = std::max (linkedLow, linkedHigh);
+                double targetGr = 0.0;
+
+                if (b.enabled && linkedCenter > kGateMeanSquare)
+                {
+                    const double excessDb = 10.0 * std::log10 ((linkedCenter + kSilenceFloor)
+                                                              / (reference + kSilenceFloor));
+                    const double over = excessDb - b.thresholdDb;
+
+                    if (over > 0.0)
+                        targetGr = std::min (b.maxCutDb, over * (1.0 - 1.0 / b.ratio));
+                }
+
+                const double coeff = (targetGr > b.grDb) ? b.attackCoeff : b.releaseCoeff;
+                b.grDb = coeff * b.grDb + (1.0 - coeff) * targetGr;
+
+                if (b.grDb < 1.0e-5)
+                    b.grDb = 0.0;
+
+                blockMaxGr = std::max (blockMaxGr, b.grDb);
+
+                if (b.grDb > 1.0e-6)
+                {
+                    const double gain = std::pow (10.0, -b.grDb / 20.0);
+
+                    for (int ch = 0; ch < numChannels; ++ch)
+                    {
+                        float* data = channelData[ch];
+                        if (data != nullptr)
+                            data[i] += static_cast<float> ((gain - 1.0) * audioOut[ch]);
+                    }
+                }
+
+                b.audioRamp.advance();
+                b.centerRamp.advance();
+                b.lowRamp.advance();
+                b.highRamp.advance();
+            }
+
+            reductionDb_[static_cast<size_t> (bandIndex)] = blockMaxGr;
+
+            if (! b.enabled && b.grDb <= 1.0e-4)
+            {
+                resetBand (b);
+                reductionDb_[static_cast<size_t> (bandIndex)] = 0.0;
+            }
+        }
+    }
+
+    /** Positive gain reduction in dB, for the UI meter. */
+    double getGainReductionDb (int band) const noexcept
+    {
+        if (band < 0 || band >= kNumDynamicBands)
+            return 0.0;
+
+        return reductionDb_[static_cast<size_t> (band)];
+    }
+
+private:
+    static constexpr double kDetectorQ = 4.0;
+    static constexpr double kGateMeanSquare = 1.0e-6;   // about -60 dBFS
+    static constexpr double kSilenceFloor = 1.0e-12;
+
+    struct BiquadState
+    {
+        double z1 = 0.0;
+        double z2 = 0.0;
+    };
+
+    struct CoeffRamp
+    {
+        BiquadCoeffs current {};
+        BiquadCoeffs target {};
+        BiquadCoeffs step {};
+        int remaining = 0;
+        bool primed = false;
+
+        void snap (const BiquadCoeffs& c) noexcept
+        {
+            current = target = c;
+            step = BiquadCoeffs {};
+            remaining = 0;
+            primed = true;
+        }
+
+        void setTarget (const BiquadCoeffs& c, int length) noexcept
+        {
+            target = c;
+
+            if (! primed)
+            {
+                snap (c);
+                return;
+            }
+
+            if (current == c)
+            {
+                remaining = 0;
+                return;
+            }
+
+            const int len = clampValue (length, 1, 1 << 20);
+
+            if (len <= 1)
+            {
+                snap (c);
+                return;
+            }
+
+            const double inv = 1.0 / static_cast<double> (len);
+            step.b0 = (c.b0 - current.b0) * inv;
+            step.b1 = (c.b1 - current.b1) * inv;
+            step.b2 = (c.b2 - current.b2) * inv;
+            step.a1 = (c.a1 - current.a1) * inv;
+            step.a2 = (c.a2 - current.a2) * inv;
+            remaining = len;
+        }
+
+        void advance() noexcept
+        {
+            if (remaining <= 0)
+                return;
+
+            current.b0 += step.b0;
+            current.b1 += step.b1;
+            current.b2 += step.b2;
+            current.a1 += step.a1;
+            current.a2 += step.a2;
+            --remaining;
+
+            if (remaining == 0)
+                current = target;
+        }
+
+        void reset() noexcept
+        {
+            current = BiquadCoeffs {};
+            target = BiquadCoeffs {};
+            step = BiquadCoeffs {};
+            remaining = 0;
+            primed = false;
+        }
+    };
+
+    struct BandState
+    {
+        double freq = 1000.0;
+        double q = 1.2;
+        double thresholdDb = 6.0;
+        double ratio = 4.0;
+        double maxCutDb = 6.0;
+        double attackCoeff = 0.0;
+        double releaseCoeff = 0.0;
+        bool enabled = false;
+
+        CoeffRamp audioRamp;
+        CoeffRamp centerRamp;
+        CoeffRamp lowRamp;
+        CoeffRamp highRamp;
+
+        std::array<BiquadState, kMaxChannels> audioState {};
+        std::array<BiquadState, kMaxChannels> centerState {};
+        std::array<BiquadState, kMaxChannels> lowState {};
+        std::array<BiquadState, kMaxChannels> highState {};
+
+        std::array<double, kMaxChannels> centerEnv {};
+        std::array<double, kMaxChannels> lowEnv {};
+        std::array<double, kMaxChannels> highEnv {};
+
+        double grDb = 0.0;
+    };
+
+    double onePoleCoeff (double milliseconds) const noexcept
+    {
+        if (milliseconds <= 0.0)
+            return 0.0;
+
+        return std::exp (-1.0 / (milliseconds * 0.001 * sampleRate_));
+    }
+
+    static double processBiquad (double x, BiquadState& s, const BiquadCoeffs& c) noexcept
+    {
+        const double y = c.b0 * x + s.z1;
+        s.z1 = c.b1 * x - c.a1 * y + s.z2;
+        s.z2 = c.b2 * x - c.a2 * y;
+        return y;
+    }
+
+    static double updateEnvelope (double env, double square, double attack, double release) noexcept
+    {
+        const double coeff = (square > env) ? attack : release;
+        return coeff * env + (1.0 - coeff) * square;
+    }
+
+    static void resetBand (BandState& b) noexcept
+    {
+        b.audioRamp.reset();
+        b.centerRamp.reset();
+        b.lowRamp.reset();
+        b.highRamp.reset();
+
+        for (auto& s : b.audioState)  s = BiquadState {};
+        for (auto& s : b.centerState) s = BiquadState {};
+        for (auto& s : b.lowState)    s = BiquadState {};
+        for (auto& s : b.highState)   s = BiquadState {};
+
+        b.centerEnv.fill (0.0);
+        b.lowEnv.fill (0.0);
+        b.highEnv.fill (0.0);
+        b.grDb = 0.0;
+        b.enabled = false;
+    }
+
+    double sampleRate_ = 44100.0;
+    double detectorAttackCoeff_ = 0.0;
+    double detectorReleaseCoeff_ = 0.0;
+    std::array<BandState, kNumDynamicBands> bands_ {};
+    std::array<double, kNumDynamicBands> reductionDb_ {};
 };
 
 } // namespace metaleq

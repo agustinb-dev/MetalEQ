@@ -28,7 +28,7 @@ import type {
   TickMessage,
 } from './types';
 import { PROTOCOL_VERSION } from './types';
-import { PARAMS, clampPlain, getSpec, snapPlain, defaultParams } from './params';
+import { PARAMS, NUM_DYNAMIC_BANDS, clampPlain, getSpec, snapPlain, defaultParams } from './params';
 import {
   buildChain,
   chainResponseDb,
@@ -132,6 +132,17 @@ function paramsToMacros(p: Record<string, number>): MacroSettings {
   return { tight: p.tight, body: p.body, scoop: p.scoop, bite: p.bite, fizzCut: p.fizzCut };
 }
 
+/** Restore the V3.1 dynamic section to its neutral, all-off defaults. */
+function resetDynamicParams(p: Record<string, number>): void {
+  for (let i = 1; i <= NUM_DYNAMIC_BANDS; i++) {
+    for (const field of ['Freq', 'Q', 'Threshold', 'Ratio', 'Attack', 'Release', 'Range', 'On']) {
+      const id = `dyn${i}${field}`;
+      const spec = getSpec(id);
+      if (spec) p[id] = spec.def;
+    }
+  }
+}
+
 function buildCurve(p: Record<string, number>, sampleRate: number): CurveInfo {
   const chain = buildChain(paramsToEq(p), paramsToMacros(p), sampleRate);
   const points: number[] = [];
@@ -220,6 +231,7 @@ export class MockBridge implements MetalEqBridge {
       analyzer: { ...this.analyzer },
       resonance: { ...this.resonance, candidates: [...this.resonance.candidates] },
       curve: this.buildCurve(),
+      dynamicReduction: [0, 0, 0, 0],
     };
     this.curveDirty = false;
     this.fullSync = true;
@@ -258,6 +270,7 @@ export class MockBridge implements MetalEqBridge {
     const t = Date.now() / 1000;
     const idle = 0.08 + 0.05 * Math.sin(t * 2.3);
     msg.meters = { in: Math.max(0, idle), out: Math.max(0, idle * 0.85) };
+    msg.dynamicReduction = Array.from({ length: NUM_DYNAMIC_BANDS }, () => 0);
 
     if (this.analyzerDirty) {
       msg.analyzer = { ...this.analyzer, changed: true };
@@ -351,6 +364,7 @@ export class MockBridge implements MetalEqBridge {
     // Canonical v2 mapping: selector 1 = factory[0].
     const def = FACTORY_PRESETS[safe - 1];
     const eq = def.eq;
+    resetDynamicParams(this.params);
     this.params.hpFreq = eq.hpFreq;
     this.params.hpSlope = eq.hpSlope;
     this.params.lpFreq = eq.lpFreq;
@@ -418,6 +432,7 @@ export class MockBridge implements MetalEqBridge {
       this.params[`res${i + 1}Q`] = neutral.surgical[i].q;
       this.params[`res${i + 1}On`] = 0;
     }
+    resetDynamicParams(this.params);
     this.params.trim = 0;
     this.params.tight = 0;
     this.params.body = 0.5;
@@ -461,6 +476,7 @@ export class MockBridge implements MetalEqBridge {
       this.params[`res${i + 1}Q`] = neutral.surgical[i].q;
       this.params[`res${i + 1}On`] = 0;
     }
+    resetDynamicParams(this.params);
     for (const [key, value] of Object.entries(file.params)) {
       const spec = getSpec(key);
       if (spec && key !== 'bypass' && key !== 'abCompare') {

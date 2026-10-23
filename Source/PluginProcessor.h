@@ -107,6 +107,14 @@ public:
         static const char* resGain[metaleq::kNumSurgicalBands];
         static const char* resQ[metaleq::kNumSurgicalBands];
         static const char* resOn[metaleq::kNumSurgicalBands];
+        static const char* dynFreq[metaleq::kNumDynamicBands];
+        static const char* dynQ[metaleq::kNumDynamicBands];
+        static const char* dynThreshold[metaleq::kNumDynamicBands];
+        static const char* dynRatio[metaleq::kNumDynamicBands];
+        static const char* dynAttack[metaleq::kNumDynamicBands];
+        static const char* dynRelease[metaleq::kNumDynamicBands];
+        static const char* dynRange[metaleq::kNumDynamicBands];
+        static const char* dynOn[metaleq::kNumDynamicBands];
         static const char* shapeOn[6];
         static const char* trim;
         static const char* tight;
@@ -183,6 +191,9 @@ public:
     /** Peak level of the last processed block, for the GUI meter. */
     float getPeakLevel (int channel) const noexcept;
     float getInputPeakLevel (int channel) const noexcept;
+
+    /** Current dynamic-band gain reduction in positive dB, for the UI meter. */
+    float getDynamicGainReductionDb (int band) const noexcept;
 
     void setMeteringEnabled (bool shouldBeEnabled) noexcept
         {
@@ -265,13 +276,13 @@ private:
     juce::ValueTree getSoundParameterState (bool includeTrim = true) const;
     bool applySoundParameterState (const juce::ValueTree& state, juce::String& error,
                                    bool includeTrim = true);
-    /** Appends defaults for V3 surgical parameters that did not exist when an
-        older user preset or project state was written. Missing legacy fields
-        are still rejected.
+    /** Appends defaults for V3 surgical and V3.1 dynamic parameters that did
+        not exist when an older user preset or project state was written.
+        Missing legacy fields are still rejected.
     */
     juce::ValueTree migrateSoundParameterState (const juce::ValueTree& state,
                                                 bool includeTrim = true) const;
-    static bool isV3SurgicalParameterId (const juce::String& id);
+    static bool isOptionalResonanceParameterId (const juce::String& id);
     void markCurrentToneAsCustom();
     void rememberCurrentAsLoadedPreset (const juce::String& name, bool isUser);
     juce::File getUserPresetFile (const juce::String& name) const;
@@ -362,9 +373,16 @@ private:
 
     metaleq::EqEngine engine;
 
-    // Delta monitor ("hear what the surgical cuts remove"). Both engines and
-    // all scratch buffers are prepared on the message thread; the audio thread
-    // only copies and multiplies in preallocated memory.
+    // V3.1 zero-latency dynamic resonance section, applied after the static
+    // chain. The audition engine is a second instance so the delta monitor can
+    // include both static surgical cuts and dynamic cuts without sharing
+    // detector state with the main path.
+    metaleq::DynamicResonanceEngine dynamicEngine;
+    metaleq::DynamicResonanceEngine auditionDynamicEngine;
+
+    // Delta monitor ("hear what the resonance section removes"). Both engines
+    // and all scratch buffers are prepared on the message thread; the audio
+    // thread only copies and multiplies in preallocated memory.
     metaleq::EqEngine auditionEngine;
     metaleq::EqSettings cachedAuditionEq {};
     double cachedAuditionSampleRate = 0.0;
@@ -373,6 +391,7 @@ private:
     juce::AudioBuffer<float> auditionDryBuffer;
     juce::AudioBuffer<float> auditionWetBuffer;
 
+    std::array<std::atomic<float>, metaleq::kNumDynamicBands> dynamicReductionDb {};
     std::array<std::atomic<float>, metaleq::kMaxChannels> peakLevels {};
     std::array<std::atomic<float>, metaleq::kMaxChannels> inputPeakLevels {};
 

@@ -37,6 +37,11 @@ void testFactoryRecall (MetalEQAudioProcessor& processor)
     check (processor.getSelectedPresetIndex() == 6, "canonical factory selector index is factory index + 1");
     check (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::preset) > 5.5f,
            "preset parameter reports canonical index");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynFreq[0]) - 250.0f) < 0.1f
+           && std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynFreq[3]) - 7500.0f) < 0.1f,
+           "factory presets keep the neutral dynamic frequencies");
+    check (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynOn[0]) < 0.5f,
+           "factory presets leave dynamic bands disabled");
     check (! processor.applyPresetById ("not-a-real-preset"), "unknown stable id recall fails");
 
     // Direct canonical recall, including the off-by-one boundary that used to
@@ -143,7 +148,7 @@ void testStateRoundTrip (MetalEQAudioProcessor& processor)
 
     const auto tree = juce::ValueTree::readFromData (state.getData(), static_cast<size_t> (state.getSize()));
     check (tree.isValid() && tree.hasType ("MetalEQState"), "state has the expected root type");
-    check (static_cast<int> (tree.getProperty ("version")) == 3, "state uses schema version 3");
+    check (static_cast<int> (tree.getProperty ("version")) == 4, "state uses schema version 4");
     check (tree.getChildWithName ("AB").isValid(), "state stores A/B slots");
     check (tree.getChildWithName ("BASELINE").isValid(), "state stores a dirty baseline");
     check (tree.getChildWithName ("AB").getNumChildren() == 2, "state stores both A/B slots");
@@ -196,6 +201,49 @@ void testStateRoundTrip (MetalEQAudioProcessor& processor)
            "state restores a surgical cut");
     check (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::resOn[0]) > 0.5f,
            "state restores a surgical band enable");
+
+    // V3.1 dynamic bands are session state too, with every per-band control.
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynFreq[0], 733.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynQ[0], 2.5f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynThreshold[0], 9.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynRatio[0], 6.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynAttack[0], 3.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynRelease[0], 250.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynRange[0], 10.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynOn[0], 1.0f);
+
+    processor.getStateInformation (state);
+    const auto dynamicTree = juce::ValueTree::readFromData (state.getData(),
+                                                            static_cast<size_t> (state.getSize()));
+    bool dynamicSaved = false;
+    const auto dynamicParams = dynamicTree.getChildWithName ("PARAMS");
+    for (int i = 0; i < dynamicParams.getNumChildren(); ++i)
+    {
+        const auto id = dynamicParams.getChild (i).getProperty ("id").toString();
+        if (id == MetalEQAudioProcessor::ParameterIDs::dynRange[0])
+            dynamicSaved = true;
+    }
+    check (dynamicSaved, "session state includes the dynamic resonance bands");
+
+    processor.resetToNeutral();
+    processor.setAbSlot (0);
+    processor.setStateInformation (state.getData(), static_cast<int> (state.getSize()));
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynFreq[0]) - 733.0f) < 0.1f,
+           "state restores a dynamic frequency");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynQ[0]) - 2.5f) < 0.01f,
+           "state restores a dynamic Q");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynThreshold[0]) - 9.0f) < 0.01f,
+           "state restores a dynamic threshold");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynRatio[0]) - 6.0f) < 0.01f,
+           "state restores a dynamic ratio");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynAttack[0]) - 3.0f) < 0.01f,
+           "state restores a dynamic attack");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynRelease[0]) - 250.0f) < 0.01f,
+           "state restores a dynamic release");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynRange[0]) - 10.0f) < 0.01f,
+           "state restores a dynamic maximum cut");
+    check (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynOn[0]) > 0.5f,
+           "state restores a dynamic band enable");
 
     // Changing a parameter marks the slot dirty; revert restores its baseline.
     processor.setAbSlot (1);
@@ -254,6 +302,66 @@ void testStateRoundTrip (MetalEQAudioProcessor& processor)
            "old session disables surgical bands");
     check (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::resAudition) < 0.5f,
            "old session disables the delta monitor");
+
+    // A version-3 session predates the dynamic bands. Those bands must start
+    // at their neutral, all-off defaults rather than inheriting APVTS values.
+    processor.setAbSlot (0);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynFreq[1], 6400.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynQ[1], 5.5f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynThreshold[1], 2.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynRatio[1], 8.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynAttack[1], 1.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynRelease[1], 400.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynRange[1], 11.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynOn[1], 1.0f);
+
+    juce::MemoryBlock v4State;
+    processor.getStateInformation (v4State);
+    auto v3Tree = juce::ValueTree::readFromData (v4State.getData(),
+                                                static_cast<size_t> (v4State.getSize()));
+    v3Tree.setProperty ("version", 3, nullptr);
+
+    const auto stripDynamic = [] (juce::ValueTree params)
+    {
+        if (! params.isValid())
+            return;
+        for (int i = params.getNumChildren(); --i >= 0;)
+            if (params.getChild (i).getProperty ("id").toString().startsWith ("dyn"))
+                params.removeChild (i, nullptr);
+    };
+
+    stripDynamic (v3Tree.getChildWithName ("PARAMS"));
+    stripDynamic (v3Tree.getChildWithName ("BASELINE").getChildWithName ("PARAMS"));
+    auto v3Ab = v3Tree.getChildWithName ("AB");
+    for (int i = 0; i < v3Ab.getNumChildren(); ++i)
+    {
+        stripDynamic (v3Ab.getChild (i).getChildWithName ("PARAMS"));
+        stripDynamic (v3Ab.getChild (i).getChildWithName ("BASELINE").getChildWithName ("PARAMS"));
+    }
+
+    juce::MemoryBlock v3Block;
+    {
+        juce::MemoryOutputStream stream (v3Block, false);
+        v3Tree.writeToStream (stream);
+    }
+    processor.setStateInformation (v3Block.getData(), static_cast<int> (v3Block.getSize()));
+
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynFreq[1]) - 700.0f) < 0.1f,
+           "old session resets dynamic frequency to its default");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynQ[1]) - 1.2f) < 0.01f,
+           "old session resets dynamic Q to its default");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynThreshold[1]) - 6.0f) < 0.01f,
+           "old session resets dynamic threshold to its default");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynRatio[1]) - 4.0f) < 0.01f,
+           "old session resets dynamic ratio to its default");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynAttack[1]) - 5.0f) < 0.01f,
+           "old session resets dynamic attack to its default");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynRelease[1]) - 120.0f) < 0.01f,
+           "old session resets dynamic release to its default");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynRange[1]) - 6.0f) < 0.01f,
+           "old session resets dynamic maximum cut to its default");
+    check (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynOn[1]) < 0.5f,
+           "old session disables dynamic bands");
 }
 } // namespace
 
@@ -299,33 +407,45 @@ int main()
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resQ[0], 9.5f);
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resOn[0], 1.0f);
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resAudition, 1.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynFreq[0], 733.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynQ[0], 2.5f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynThreshold[0], 9.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynRatio[0], 6.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynAttack[0], 3.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynRelease[0], 250.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynRange[0], 10.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynOn[0], 1.0f);
     check (processor.saveUserPreset (presetA, false, error), "user preset saves");
     check (error.isEmpty(), "successful save has no error");
 
-    // V3 user presets carry the surgical bands. The delta monitor is a
+    // V3.1 user presets carry both resonance sections. The delta monitor is a
     // listening aid, not tone, and must never be serialized.
     const auto presetAFile = presetDirectory.getChildFile (
         juce::File::createLegalFileName (presetA) + ".metaleq");
     const auto presetAXml = juce::XmlDocument::parse (presetAFile);
-    bool schemaIsTwo = false;
+    bool schemaIsThree = false;
     bool surgicalInPreset = false;
+    bool dynamicInPreset = false;
     bool auditionInPreset = false;
     if (presetAXml != nullptr)
     {
         const auto root = juce::ValueTree::fromXml (*presetAXml);
-        schemaIsTwo = root.getProperty ("schemaVersion").toString() == "2";
+        schemaIsThree = root.getProperty ("schemaVersion").toString() == "3";
         const auto params = root.getChildWithName ("PARAMS");
         for (int i = 0; i < params.getNumChildren(); ++i)
         {
             const auto id = params.getChild (i).getProperty ("id").toString();
             if (id == MetalEQAudioProcessor::ParameterIDs::resGain[0])
                 surgicalInPreset = true;
+            if (id == MetalEQAudioProcessor::ParameterIDs::dynRange[0])
+                dynamicInPreset = true;
             if (id == MetalEQAudioProcessor::ParameterIDs::resAudition)
                 auditionInPreset = true;
         }
     }
-    check (schemaIsTwo, "V3 user presets use schema version 2");
+    check (schemaIsThree, "V3.1 user presets use schema version 3");
     check (surgicalInPreset, "user presets include the surgical resonance bands");
+    check (dynamicInPreset, "user presets include the dynamic resonance bands");
     check (! auditionInPreset, "user presets exclude the temporary delta monitor");
 
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::bandFreq[2], 500.0f);
@@ -334,6 +454,14 @@ int main()
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::shapeOn[3], 0.0f);
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resGain[0], -1.0f);
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resOn[0], 0.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynFreq[0], 500.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynQ[0], 1.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynThreshold[0], 2.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynRatio[0], 2.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynAttack[0], 10.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynRelease[0], 60.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynRange[0], 3.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynOn[0], 0.0f);
     const bool loadedPreset = processor.loadUserPreset (presetA, error);
     if (! loadedPreset)
         std::cerr << "User preset load error: " << error << '\n';
@@ -352,6 +480,22 @@ int main()
            "preset round trip restores a surgical cut");
     check (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::resOn[0]) > 0.5f,
            "preset round trip restores a surgical band enable");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynFreq[0]) - 733.0f) < 0.1f,
+           "preset round trip restores a dynamic frequency");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynQ[0]) - 2.5f) < 0.01f,
+           "preset round trip restores a dynamic Q");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynThreshold[0]) - 9.0f) < 0.01f,
+           "preset round trip restores a dynamic threshold");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynRatio[0]) - 6.0f) < 0.01f,
+           "preset round trip restores a dynamic ratio");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynAttack[0]) - 3.0f) < 0.01f,
+           "preset round trip restores a dynamic attack");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynRelease[0]) - 250.0f) < 0.01f,
+           "preset round trip restores a dynamic release");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynRange[0]) - 10.0f) < 0.01f,
+           "preset round trip restores a dynamic maximum cut");
+    check (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynOn[0]) > 0.5f,
+           "preset round trip restores a dynamic band enable");
 
     check (! processor.saveUserPreset (presetA, false, error), "duplicate save is rejected without overwrite");
     check (processor.saveUserPreset (presetA, true, error), "explicit overwrite succeeds");
@@ -426,8 +570,11 @@ int main()
         root.setProperty ("schemaVersion", 1, nullptr);
         auto params = root.getChildWithName ("PARAMS");
         for (int i = params.getNumChildren(); --i >= 0;)
-            if (params.getChild (i).getProperty ("id").toString().startsWith ("res"))
+        {
+            const auto id = params.getChild (i).getProperty ("id").toString();
+            if (id.startsWith ("res") || id.startsWith ("dyn"))
                 params.removeChild (i, nullptr);
+        }
         const auto updatedXml = root.createXml();
         check (updatedXml != nullptr && oldSchemaFile.replaceWithText (updatedXml->toString()),
                "version-1 user preset fixture is written");
@@ -441,6 +588,14 @@ int main()
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resGain[2], -10.0f);
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resQ[2], 18.0f);
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resOn[2], 1.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynFreq[2], 6100.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynQ[2], 5.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynThreshold[2], 1.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynRatio[2], 9.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynAttack[2], 2.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynRelease[2], 500.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynRange[2], 12.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynOn[2], 1.0f);
     check (processor.loadUserPreset (oldSchemaName, error), "version-1 user preset loads");
     check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::resFreq[2]) - 1200.0f) < 0.1f,
            "old user preset fills the default surgical frequency");
@@ -450,6 +605,22 @@ int main()
            "old user preset fills the default surgical Q");
     check (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::resOn[2]) < 0.5f,
            "old user preset leaves the new surgical band disabled");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynFreq[2]) - 3200.0f) < 0.1f,
+           "old user preset fills the default dynamic frequency");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynQ[2]) - 1.2f) < 0.01f,
+           "old user preset fills the default dynamic Q");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynThreshold[2]) - 6.0f) < 0.01f,
+           "old user preset fills the default dynamic threshold");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynRatio[2]) - 4.0f) < 0.01f,
+           "old user preset fills the default dynamic ratio");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynAttack[2]) - 5.0f) < 0.01f,
+           "old user preset fills the default dynamic attack");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynRelease[2]) - 120.0f) < 0.01f,
+           "old user preset fills the default dynamic release");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynRange[2]) - 6.0f) < 0.01f,
+           "old user preset fills the default dynamic maximum cut");
+    check (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynOn[2]) < 0.5f,
+           "old user preset leaves the new dynamic band disabled");
     oldSchemaFile.deleteFile();
 
     check (! processor.loadUserPreset ("../outside", error), "path traversal preset name is rejected");

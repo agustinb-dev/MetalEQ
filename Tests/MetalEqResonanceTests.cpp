@@ -197,6 +197,221 @@ double surgicalResponse (const metaleq::EqSettings& eq, double freq)
     return metaleq::chainResponseDb (chain, sampleRate, freq);
 }
 
+//==============================================================================
+// V3.1 dynamic resonance section
+//==============================================================================
+
+std::vector<float> makeSine (double freq, double amplitude, double seconds)
+{
+    const int numSamples = static_cast<int> (sampleRate * seconds);
+    std::vector<float> samples (static_cast<size_t> (numSamples), 0.0f);
+    constexpr double twoPi = 6.283185307179586;
+
+    for (int i = 0; i < numSamples; ++i)
+        samples[static_cast<size_t> (i)] = static_cast<float> (
+            amplitude * std::sin (twoPi * freq * static_cast<double> (i) / sampleRate
+                                  + 1.5707963267948966));
+
+    return samples;
+}
+
+double rmsRange (const std::vector<float>& samples, size_t from, size_t to)
+{
+    double sum = 0.0;
+    for (size_t i = from; i < to; ++i)
+        sum += static_cast<double> (samples[i]) * static_cast<double> (samples[i]);
+
+    return std::sqrt (sum / static_cast<double> (to - from));
+}
+
+struct DynamicRunResult
+{
+    std::vector<float> output;
+    double gainReductionDb = 0.0;
+};
+
+DynamicRunResult runDynamicBand (const std::vector<float>& input,
+                                 const metaleq::DynamicBandSettings& band,
+                                 int tailSilenceSamples = 0)
+{
+    metaleq::DynamicResonanceEngine engine;
+    engine.prepare (sampleRate);
+
+    std::array<metaleq::DynamicBandSettings, metaleq::kNumDynamicBands> settings {};
+    settings[0] = band;
+    engine.setSettings (settings, 1);
+
+    std::vector<float> data = input;
+    data.resize (data.size() + static_cast<size_t> (tailSilenceSamples), 0.0f);
+
+    constexpr int blockSize = 256;
+    for (int start = 0; start < static_cast<int> (data.size()); start += blockSize)
+    {
+        const int count = std::min (blockSize, static_cast<int> (data.size()) - start);
+        float* pointer = data.data() + start;
+        engine.process (&pointer, 1, count);
+    }
+
+    return { std::move (data), engine.getGainReductionDb (0) };
+}
+
+metaleq::DynamicBandSettings makeTestDynamicBand()
+{
+    metaleq::DynamicBandSettings band;
+    band.freq        = 733.0;
+    band.q           = 1.2;
+    band.thresholdDb = 6.0;
+    band.ratio       = 4.0;
+    band.attackMs    = 5.0;
+    band.releaseMs   = 120.0;
+    band.maxCutDb    = 6.0;
+    band.on          = true;
+    return band;
+}
+
+void testDynamicEngineTransparency()
+{
+    metaleq::DynamicBandSettings off;
+    off.on = false;
+
+    std::vector<float> noise (4800);
+    for (int i = 0; i < static_cast<int> (noise.size()); ++i)
+        noise[static_cast<size_t> (i)] = 0.05f * std::sin (0.37f * static_cast<float> (i));
+
+    const auto disabled = runDynamicBand (noise, off);
+    check (disabled.output == noise, "disabled dynamic section is bit-transparent");
+    checkNear (disabled.gainReductionDb, 0.0, 1.0e-9, "disabled dynamic section reports no reduction");
+
+    metaleq::DynamicBandSettings flat = makeTestDynamicBand();
+    flat.maxCutDb = 0.0;
+    const auto noRange = runDynamicBand (noise, flat);
+    check (noRange.output == noise, "zero maximum cut leaves the dynamic section transparent");
+
+    metaleq::DynamicBandSettings unity = makeTestDynamicBand();
+    unity.ratio = 1.0;
+    const auto noRatio = runDynamicBand (noise, unity);
+    check (noRatio.output == noise, "1:1 dynamic ratio leaves the section transparent");
+}
+
+void testDynamicEngineCutsExcess()
+{
+    const auto band = makeTestDynamicBand();
+    const auto sine = makeSine (733.0, 0.25, 2.0);
+    const auto loud = runDynamicBand (sine, band);
+    const double inputRms = rmsRange (sine, sine.size() - 24000, sine.size());
+    const double outputRms = rmsRange (loud.output, loud.output.size() - 24000, loud.output.size());
+
+    check (loud.gainReductionDb > 1.5, "a sustained band-centred tone engages the dynamic cut");
+    check (loud.gainReductionDb <= band.maxCutDb + 1.0e-6, "dynamic reduction respects its maximum cut");
+    check (outputRms < inputRms * 0.8, "the dynamic cut lowers the band-centre output");
+    check (outputRms > inputRms * 0.6, "the dynamic cut is not an unconditional mute");
+    checkNear (20.0 * std::log10 (outputRms / inputRms), -loud.gainReductionDb, 0.3,
+               "steady-state output reduction matches the reported gain reduction");
+
+    // The detector is relative, so a much quieter copy of the same signal
+    // must produce the same reduction. Only the absolute level changes.
+    const auto quietSine = makeSine (733.0, 0.01, 2.0);
+    const auto quiet = runDynamicBand (quietSine, band);
+    checkNear (quiet.gainReductionDb, loud.gainReductionDb, 0.1,
+               "dynamic detection is independent of absolute input level");
+
+    // Broadband noise has no narrow peak over its neighbours, so it must not
+    // trigger a cut even though it is louder than the quiet sine.
+    std::mt19937 rng (42);
+    std::uniform_real_distribution<double> noise (-1.0, 1.0);
+    std::vector<float> white (static_cast<size_t> (sampleRate * 2.0));
+    for (auto& sample : white)
+        sample = static_cast<float> (0.1 * noise (rng));
+
+    const auto broadband = runDynamicBand (white, band);
+    check (broadband.gainReductionDb < 0.05, "broadband energy does not trigger a dynamic cut");
+}
+
+void testDynamicEngineZeroLatencyAndClamp()
+{
+    auto band = makeTestDynamicBand();
+    band.thresholdDb = 0.0;
+    band.ratio = 10.0;
+    band.maxCutDb = 12.0;
+
+    const auto sine = makeSine (733.0, 0.25, 2.0);
+    const auto result = runDynamicBand (sine, band);
+
+    // Sample 0 is processed with sample 0. The attack smoother starts at
+    // unity gain, so the very first sample must be very close to the input.
+    check (std::abs (result.output[0] - sine[0]) < std::abs (sine[0]) * 0.01,
+           "dynamic section has no lookahead or sample delay");
+
+    band.maxCutDb = 3.0;
+    const auto clamped = runDynamicBand (sine, band);
+    check (clamped.gainReductionDb <= 3.0 + 1.0e-6, "dynamic maximum cut clamps the reduction");
+    check (clamped.gainReductionDb > 2.5, "a hot signal reaches the maximum-cut ceiling");
+}
+
+void testDynamicEngineRelease()
+{
+    const auto band = makeTestDynamicBand();
+    const auto sine = makeSine (733.0, 0.25, 2.0);
+    const auto sustained = runDynamicBand (sine, band);
+    const auto released = runDynamicBand (sine, band, static_cast<int> (sampleRate * 0.1));
+
+    check (released.gainReductionDb < sustained.gainReductionDb - 0.5,
+           "dynamic gain reduction releases after the excess energy stops");
+    check (released.gainReductionDb > 0.2,
+           "the release control does not snap the cut to zero");
+}
+
+void testDynamicEngineStereoLink()
+{
+    const auto band = makeTestDynamicBand();
+    const auto leftInput = makeSine (733.0, 0.25, 2.0);
+    const auto rightInput = makeSine (733.0, 0.125, 2.0);
+    std::vector<float> left = leftInput;
+    std::vector<float> right = rightInput;
+
+    metaleq::DynamicResonanceEngine engine;
+    engine.prepare (sampleRate);
+    std::array<metaleq::DynamicBandSettings, metaleq::kNumDynamicBands> settings {};
+    settings[0] = band;
+    engine.setSettings (settings, 1);
+
+    constexpr int blockSize = 256;
+    for (int start = 0; start < static_cast<int> (left.size()); start += blockSize)
+    {
+        const int count = std::min (blockSize, static_cast<int> (left.size()) - start);
+        float* pointers[2] = { left.data() + start, right.data() + start };
+        engine.process (pointers, 2, count);
+    }
+
+    const double leftRatio = rmsRange (left, left.size() - 24000, left.size())
+                           / rmsRange (leftInput, leftInput.size() - 24000, leftInput.size());
+    const double rightRatio = rmsRange (right, right.size() - 24000, right.size())
+                            / rmsRange (rightInput, rightInput.size() - 24000, rightInput.size());
+
+    checkNear (20.0 * std::log10 (leftRatio), 20.0 * std::log10 (rightRatio), 0.05,
+               "stereo-linked detection applies the same gain to both channels");
+}
+
+void testDynamicActiveHelper()
+{
+    metaleq::EqSettings eq;
+    check (! metaleq::hasActiveDynamicCuts (eq), "neutral settings report no active dynamic cuts");
+
+    eq.dynamic[0] = makeTestDynamicBand();
+    check (metaleq::hasActiveDynamicCuts (eq), "an enabled dynamic band reports an active cut");
+
+    eq.dynamic[0].maxCutDb = 0.0;
+    check (! metaleq::hasActiveDynamicCuts (eq), "a zero maximum cut is not active");
+
+    eq.dynamic[0] = makeTestDynamicBand();
+    eq.dynamic[0].ratio = 1.0;
+    check (! metaleq::hasActiveDynamicCuts (eq), "a 1:1 dynamic band is not active");
+
+    eq.dynamic[0] = makeTestDynamicBand();
+    eq.dynamic[0].on = false;
+    check (! metaleq::hasActiveDynamicCuts (eq), "a disabled dynamic band is not active");
+}
+
 void testSurgicalChain()
 {
     metaleq::EqSettings neutral;
@@ -258,10 +473,16 @@ int main()
     testDetectorRejectsNeutralCapture();
     testDetectorHandlesUnusableInput();
     testSurgicalChain();
+    testDynamicEngineTransparency();
+    testDynamicEngineCutsExcess();
+    testDynamicEngineZeroLatencyAndClamp();
+    testDynamicEngineRelease();
+    testDynamicEngineStereoLink();
+    testDynamicActiveHelper();
 
     if (failures != 0)
         return EXIT_FAILURE;
 
-    std::cout << "MetalEQ resonance detector and surgical-chain tests passed.\n";
+    std::cout << "MetalEQ resonance detector, surgical-chain and dynamic-section tests passed.\n";
     return EXIT_SUCCESS;
 }

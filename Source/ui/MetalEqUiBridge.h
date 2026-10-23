@@ -14,7 +14,7 @@
     * The audio thread never touches the bridge, the WebView, or any state
       owned here. Parameters travel exclusively through APVTS atomics.
 
-    Protocol (version 3)
+    Protocol (version 4)
     --------------------
     JS -> C++ via registered native functions (promise based):
         uiReady()                              -> full initial snapshot
@@ -50,6 +50,7 @@
           factoryPresets, // metadata on the uiReady snapshot only
           analyzerTargets,// stable target ids/labels on the uiReady snapshot only
           meters,         // { in, out } every tick (cheap atomics)
+          dynamicReduction, // [dB, dB, dB, dB] positive gain reduction per band
           analyzer,       // { status, progress, suggestion[5] } when changed
           resonance,      // { status, progress, enoughVariation,
                           //   candidates: [{freq,q,prominence,residual,
@@ -105,7 +106,7 @@ std::optional<double> validateParameterWrite (juce::AudioProcessorValueTreeState
 class UiBridge : public juce::OptionsBuilder<juce::WebBrowserComponent::Options>
 {
 public:
-    static constexpr int protocolVersion = 3;
+    static constexpr int protocolVersion = 4;
     static constexpr int numCurvePoints  = 240;
     static constexpr int tickHz          = 20;
 
@@ -183,6 +184,7 @@ private:
     juce::var buildPresetObject();
     juce::var buildAnalyzerObject();
     juce::var buildResonanceObject();
+    juce::var buildDynamicReductionArray();
     juce::var buildCurveArray();
     juce::var buildFactoryPresetList();
     juce::var buildAnalyzerTargetList();

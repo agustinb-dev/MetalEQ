@@ -1,11 +1,11 @@
 /*
-    Wire types for the MetalEQ bridge protocol (version 3).
+    Wire types for the MetalEQ bridge protocol (version 4).
 
     These mirror Source/ui/MetalEqUiBridge.cpp exactly: the native side is the
     single source of truth, JS only renders what it receives and sends requests.
 */
 
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 export type ParamKind = 'float' | 'choice' | 'bool';
 
@@ -110,6 +110,9 @@ export interface MetersInfo {
   out: number;
 }
 
+/** Positive gain reduction in dB for each V3.1 dynamic band. */
+export type DynamicReductionInfo = number[];
+
 /** One "metaleq.tick" event payload (every field except seq is optional/diffed). */
 export interface TickMessage {
   seq: number;
@@ -117,6 +120,7 @@ export interface TickMessage {
   preset?: PresetInfo;
   userPresets?: string[];
   meters?: MetersInfo;
+  dynamicReduction?: DynamicReductionInfo;
   analyzer?: AnalyzerInfo;
   resonance?: ResonanceInfo;
   curve?: CurveInfo;
@@ -133,6 +137,7 @@ export interface Snapshot {
   analyzer?: AnalyzerInfo;
   resonance?: ResonanceInfo;
   curve?: CurveInfo;
+  dynamicReduction?: DynamicReductionInfo;
 }
 
 export interface OpResult {

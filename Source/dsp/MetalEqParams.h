@@ -43,6 +43,16 @@ inline constexpr double surgicalFreqMin = 80.0,   surgicalFreqMax = 14000.0;
 inline constexpr double surgicalGainMin = -12.0,  surgicalGainMax = 6.0;
 inline constexpr double surgicalQMin    = 2.0,    surgicalQMax    = 20.0;
 
+// Broad dynamic resonance bands (V3.1). Threshold is a relative excess in dB
+// over the adjacent half-octave bands, not an absolute dBFS level.
+inline constexpr double dynamicFreqMin      = 80.0,   dynamicFreqMax      = 14000.0;
+inline constexpr double dynamicQMin         = 0.5,    dynamicQMax         = 6.0;
+inline constexpr double dynamicThresholdMin = 0.0,    dynamicThresholdMax = 24.0;
+inline constexpr double dynamicRatioMin     = 1.0,    dynamicRatioMax     = 10.0;
+inline constexpr double dynamicAttackMin    = 0.5,    dynamicAttackMax    = 50.0;
+inline constexpr double dynamicReleaseMin   = 20.0,   dynamicReleaseMax   = 1000.0;
+inline constexpr double dynamicCutMin       = 0.0,    dynamicCutMax       = 12.0;
+
 inline constexpr double trimMin = -12.0, trimMax = 6.0;
 
 //==============================================================================
@@ -75,6 +85,17 @@ inline bool isValidEqSettings (const EqSettings& e) noexcept
         if (! inRange (b.freq, surgicalFreqMin, surgicalFreqMax)) return false;
         if (! inRange (b.gainDb, surgicalGainMin, surgicalGainMax)) return false;
         if (! inRange (b.q, surgicalQMin, surgicalQMax)) return false;
+    }
+
+    for (const auto& b : e.dynamic)
+    {
+        if (! inRange (b.freq, dynamicFreqMin, dynamicFreqMax)) return false;
+        if (! inRange (b.q, dynamicQMin, dynamicQMax)) return false;
+        if (! inRange (b.thresholdDb, dynamicThresholdMin, dynamicThresholdMax)) return false;
+        if (! inRange (b.ratio, dynamicRatioMin, dynamicRatioMax)) return false;
+        if (! inRange (b.attackMs, dynamicAttackMin, dynamicAttackMax)) return false;
+        if (! inRange (b.releaseMs, dynamicReleaseMin, dynamicReleaseMax)) return false;
+        if (! inRange (b.maxCutDb, dynamicCutMin, dynamicCutMax)) return false;
     }
 
     return true;

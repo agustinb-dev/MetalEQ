@@ -11,6 +11,7 @@ import type { ParamSpec } from './types';
 
 export const NUM_BANDS = 5;
 export const NUM_SURGICAL_BANDS = 6;
+export const NUM_DYNAMIC_BANDS = 4;
 
 const choice = (
   id: string,
@@ -75,6 +76,21 @@ export const PARAMS: ParamSpec[] = [
       { id: `res${n}Gain`, label: `Resonance ${n} Gain`, kind: 'float' as const, min: -12, max: 6, skew: 1, step: 0.01, def: 0 },
       { id: `res${n}Q`, label: `Resonance ${n} Q`, kind: 'float' as const, min: 2, max: 20, skew: 1, step: 0.01, def: 7 },
       flag(`res${n}On`, `Resonance ${n} On`, 0),
+    ];
+  }),
+
+  //--- V3.1 dynamic resonance bands -----------------------------------------
+  ...[250, 700, 3200, 7500].flatMap((def, i) => {
+    const n = i + 1;
+    return [
+      { id: `dyn${n}Freq`, label: `Dynamic ${n} Freq`, kind: 'float' as const, min: 80, max: 14000, skew: 0.4, step: 0.01, def },
+      { id: `dyn${n}Q`, label: `Dynamic ${n} Q`, kind: 'float' as const, min: 0.5, max: 6, skew: 1, step: 0.01, def: 1.2 },
+      { id: `dyn${n}Threshold`, label: `Dynamic ${n} Threshold`, kind: 'float' as const, min: 0, max: 24, skew: 1, step: 0.1, def: 6 },
+      { id: `dyn${n}Ratio`, label: `Dynamic ${n} Ratio`, kind: 'float' as const, min: 1, max: 10, skew: 1, step: 0.1, def: 4 },
+      { id: `dyn${n}Attack`, label: `Dynamic ${n} Attack`, kind: 'float' as const, min: 0.5, max: 50, skew: 0.6, step: 0.1, def: 5 },
+      { id: `dyn${n}Release`, label: `Dynamic ${n} Release`, kind: 'float' as const, min: 20, max: 1000, skew: 0.5, step: 1, def: 120 },
+      { id: `dyn${n}Range`, label: `Dynamic ${n} Max Cut`, kind: 'float' as const, min: 0, max: 12, skew: 1, step: 0.1, def: 6 },
+      flag(`dyn${n}On`, `Dynamic ${n} On`, 0),
     ];
   }),
 
@@ -179,6 +195,22 @@ export function formatPercent(value: number): string {
 export function formatTrim(value: number): string {
   const v = Math.abs(value) < 0.05 ? 0 : value;
   return `${v > 0 ? '+' : ''}${v.toFixed(1)} dB`;
+}
+
+export function formatThreshold(value: number): string {
+  return `${value.toFixed(1)} dB`;
+}
+
+export function formatRatio(value: number): string {
+  return `${value.toFixed(1)}:1`;
+}
+
+export function formatTimeMs(value: number): string {
+  return value < 10 ? `${value.toFixed(1)} ms` : `${Math.round(value)} ms`;
+}
+
+export function formatCut(value: number): string {
+  return `${value.toFixed(1)} dB`;
 }
 
 /** Label for a band card, e.g. "BAND 2". */

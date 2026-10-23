@@ -654,6 +654,16 @@ juce::var UiBridge::buildResonanceObject()
     return juce::var (obj);
 }
 
+juce::var UiBridge::buildDynamicReductionArray()
+{
+    juce::Array<juce::var> reductions;
+
+    for (int i = 0; i < metaleq::kNumDynamicBands; ++i)
+        reductions.add (processor.getDynamicGainReductionDb (i));
+
+    return juce::var (reductions);
+}
+
 juce::var UiBridge::buildCurveArray()
 {
     const auto state = processor.getDisplayState();
@@ -751,6 +761,8 @@ juce::var UiBridge::buildFullSnapshot()
     if (const auto curve = buildCurveArray())
         obj->setProperty ("curve", curve);
 
+    obj->setProperty ("dynamicReduction", buildDynamicReductionArray());
+
     userPresetsDirty = false;
     curveDirty = false;
     fullSyncRequired = false;
@@ -791,6 +803,8 @@ void UiBridge::tick()
         meters->setProperty ("out", juce::jmax (processor.getPeakLevel (0), processor.getPeakLevel (1)));
         obj->setProperty ("meters", juce::var (meters));
     }
+
+    obj->setProperty ("dynamicReduction", buildDynamicReductionArray());
 
     if (const auto analyzer = buildAnalyzerObject())
         obj->setProperty ("analyzer", analyzer);

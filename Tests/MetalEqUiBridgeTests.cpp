@@ -296,15 +296,15 @@ static void testCurveRangeIsFixed (MetalEQAudioProcessor& processor)
 }
 
 //==============================================================================
-static void testSnapshotV3 (MetalEQAudioProcessor& processor)
+static void testSnapshotV4 (MetalEQAudioProcessor& processor)
 {
     metaleq::ui::UiBridge bridge (processor);
     juce::var snapshot;
     check (callNative (bridge, "uiReady", juce::Array<juce::var> {}, snapshot),
            "uiReady is registered with the bridge");
 
-    check (static_cast<int> (getProperty (snapshot, "protocolVersion")) == 3,
-           "snapshot advertises protocol version 3");
+    check (static_cast<int> (getProperty (snapshot, "protocolVersion")) == 4,
+           "snapshot advertises protocol version 4");
 
     const auto resonance = getProperty (snapshot, "resonance");
     check (resonance.isObject(), "snapshot contains the V3 resonance state");
@@ -317,6 +317,13 @@ static void testSnapshotV3 (MetalEQAudioProcessor& processor)
     check (params.isObject(), "snapshot contains parameter values");
     check (getProperty (params, "res1Freq").isDouble(), "snapshot exposes surgical frequency parameters");
     check (getProperty (params, "res6On").isDouble(), "snapshot exposes surgical enable parameters");
+    check (getProperty (params, "dyn1Freq").isDouble(), "snapshot exposes dynamic frequency parameters");
+    check (getProperty (params, "dyn4Range").isDouble(), "snapshot exposes dynamic maximum-cut parameters");
+    check (getProperty (params, "dyn4On").isDouble(), "snapshot exposes dynamic enable parameters");
+
+    const auto dynamicReduction = getProperty (snapshot, "dynamicReduction");
+    check (dynamicReduction.isArray() && dynamicReduction.size() == metaleq::kNumDynamicBands,
+           "snapshot exposes one dynamic gain-reduction value per band");
 
     juce::var result;
     check (callNative (bridge, "startResonanceScan", juce::Array<juce::var> {}, result),
@@ -398,7 +405,7 @@ int main()
 
     {
         MetalEQAudioProcessor processor;
-        testSnapshotV3 (processor);
+        testSnapshotV4 (processor);
     }
 
     if (failures == 0)

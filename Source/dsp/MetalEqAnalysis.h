@@ -1,5 +1,5 @@
 /*
-    MetalEQ - resonance analysis (V3).
+    MetalEQ - resonance analysis (V3/V3.1).
 
     Finds narrow, stationary spectral peaks in a captured guitar performance.
 
@@ -22,7 +22,7 @@
     A candidate must clear both gates, persist over the capture and have a
     plausible Q (a very high Q is almost always a single harmonic). The output
     is advisory: the UI lets the player audition and choose before any cut is
-    applied to the dedicated surgical bands.
+    applied to the dedicated surgical or dynamic bands.
 
     This header is JUCE-free and allocates only while running on the analyzer
     worker thread, never on the audio thread.
@@ -57,6 +57,22 @@ struct ResonanceCandidate
     double suggestedCutDb = -2.0;  // negative: the scan only proposes cuts
 };
 
+/** One dynamic-band suggestion derived from a stationary candidate.
+
+    The dynamic detector measures relative excess with a fixed narrow analysis
+    bandwidth, so its threshold cannot be derived from the LTAS cut amount
+    alone. `measuredExcessDb` is the hot-point (90th percentile) relative
+    excess measured with the live detector's own gate/envelope/bandwidth; the
+    UI shows it so the player can judge how much the band will actually act.
+*/
+struct DynamicBandSuggestion
+{
+    int candidateIndex = -1;
+    DynamicBandSettings band {};
+    double confidence = 0.0;
+    double measuredExcessDb = 0.0;
+};
+
 struct ResonanceAnalysisResult
 {
     std::array<ResonanceCandidate, kMaxResonanceCandidates> candidates {};
@@ -66,6 +82,11 @@ struct ResonanceAnalysisResult
         makes it impossible to tell a harmonic from a resonance.
     */
     bool enoughVariation = false;
+    /** One suggestion per candidate that has enough measured relative excess
+        to drive the dynamic section. Ordered like `candidates`.
+    */
+    std::array<DynamicBandSuggestion, kMaxResonanceCandidates> dynamicSuggestions {};
+    int numDynamicSuggestions = 0;
 };
 
 namespace detail
@@ -176,6 +197,126 @@ inline double frequencyWeight (double freq) noexcept
     if (freq < 6000.0) return 1.15;
     if (freq < 10000.0) return 1.0;
     return 0.75;
+}
+
+/** Relative-excess statistics measured the same way the live V3.1 dynamic
+    detector does: fixed Q=4 band-pass at the candidate frequency, compared
+    with Q=4 references at 0.707x and 1.414x, 0.5 ms attack / 5 ms release
+    envelopes, gated at about -60 dBFS. Sampling every 64th input sample is
+    enough to rank candidates and keeps an 8-second scan cheap.
+*/
+struct DynamicExcessStats
+{
+    double lowerQuartileDb = 0.0;
+    double medianDb = 0.0;
+    double upperQuartileDb = 0.0;
+    double p90Db = 0.0;
+    double activeFraction = 0.0;
+    int values = 0;
+};
+
+inline DynamicExcessStats measureDynamicExcess (const float* input,
+                                                int numSamples,
+                                                double sampleRate,
+                                                double freq)
+{
+    DynamicExcessStats stats;
+
+    if (input == nullptr || numSamples <= 0 || ! isFiniteValue (sampleRate)
+        || sampleRate < 8000.0 || ! isFiniteValue (freq) || freq <= 0.0)
+        return stats;
+
+    constexpr double detectorQ      = 4.0;
+    constexpr double attackMs       = 0.5;
+    constexpr double releaseMs      = 5.0;
+    constexpr double gateMeanSquare = 1.0e-6;
+    constexpr double silenceFloor   = 1.0e-12;
+    constexpr int    stride         = 64;
+
+    const double safeFreq = clampDouble (freq, 80.0, std::min (14000.0, sampleRate * 0.45));
+    const auto centerCoeffs = designBiquad (FilterType::bandPass, sampleRate, safeFreq, detectorQ, 0.0);
+    const auto lowCoeffs    = designBiquad (FilterType::bandPass, sampleRate,
+                                            safeFreq * 0.70710678118654752440, detectorQ, 0.0);
+    const auto highCoeffs   = designBiquad (FilterType::bandPass, sampleRate,
+                                            safeFreq * 1.41421356237309504880, detectorQ, 0.0);
+
+    const double attackCoeff  = std::exp (-1.0 / (attackMs * 0.001 * sampleRate));
+    const double releaseCoeff = std::exp (-1.0 / (releaseMs * 0.001 * sampleRate));
+
+    double centerEnv = 0.0;
+    double lowEnv    = 0.0;
+    double highEnv   = 0.0;
+    double centerZ1  = 0.0;
+    double centerZ2  = 0.0;
+    double lowZ1     = 0.0;
+    double lowZ2     = 0.0;
+    double highZ1    = 0.0;
+    double highZ2    = 0.0;
+
+    std::vector<double> excess;
+    excess.reserve (static_cast<size_t> (numSamples / stride + 1));
+
+    int measurementPoints = 0;
+    int activePoints      = 0;
+
+    for (int i = 0; i < numSamples; ++i)
+    {
+        const double x = static_cast<double> (input[i]);
+
+        const double center = centerCoeffs.b0 * x + centerZ1;
+        centerZ1 = centerCoeffs.b1 * x - centerCoeffs.a1 * center + centerZ2;
+        centerZ2 = centerCoeffs.b2 * x - centerCoeffs.a2 * center;
+
+        const double lowOut = lowCoeffs.b0 * x + lowZ1;
+        lowZ1 = lowCoeffs.b1 * x - lowCoeffs.a1 * lowOut + lowZ2;
+        lowZ2 = lowCoeffs.b2 * x - lowCoeffs.a2 * lowOut;
+
+        const double highOut = highCoeffs.b0 * x + highZ1;
+        highZ1 = highCoeffs.b1 * x - highCoeffs.a1 * highOut + highZ2;
+        highZ2 = highCoeffs.b2 * x - highCoeffs.a2 * highOut;
+
+        const double centerSquare = center * center;
+        const double lowSquare    = lowOut * lowOut;
+        const double highSquare   = highOut * highOut;
+
+        double coeff = centerSquare > centerEnv ? attackCoeff : releaseCoeff;
+        centerEnv = coeff * centerEnv + (1.0 - coeff) * centerSquare;
+
+        coeff = lowSquare > lowEnv ? attackCoeff : releaseCoeff;
+        lowEnv = coeff * lowEnv + (1.0 - coeff) * lowSquare;
+
+        coeff = highSquare > highEnv ? attackCoeff : releaseCoeff;
+        highEnv = coeff * highEnv + (1.0 - coeff) * highSquare;
+
+        if ((i % stride) != 0)
+            continue;
+
+        ++measurementPoints;
+
+        if (centerEnv > gateMeanSquare)
+        {
+            ++activePoints;
+            const double reference = std::max (lowEnv, highEnv);
+            excess.push_back (10.0 * std::log10 ((centerEnv + silenceFloor)
+                                                / (reference + silenceFloor)));
+        }
+    }
+
+    stats.activeFraction = measurementPoints > 0
+        ? static_cast<double> (activePoints) / static_cast<double> (measurementPoints)
+        : 0.0;
+
+    if (excess.size() < 16)
+        return stats;
+
+    std::sort (excess.begin(), excess.end());
+    const auto n = excess.size();
+    stats.lowerQuartileDb = excess[n / 4];
+    stats.medianDb = 0.5 * (excess[(n - 1) / 2] + excess[n / 2]);
+    stats.upperQuartileDb = excess[(3 * n) / 4];
+    stats.p90Db = excess[(9 * n) / 10];
+    stats.values = static_cast<int> (n);
+    return stats;
 }
 
 struct Peak
@@ -606,6 +747,61 @@ inline void analyseResonances (const float* input,
         // Conservative: propose the smallest cut likely to remove the peak.
         candidate.suggestedCutDb = -detail::clampDouble (
             0.65 * peak.prominenceDb + 0.20 * peak.residualDb, 1.0, 6.0);
+    }
+
+    //--- dynamic-band suggestions -------------------------------------------
+    // The dynamic section only acts on relative excess, not absolute level.
+    // Measure each surviving candidate with the detector's own statistic and
+    // skip candidates whose excess is too small or too intermittent to make a
+    // useful dynamic cut. A Q around 40% of the stationary peak keeps the
+    // audible cut broad enough to track a moving resonance without gutting the
+    // surrounding tone.
+    for (int i = 0; i < result.numCandidates; ++i)
+    {
+        if (result.numDynamicSuggestions >= kMaxResonanceCandidates)
+            break;
+
+        const auto& candidate = result.candidates[static_cast<size_t> (i)];
+        const auto stats = detail::measureDynamicExcess (input, numSamples, sampleRate,
+                                                         candidate.freq);
+
+        // A narrow resonance is not continuously hot: it only becomes visible
+        // when a harmonic lands on it. The median can therefore sit near 0 dB
+        // even when the band is clearly audible at its hottest moments. Require
+        // both a useful hot-point excess and a spread over the upper quartile,
+        // otherwise a static surgical cut is the better tool and there is
+        // nothing dynamic to suggest.
+        const double hotExcessDb = stats.p90Db;
+        const double spreadDb    = stats.p90Db - stats.upperQuartileDb;
+
+        if (stats.values < 16 || stats.activeFraction < 0.02
+            || hotExcessDb < 3.0 || spreadDb < 0.5)
+            continue;
+
+        auto& suggestion = result.dynamicSuggestions[
+            static_cast<size_t> (result.numDynamicSuggestions++)];
+        suggestion.candidateIndex = i;
+        suggestion.confidence = candidate.confidence;
+        suggestion.measuredExcessDb = hotExcessDb;
+
+        auto& band = suggestion.band;
+        band.freq = candidate.freq;
+        band.q = detail::clampDouble (candidate.q * 0.4, 1.2, 3.0);
+        band.ratio = 4.0;
+        band.attackMs = 5.0;
+        band.releaseMs = 120.0;
+
+        // Threshold at the upper quartile means the band stays out of the way
+        // for ordinary playing and only cuts the hottest quarter of gated
+        // points. Cap the range at the reduction actually reachable at that
+        // measured hot point, never above the candidate's conservative static
+        // suggestion.
+        band.thresholdDb = detail::clampDouble (stats.upperQuartileDb, 0.0, 10.0);
+        const double reachableCut = (hotExcessDb - band.thresholdDb)
+                                  * (1.0 - 1.0 / band.ratio);
+        band.maxCutDb = detail::clampDouble (
+            std::min (-candidate.suggestedCutDb, reachableCut), 2.0, 6.0);
+        band.on = true;
     }
 }
 

@@ -245,6 +245,20 @@ public:
     */
     void applyResonanceSelection (const std::vector<int>& candidateIndices);
     void clearSurgicalBands();
+    /** Full dynamic-band suggestion for one resonance candidate. False when
+        that candidate did not measure enough relative excess to drive a
+        dynamic cut.
+    */
+    bool getResonanceDynamicSuggestion (int candidateIndex,
+                                        metaleq::DynamicBandSettings& band,
+                                        double& confidence,
+                                        double& measuredExcessDb) const noexcept;
+    /** Copies the selected candidates' dynamic suggestions into the four
+        dynamic bands in selection order. Bands not covered by the selection
+        are switched off.
+    */
+    void applyResonanceToDynamic (const std::vector<int>& candidateIndices);
+    void clearDynamicBands();
 
     //==============================================================================
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
@@ -367,6 +381,14 @@ private:
     std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> resonanceResidual {};
     std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> resonanceConfidence {};
     std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> resonanceCut {};
+    std::array<std::atomic<bool>, metaleq::kMaxResonanceCandidates> resonanceDynamicEligible {};
+    std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> resonanceDynamicQ {};
+    std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> resonanceDynamicThreshold {};
+    std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> resonanceDynamicRatio {};
+    std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> resonanceDynamicAttack {};
+    std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> resonanceDynamicRelease {};
+    std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> resonanceDynamicMaxCut {};
+    std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> resonanceDynamicExcess {};
     std::atomic<int> resonanceCandidateCount { 0 };
     std::atomic<bool> resonanceEnoughVariation { false };
     std::atomic<unsigned long long> resonanceRevision { 0 };

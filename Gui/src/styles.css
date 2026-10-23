@@ -833,6 +833,33 @@ body {
 
 /* V3.1 dynamic resonance bands */
 
+.dynamic-suggestion-panel {
+  margin-bottom: 8px;
+}
+
+.dynamic-suggestion-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+
+.dynamic-suggestion-title {
+  color: #8ff0cf;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  flex: 0 0 auto;
+}
+
+.dynamic-suggestion-hint {
+  color: var(--text-faint);
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .dynamic-panel {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));

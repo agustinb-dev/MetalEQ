@@ -185,6 +185,14 @@ export class JuceBridge implements MetalEqBridge {
     return this.call<OpResult>('clearSurgicalBands', []);
   }
 
+  applyResonanceToDynamic(indices: number[]): Promise<OpResult> {
+    return this.call<OpResult>('applyResonanceToDynamic', [indices]);
+  }
+
+  clearDynamicBands(): Promise<OpResult> {
+    return this.call<OpResult>('clearDynamicBands', []);
+  }
+
   setEditorExpanded(expanded: boolean): Promise<OpResult> {
     return this.call<OpResult>('setEditorExpanded', [expanded]);
   }

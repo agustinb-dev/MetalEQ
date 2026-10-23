@@ -18,9 +18,11 @@
 import type {
   AnalyzerInfo,
   CurveInfo,
+  DynamicCandidateInfo,
   MetalEqBridge,
   OpResult,
   PresetInfo,
+  ResonanceCandidateInfo,
   ResonanceInfo,
   SetParamResult,
   SuggestionCurveResult,
@@ -64,11 +66,42 @@ const PROFILE_SUGGESTIONS: number[][] = [
 ];
 
 // Canned V3 scan results for browser development.
-const MOCK_RESONANCES = [
+const MOCK_RESONANCES: ResonanceCandidateInfo[] = [
   { freq: 733, q: 7.2, prominence: 3.4, residual: 7.2, confidence: 0.72, cutDb: -3.6 },
   { freq: 2450, q: 9.8, prominence: 2.6, residual: 2.9, confidence: 0.49, cutDb: -2.3 },
   { freq: 4170, q: 11.2, prominence: 2.8, residual: 2.1, confidence: 0.41, cutDb: -2.2 },
 ];
+
+/** Browser stand-in for the native measured-excess suggestions. */
+function buildMockDynamicCandidates (candidates: ResonanceCandidateInfo[]): DynamicCandidateInfo[] {
+  const clamp = (value: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, value));
+  return candidates.map((candidate, candidateIndex) => {
+    const excessDb = Math.max(2.2, candidate.prominence * 0.8 + candidate.residual * 0.2 + 1.2);
+    const desiredCut = clamp(-candidate.cutDb, 2, 6);
+    const maxCut = clamp(Math.min(desiredCut, excessDb), 2, 6);
+    const threshold = clamp(excessDb - maxCut / 0.75, 2, 10);
+    return {
+      candidateIndex,
+      freq: candidate.freq,
+      q: clamp(candidate.q * 0.4, 1.2, 3),
+      threshold,
+      ratio: 4,
+      attack: 5,
+      release: 120,
+      maxCut,
+      confidence: candidate.confidence,
+      excessDb,
+    };
+  });
+}
+
+function copyResonance (info: ResonanceInfo): ResonanceInfo {
+  return {
+    ...info,
+    candidates: info.candidates.map((candidate) => ({ ...candidate })),
+    dynamicCandidates: info.dynamicCandidates.map((candidate) => ({ ...candidate })),
+  };
+}
 
 interface UserPresetFile {
   name: string;
@@ -185,7 +218,9 @@ export class MockBridge implements MetalEqBridge {
   private activeAb = 0;
   private abSlots: Array<AbSlotSnapshot | null> = [null, null];
   private analyzer: AnalyzerInfo = { status: 0, progress: 0, suggestion: [0, 0, 0, 0, 0] };
-  private resonance: ResonanceInfo = { status: 0, progress: 0, enoughVariation: false, candidates: [] };
+  private resonance: ResonanceInfo = {
+    status: 0, progress: 0, enoughVariation: false, candidates: [], dynamicCandidates: [],
+  };
   private curveDirty = true;
   private analyzerDirty = false;
   private resonanceDirty = false;
@@ -229,7 +264,7 @@ export class MockBridge implements MetalEqBridge {
       analyzerTargets: ANALYZER_TARGETS.map((t) => ({ ...t })),
       userPresets: this.userPresets.map((f) => f.name),
       analyzer: { ...this.analyzer },
-      resonance: { ...this.resonance, candidates: [...this.resonance.candidates] },
+      resonance: copyResonance(this.resonance),
       curve: this.buildCurve(),
       dynamicReduction: [0, 0, 0, 0],
     };
@@ -278,7 +313,7 @@ export class MockBridge implements MetalEqBridge {
     }
 
     if (this.resonanceDirty) {
-      msg.resonance = { ...this.resonance, candidates: [...this.resonance.candidates], changed: true };
+      msg.resonance = { ...copyResonance(this.resonance), changed: true };
       this.resonanceDirty = false;
     }
 
@@ -701,7 +736,9 @@ export class MockBridge implements MetalEqBridge {
   startResonanceScan(): Promise<OpResult> {
     this.cancelResonanceTimer();
     this.cancelCaptureTimer();
-    this.resonance = { status: 1, progress: 0, enoughVariation: false, candidates: [] };
+    this.resonance = {
+      status: 1, progress: 0, enoughVariation: false, candidates: [], dynamicCandidates: [],
+    };
     this.resonanceDirty = true;
 
     const started = Date.now();
@@ -710,15 +747,19 @@ export class MockBridge implements MetalEqBridge {
       const progress = Math.min(1, elapsed / CAPTURE_SECONDS);
       if (progress >= 1) {
         this.cancelResonanceTimer();
-        this.resonance = { status: 3, progress: 1, enoughVariation: false, candidates: [] };
+        this.resonance = {
+          status: 3, progress: 1, enoughVariation: false, candidates: [], dynamicCandidates: [],
+        };
         this.resonanceDirty = true;
         this.resonanceAnalyzeTimer = setTimeout(() => {
           this.resonanceAnalyzeTimer = null;
+          const candidates = MOCK_RESONANCES.map((candidate) => ({ ...candidate }));
           this.resonance = {
             status: 4,
             progress: 1,
             enoughVariation: true,
-            candidates: MOCK_RESONANCES.map((c) => ({ ...c })),
+            candidates,
+            dynamicCandidates: buildMockDynamicCandidates(candidates),
           };
           this.resonanceDirty = true;
         }, 700);
@@ -733,7 +774,9 @@ export class MockBridge implements MetalEqBridge {
 
   cancelResonanceScan(): Promise<OpResult> {
     this.cancelResonanceTimer();
-    this.resonance = { status: 0, progress: 0, enoughVariation: false, candidates: [] };
+    this.resonance = {
+      status: 0, progress: 0, enoughVariation: false, candidates: [], dynamicCandidates: [],
+    };
     this.resonanceDirty = true;
     return Promise.resolve({ ok: true });
   }
@@ -780,6 +823,63 @@ export class MockBridge implements MetalEqBridge {
     for (let i = 0; i < NUM_SURGICAL_BANDS; i++) {
       this.params[`res${i + 1}Gain`] = 0;
       this.params[`res${i + 1}On`] = 0;
+    }
+    this.markCurrentAsCustom();
+    return Promise.resolve({ ok: true });
+  }
+
+  applyResonanceToDynamic(indices: number[]): Promise<OpResult> {
+    if (this.resonance.status !== 4) return Promise.resolve({ ok: true });
+
+    const byCandidate = new Map(
+      this.resonance.dynamicCandidates.map((suggestion) => [suggestion.candidateIndex, suggestion]),
+    );
+    const selected: DynamicCandidateInfo[] = [];
+    for (const index of indices) {
+      if (!Number.isInteger(index) || selected.some((entry) => entry.candidateIndex === index)) continue;
+      const suggestion = byCandidate.get(index);
+      if (!suggestion) continue;
+      selected.push(suggestion);
+      if (selected.length >= NUM_DYNAMIC_BANDS) break;
+    }
+
+    if (selected.length === 0) return Promise.resolve({ ok: true });
+
+    for (let i = 0; i < NUM_DYNAMIC_BANDS; i++) {
+      const n = i + 1;
+      const suggestion = selected[i];
+      if (suggestion) {
+        this.params[`dyn${n}Freq`] = suggestion.freq;
+        this.params[`dyn${n}Q`] = suggestion.q;
+        this.params[`dyn${n}Threshold`] = suggestion.threshold;
+        this.params[`dyn${n}Ratio`] = suggestion.ratio;
+        this.params[`dyn${n}Attack`] = suggestion.attack;
+        this.params[`dyn${n}Release`] = suggestion.release;
+        this.params[`dyn${n}Range`] = suggestion.maxCut;
+        this.params[`dyn${n}On`] = 1;
+      } else {
+        this.params[`dyn${n}Range`] = 0;
+        this.params[`dyn${n}On`] = 0;
+      }
+    }
+
+    this.markCurrentAsCustom();
+    return Promise.resolve({ ok: true });
+  }
+
+  clearDynamicBands(): Promise<OpResult> {
+    let changed = false;
+    for (let i = 0; i < NUM_DYNAMIC_BANDS; i++) {
+      const n = i + 1;
+      if ((this.params[`dyn${n}On`] ?? 0) >= 0.5 || Math.abs(this.params[`dyn${n}Range`] ?? 0) > 1e-3) {
+        changed = true;
+      }
+    }
+    if (!changed) return Promise.resolve({ ok: true });
+
+    for (let i = 0; i < NUM_DYNAMIC_BANDS; i++) {
+      this.params[`dyn${i + 1}Range`] = 0;
+      this.params[`dyn${i + 1}On`] = 0;
     }
     this.markCurrentAsCustom();
     return Promise.resolve({ ok: true });

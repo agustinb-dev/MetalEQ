@@ -34,6 +34,48 @@ namespace
         const double scale = juce::jmax (1.0, std::abs (b));
         return std::abs (a - b) <= 1.0e-6 * scale;
     }
+
+    bool readCandidateIndices (const juce::Array<juce::var>& args,
+                               const juce::String& functionName,
+                               std::vector<int>& indices,
+                               juce::String& error)
+    {
+        if (args.isEmpty())
+            return true;
+
+        if (! args[0].isArray())
+        {
+            error = functionName + " expects an array of candidate indices.";
+            return false;
+        }
+
+        const auto* array = args[0].getArray();
+        if (array == nullptr)
+        {
+            error = functionName + " expects an array of candidate indices.";
+            return false;
+        }
+
+        for (const auto& value : *array)
+        {
+            if (! (value.isInt() || value.isInt64() || value.isDouble()))
+            {
+                error = "Candidate indices must be integers.";
+                return false;
+            }
+
+            const double plain = static_cast<double> (value);
+            if (! metaleq::isFiniteValue (plain) || plain < 0.0)
+            {
+                error = "Candidate indices must be non-negative integers.";
+                return false;
+            }
+
+            indices.push_back (static_cast<int> (plain));
+        }
+
+        return true;
+    }
 }
 
 //==============================================================================
@@ -223,6 +265,16 @@ juce::WebBrowserComponent::Options UiBridge::addOptions (juce::WebBrowserCompone
             [self] (const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion complete)
             {
                 complete (self->handleClearSurgicalBands());
+            })
+        .withNativeFunction ("applyResonanceToDynamic",
+            [self] (const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion complete)
+            {
+                complete (self->handleApplyResonanceToDynamic (args));
+            })
+        .withNativeFunction ("clearDynamicBands",
+            [self] (const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion complete)
+            {
+                complete (self->handleClearDynamicBands());
             })
         .withNativeFunction ("setEditorExpanded",
             [self] (const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion complete)
@@ -491,28 +543,10 @@ juce::var UiBridge::handleCancelResonanceScan()
 juce::var UiBridge::handleApplyResonanceSelection (const juce::Array<juce::var>& args)
 {
     std::vector<int> indices;
+    juce::String error;
 
-    if (! args.isEmpty())
-    {
-        if (! args[0].isArray())
-            return errorResult ("applyResonanceSelection expects an array of candidate indices.");
-
-        const auto* array = args[0].getArray();
-        if (array == nullptr)
-            return errorResult ("applyResonanceSelection expects an array of candidate indices.");
-
-        for (const auto& value : *array)
-        {
-            if (! (value.isInt() || value.isInt64() || value.isDouble()))
-                return errorResult ("Candidate indices must be integers.");
-
-            const double plain = static_cast<double> (value);
-            if (! metaleq::isFiniteValue (plain) || plain < 0.0)
-                return errorResult ("Candidate indices must be non-negative integers.");
-
-            indices.push_back (static_cast<int> (plain));
-        }
-    }
+    if (! readCandidateIndices (args, "applyResonanceSelection", indices, error))
+        return errorResult (error);
 
     processor.applyResonanceSelection (indices);
     markCurveDirty();
@@ -522,6 +556,26 @@ juce::var UiBridge::handleApplyResonanceSelection (const juce::Array<juce::var>&
 juce::var UiBridge::handleClearSurgicalBands()
 {
     processor.clearSurgicalBands();
+    markCurveDirty();
+    return okResult();
+}
+
+juce::var UiBridge::handleApplyResonanceToDynamic (const juce::Array<juce::var>& args)
+{
+    std::vector<int> indices;
+    juce::String error;
+
+    if (! readCandidateIndices (args, "applyResonanceToDynamic", indices, error))
+        return errorResult (error);
+
+    processor.applyResonanceToDynamic (indices);
+    markCurveDirty();
+    return okResult();
+}
+
+juce::var UiBridge::handleClearDynamicBands()
+{
+    processor.clearDynamicBands();
     markCurveDirty();
     return okResult();
 }
@@ -634,6 +688,8 @@ juce::var UiBridge::buildResonanceObject()
     obj->setProperty ("enoughVariation", processor.getResonanceEnoughVariation());
 
     juce::Array<juce::var> candidates;
+    juce::Array<juce::var> dynamicCandidates;
+
     for (int i = 0; i < count; ++i)
     {
         metaleq::ResonanceCandidate candidate;
@@ -648,8 +704,30 @@ juce::var UiBridge::buildResonanceObject()
         item->setProperty ("confidence", candidate.confidence);
         item->setProperty ("cutDb", candidate.suggestedCutDb);
         candidates.add (juce::var (item));
+
+        metaleq::DynamicBandSettings band;
+        double confidence = 0.0;
+        double excessDb = 0.0;
+
+        if (! processor.getResonanceDynamicSuggestion (i, band, confidence, excessDb))
+            continue;
+
+        auto* dynamicItem = new juce::DynamicObject();
+        dynamicItem->setProperty ("candidateIndex", i);
+        dynamicItem->setProperty ("freq", band.freq);
+        dynamicItem->setProperty ("q", band.q);
+        dynamicItem->setProperty ("threshold", band.thresholdDb);
+        dynamicItem->setProperty ("ratio", band.ratio);
+        dynamicItem->setProperty ("attack", band.attackMs);
+        dynamicItem->setProperty ("release", band.releaseMs);
+        dynamicItem->setProperty ("maxCut", band.maxCutDb);
+        dynamicItem->setProperty ("confidence", confidence);
+        dynamicItem->setProperty ("excessDb", excessDb);
+        dynamicCandidates.add (juce::var (dynamicItem));
     }
+
     obj->setProperty ("candidates", candidates);
+    obj->setProperty ("dynamicCandidates", dynamicCandidates);
 
     return juce::var (obj);
 }

@@ -168,6 +168,26 @@ function resonanceStatusText(info: ResonanceInfo): string {
   }
 }
 
+function dynamicResonanceStatusText(info: ResonanceInfo): string {
+  switch (info.status) {
+    case AnalyzerStatus.capturing:
+      return `Listening: ${Math.round(info.progress * 100)}% · play varied riffs and let notes ring.`;
+    case AnalyzerStatus.analyzing:
+      return 'Measuring each peak against its neighbouring half-octaves…';
+    case AnalyzerStatus.ready:
+      if (info.dynamicCandidates.length === 0) {
+        return info.candidates.length === 0
+          ? 'No narrow peaks stood out, so there is nothing to suggest for the dynamic bands.'
+          : 'Peaks were found, but none had enough relative excess to drive a dynamic cut.';
+      }
+      return `${info.dynamicCandidates.length} dynamic suggestion${info.dynamicCandidates.length === 1 ? '' : 's'} · select up to ${NUM_DYNAMIC_BANDS}, audition, then apply.`;
+    case AnalyzerStatus.failed:
+      return 'No usable audio was captured. Play audio and scan again.';
+    default:
+      return 'Measures relative excess and suggests threshold, Q and maximum cut for the four dynamic bands.';
+  }
+}
+
 function ResonancePanel({
   info,
   selected,
@@ -297,6 +317,137 @@ function ResonancePanel({
         the tone. Surgical bands are separate from the five musical bands.
       </div>
     </section>
+  );
+}
+
+function DynamicSuggestionPanel({
+  info,
+  selected,
+  surgicalActive,
+  dynamicActive,
+  audition,
+  onScan,
+  onCancel,
+  onToggleCandidate,
+  onHoverCandidate,
+  onApply,
+  onClear,
+  onAudition,
+}: {
+  info: ResonanceInfo;
+  selected: number[];
+  surgicalActive: boolean;
+  dynamicActive: boolean;
+  audition: boolean;
+  onScan: () => void;
+  onCancel: () => void;
+  onToggleCandidate: (candidateIndex: number) => void;
+  onHoverCandidate: (candidateIndex: number | null) => void;
+  onApply: () => void;
+  onClear: () => void;
+  onAudition: (enabled: boolean) => void;
+}) {
+  const capturing = info.status === AnalyzerStatus.capturing;
+  const analyzing = info.status === AnalyzerStatus.analyzing;
+  const ready = info.status === AnalyzerStatus.ready;
+  const suggestions = info.dynamicCandidates;
+
+  return (
+    <div className="dynamic-suggestion-panel">
+      <div className="dynamic-suggestion-heading">
+        <span className="dynamic-suggestion-title">AUTO-SUGGEST</span>
+        <span className="dynamic-suggestion-hint">
+          scan once, choose suggestions, then load them into the four dynamic bands
+        </span>
+      </div>
+
+      <div className="resonance-toolbar">
+        <button
+          type="button"
+          className="btn capture-btn"
+          onClick={capturing ? onCancel : onScan}
+          disabled={analyzing}
+          title="Capture 8 seconds of playing. The same scan also feeds the surgical suggestions."
+        >
+          {capturing ? 'Stop scan' : analyzing ? 'Analyzing…' : 'Scan 8 seconds'}
+        </button>
+        <span className={`resonance-status${ready && suggestions.length > 0 ? ' ready' : ''}`}>
+          {dynamicResonanceStatusText(info)}
+        </span>
+        <div className="resonance-toolbar-spacer" />
+        <Toggle
+          label="HEAR REMOVED"
+          checked={audition}
+          disabled={!surgicalActive && !dynamicActive}
+          variant="accent"
+          onChange={onAudition}
+          tip="Monitor the static and dynamic resonance cuts in isolation. This listening aid is never saved with the preset."
+        />
+        <button
+          type="button"
+          className="btn primary"
+          disabled={!ready || selected.length === 0}
+          onClick={onApply}
+          title={`Copy the selected suggestions into the four dynamic bands (up to ${NUM_DYNAMIC_BANDS}).`}
+        >
+          Apply to dynamic
+        </button>
+        <button
+          type="button"
+          className="btn"
+          disabled={!dynamicActive}
+          onClick={onClear}
+          title="Switch off and zero every dynamic resonance band."
+        >
+          Clear dynamic
+        </button>
+      </div>
+
+      {ready && !info.enoughVariation && (
+        <div className="resonance-warning">
+          The capture was too static to separate harmonics from resonances. Play across several
+          notes, with bends or vibrato, for more reliable suggestions.
+        </div>
+      )}
+
+      {ready && suggestions.length > 0 && (
+        <div className="resonance-list" role="list" aria-label="Dynamic resonance suggestions">
+          {suggestions.map((suggestion) => {
+            const isSelected = selected.includes(suggestion.candidateIndex);
+            return (
+              <label
+                key={suggestion.candidateIndex}
+                className={`resonance-candidate${isSelected ? ' selected' : ''}`}
+                onPointerEnter={() => onHoverCandidate(suggestion.candidateIndex)}
+                onPointerLeave={() => onHoverCandidate(null)}
+              >
+                <input
+                  type="checkbox"
+                  checked={isSelected}
+                  onChange={() => onToggleCandidate(suggestion.candidateIndex)}
+                  aria-label={`Select dynamic suggestion ${Math.round(suggestion.freq)} Hz`}
+                />
+                <span className="resonance-rank">{suggestion.candidateIndex + 1}</span>
+                <span className="resonance-frequency">{formatFreqPlain(suggestion.freq)}</span>
+                <span className={`resonance-confidence ${confidenceLabel(suggestion.confidence).toLowerCase()}`}>
+                  {confidenceLabel(suggestion.confidence)}
+                </span>
+                <span className="resonance-cut">max {suggestion.maxCut.toFixed(1)} dB</span>
+                <span className="resonance-detail">
+                  threshold {suggestion.threshold.toFixed(1)} dB · Q {suggestion.q.toFixed(1)} · hot +{suggestion.excessDb.toFixed(1)} dB
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="resonance-disclaimer">
+        Suggestions, not automatic fixes. The four dynamic bands replace the current dynamic setup when
+        applied. The scan measures the same relative excess the live detector uses, so the suggested
+        threshold reflects how hard the band will actually work. Audition before keeping the cuts.
+      </div>
+    </div>
   );
 }
 
@@ -1074,6 +1225,7 @@ export function App(): React.JSX.Element {
   const [profile, setProfile] = useState(0);
   const [selectedBand, setSelectedBand] = useState(0);
   const [selectedCandidates, setSelectedCandidates] = useState<number[]>([]);
+  const [selectedDynamicCandidates, setSelectedDynamicCandidates] = useState<number[]>([]);
   const [hoveredCandidate, setHoveredCandidate] = useState<number | null>(null);
   const manageRootRef = useRef<HTMLDivElement>(null);
   const graphSlotRef = useRef<HTMLDivElement>(null);
@@ -1109,6 +1261,7 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     if (resonance.status !== AnalyzerStatus.ready) {
       setSelectedCandidates([]);
+      setSelectedDynamicCandidates([]);
       setHoveredCandidate(null);
     }
   }, [resonance.status]);
@@ -1116,6 +1269,11 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     setSelectedCandidates((previous) => previous.filter((index) => index < resonance.candidates.length));
   }, [resonance.candidates.length]);
+
+  useEffect(() => {
+    const valid = new Set(resonance.dynamicCandidates.map((suggestion) => suggestion.candidateIndex));
+    setSelectedDynamicCandidates((previous) => previous.filter((index) => valid.has(index)));
+  }, [resonance.dynamicCandidates]);
 
   const analyzerTargets = state.analyzerTargets;
   const targetOptions = useMemo<SelectOption[]>(
@@ -1448,6 +1606,36 @@ export function App(): React.JSX.Element {
     setParam('resAudition', 0);
     void bridge.clearSurgicalBands().then((result) => {
       if (!result.ok) showError(result.error ?? 'Could not clear the surgical bands.');
+    });
+  }, [bridge, setParam, showError]);
+
+  const onToggleDynamicCandidate = useCallback(
+    (candidateIndex: number) => {
+      const alreadySelected = selectedDynamicCandidates.includes(candidateIndex);
+      if (!alreadySelected && selectedDynamicCandidates.length >= NUM_DYNAMIC_BANDS) {
+        showError(`The scan can apply at most ${NUM_DYNAMIC_BANDS} dynamic suggestions. Deselect one first.`);
+        return;
+      }
+      setSelectedDynamicCandidates((previous) => {
+        if (previous.includes(candidateIndex)) return previous.filter((value) => value !== candidateIndex);
+        return [...previous, candidateIndex].sort((a, b) => a - b);
+      });
+      setHoveredCandidate(candidateIndex);
+    },
+    [selectedDynamicCandidates, showError],
+  );
+
+  const onApplyDynamicResonance = useCallback(() => {
+    if (selectedDynamicCandidates.length === 0) return;
+    void bridge.applyResonanceToDynamic(selectedDynamicCandidates).then((result) => {
+      if (!result.ok) showError(result.error ?? 'Applying the dynamic suggestions failed.');
+    });
+  }, [bridge, selectedDynamicCandidates, showError]);
+
+  const onClearDynamic = useCallback(() => {
+    setParam('resAudition', 0);
+    void bridge.clearDynamicBands().then((result) => {
+      if (!result.ok) showError(result.error ?? 'Could not clear the dynamic bands.');
     });
   }, [bridge, setParam, showError]);
 
@@ -1787,6 +1975,20 @@ export function App(): React.JSX.Element {
                 four zero-latency bands · cut only when a band exceeds its neighbouring half-octaves
               </span>
             </div>
+            <DynamicSuggestionPanel
+              info={resonance}
+              selected={selectedDynamicCandidates}
+              surgicalActive={surgicalActive}
+              dynamicActive={dynamicActive}
+              audition={(state.params.resAudition ?? 0) >= 0.5}
+              onScan={onResonanceScan}
+              onCancel={onResonanceCancel}
+              onToggleCandidate={onToggleDynamicCandidate}
+              onHoverCandidate={setHoveredCandidate}
+              onApply={onApplyDynamicResonance}
+              onClear={onClearDynamic}
+              onAudition={onAuditionCuts}
+            />
             <DynamicPanel
               params={state.params}
               reductions={state.dynamicReduction}

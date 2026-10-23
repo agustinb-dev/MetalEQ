@@ -137,6 +137,29 @@ int closestCandidate (const metaleq::ResonanceAnalysisResult& result, double fre
     return bestDistance <= std::log2 (1.06) ? best : -1;
 }
 
+/** Index into result.dynamicSuggestions closest to `freq`, or -1. */
+int closestDynamicSuggestion (const metaleq::ResonanceAnalysisResult& result, double freq)
+{
+    int best = -1;
+    double bestDistance = 0.0;
+
+    for (int i = 0; i < result.numDynamicSuggestions; ++i)
+    {
+        const auto candidate = result.dynamicSuggestions[static_cast<size_t> (i)].band.freq;
+        if (candidate <= 0.0)
+            continue;
+
+        const double distance = std::abs (std::log2 (candidate / freq));
+        if (best < 0 || distance < bestDistance)
+        {
+            best = i;
+            bestDistance = distance;
+        }
+    }
+
+    return bestDistance <= std::log2 (1.06) ? best : -1;
+}
+
 void testDetectorFindsStationaryPeaks()
 {
     const auto capture = makeCapture (true);
@@ -167,6 +190,37 @@ void testDetectorFindsStationaryPeaks()
         check (candidate.prominenceDb > 2.0, "candidate clears the LTAS prominence gate");
         check (candidate.residualDb > 1.5, "candidate clears the harmonic-residual gate");
     }
+
+    check (result.numDynamicSuggestions >= 1,
+           "detector proposes at least one dynamic band from the capture");
+    check (closestDynamicSuggestion (result, 733.0) >= 0,
+           "detector proposes a dynamic band for the strongest resonance");
+
+    for (int i = 0; i < result.numDynamicSuggestions; ++i)
+    {
+        const auto& suggestion = result.dynamicSuggestions[static_cast<size_t> (i)];
+        check (suggestion.candidateIndex >= 0
+               && suggestion.candidateIndex < result.numCandidates,
+               "dynamic suggestion points back at a valid scan candidate");
+        if (suggestion.candidateIndex < 0 || suggestion.candidateIndex >= result.numCandidates)
+            continue;
+
+        const auto& candidate = result.candidates[static_cast<size_t> (suggestion.candidateIndex)];
+        check (suggestion.measuredExcessDb >= 3.0,
+               "dynamic suggestion is based on a measurable hot-point excess");
+        check (suggestion.band.freq == candidate.freq,
+               "dynamic suggestion keeps the candidate centre frequency");
+        check (suggestion.band.q >= 1.2 && suggestion.band.q <= 3.0,
+               "dynamic suggestion uses a broad, usable cut Q");
+        check (suggestion.band.ratio == 4.0 && suggestion.band.attackMs == 5.0
+               && suggestion.band.releaseMs == 120.0,
+               "dynamic suggestion uses the standard dynamic timing and ratio");
+        check (suggestion.band.thresholdDb >= 0.0 && suggestion.band.thresholdDb <= 10.0,
+               "dynamic threshold stays in a musical range");
+        check (suggestion.band.maxCutDb >= 2.0 && suggestion.band.maxCutDb <= 6.0,
+               "dynamic maximum cut stays conservative");
+        check (suggestion.band.on, "dynamic suggestion is enabled");
+    }
 }
 
 void testDetectorRejectsNeutralCapture()
@@ -177,6 +231,8 @@ void testDetectorRejectsNeutralCapture()
 
     check (result.framesAnalysed > 0, "neutral capture produces analysis frames");
     check (result.numCandidates == 0, "neutral varied capture produces no resonance candidates");
+    check (result.numDynamicSuggestions == 0,
+           "neutral varied capture produces no dynamic-band suggestions");
 }
 
 void testDetectorHandlesUnusableInput()
@@ -232,7 +288,8 @@ struct DynamicRunResult
 
 DynamicRunResult runDynamicBand (const std::vector<float>& input,
                                  const metaleq::DynamicBandSettings& band,
-                                 int tailSilenceSamples = 0)
+                                 int tailSilenceSamples = 0,
+                                 bool reportMaximum = false)
 {
     metaleq::DynamicResonanceEngine engine;
     engine.prepare (sampleRate);
@@ -244,15 +301,17 @@ DynamicRunResult runDynamicBand (const std::vector<float>& input,
     std::vector<float> data = input;
     data.resize (data.size() + static_cast<size_t> (tailSilenceSamples), 0.0f);
 
+    double maximum = 0.0;
     constexpr int blockSize = 256;
     for (int start = 0; start < static_cast<int> (data.size()); start += blockSize)
     {
         const int count = std::min (blockSize, static_cast<int> (data.size()) - start);
         float* pointer = data.data() + start;
         engine.process (&pointer, 1, count);
+        maximum = std::max (maximum, engine.getGainReductionDb (0));
     }
 
-    return { std::move (data), engine.getGainReductionDb (0) };
+    return { std::move (data), reportMaximum ? maximum : engine.getGainReductionDb (0) };
 }
 
 metaleq::DynamicBandSettings makeTestDynamicBand()
@@ -267,6 +326,34 @@ metaleq::DynamicBandSettings makeTestDynamicBand()
     band.maxCutDb    = 6.0;
     band.on          = true;
     return band;
+}
+
+void testDynamicSuggestionMeasurement()
+{
+    const auto sine = makeSine (733.0, 0.25, 2.0);
+    const auto stats = metaleq::detail::measureDynamicExcess (
+        sine.data(), static_cast<int> (sine.size()), sampleRate, 733.0);
+
+    check (stats.values >= 16, "relative-excess measurement collects enough gated points");
+    check (stats.activeFraction > 0.5, "a sustained tone keeps the dynamic detector active");
+    check (stats.medianDb > 3.0,
+           "a band-centred tone measures a positive relative excess");
+
+    const auto capture = makeCapture (true);
+    metaleq::ResonanceAnalysisResult result;
+    metaleq::analyseResonances (capture.data(), static_cast<int> (capture.size()), sampleRate, result);
+
+    const int suggestionIndex = closestDynamicSuggestion (result, 733.0);
+    check (suggestionIndex >= 0, "analyzer produces a dynamic suggestion for the 733 Hz peak");
+    if (suggestionIndex < 0)
+        return;
+
+    const auto& suggestion = result.dynamicSuggestions[static_cast<size_t> (suggestionIndex)];
+    const auto run = runDynamicBand (capture, suggestion.band, 0, true);
+    check (run.gainReductionDb > 0.2,
+           "a scan-suggested dynamic band actually engages on the captured program");
+    check (run.gainReductionDb <= suggestion.band.maxCutDb + 1.0e-6,
+           "a scan-suggested dynamic band respects its suggested maximum cut");
 }
 
 void testDynamicEngineTransparency()
@@ -473,6 +560,7 @@ int main()
     testDetectorRejectsNeutralCapture();
     testDetectorHandlesUnusableInput();
     testSurgicalChain();
+    testDynamicSuggestionMeasurement();
     testDynamicEngineTransparency();
     testDynamicEngineCutsExcess();
     testDynamicEngineZeroLatencyAndClamp();

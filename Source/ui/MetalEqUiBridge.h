@@ -14,7 +14,7 @@
     * The audio thread never touches the bridge, the WebView, or any state
       owned here. Parameters travel exclusively through APVTS atomics.
 
-    Protocol (version 4)
+    Protocol (version 5)
     --------------------
     JS -> C++ via registered native functions (promise based):
         uiReady()                              -> full initial snapshot
@@ -38,6 +38,8 @@
         cancelResonanceScan()
         applyResonanceSelection ([indices])    // up to six candidates
         clearSurgicalBands()
+        applyResonanceToDynamic ([indices])    // up to four candidates
+        clearDynamicBands()
         setEditorExpanded (expanded)           -> { ok } (Advanced view window grow)
 
     C++ -> JS via one event ("metaleq.tick") carrying a JSON object:
@@ -54,7 +56,10 @@
           analyzer,       // { status, progress, suggestion[5] } when changed
           resonance,      // { status, progress, enoughVariation,
                           //   candidates: [{freq,q,prominence,residual,
-                          //                 confidence,cutDb}] } when changed
+                          //                 confidence,cutDb}],
+                          //   dynamicCandidates: [{candidateIndex,freq,q,
+                          //     threshold,ratio,attack,release,maxCut,
+                          //     confidence,excessDb}] } when changed
           curve           // { points: [dB x 240], minDb: -15, maxDb: 15 }
                           // when EQ-relevant params changed
         }
@@ -106,7 +111,7 @@ std::optional<double> validateParameterWrite (juce::AudioProcessorValueTreeState
 class UiBridge : public juce::OptionsBuilder<juce::WebBrowserComponent::Options>
 {
 public:
-    static constexpr int protocolVersion = 4;
+    static constexpr int protocolVersion = 5;
     static constexpr int numCurvePoints  = 240;
     static constexpr int tickHz          = 20;
 
@@ -176,6 +181,8 @@ private:
     juce::var handleCancelResonanceScan();
     juce::var handleApplyResonanceSelection (const juce::Array<juce::var>& args);
     juce::var handleClearSurgicalBands();
+    juce::var handleApplyResonanceToDynamic (const juce::Array<juce::var>& args);
+    juce::var handleClearDynamicBands();
     juce::var handleSetEditorExpanded (const juce::Array<juce::var>& args);
 
     //==========================================================================

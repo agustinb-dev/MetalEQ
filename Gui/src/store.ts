@@ -65,7 +65,7 @@ const initialState: UiState = {
   meters: { in: 0, out: 0 },
   dynamicReduction: [0, 0, 0, 0],
   analyzer: { status: 0, progress: 0, suggestion: [0, 0, 0, 0, 0] },
-  resonance: { status: 0, progress: 0, enoughVariation: false, candidates: [] },
+  resonance: { status: 0, progress: 0, enoughVariation: false, candidates: [], dynamicCandidates: [] },
   curve: null,
   suggestionCurve: null,
   dragging: new Set(),
@@ -101,7 +101,13 @@ class Store {
       userPresets: s.userPresets ?? [],
       dynamicReduction: s.dynamicReduction ?? this.state.dynamicReduction,
       analyzer: s.analyzer ?? this.state.analyzer,
-      resonance: s.resonance ?? this.state.resonance,
+      resonance: s.resonance
+        ? {
+          ...s.resonance,
+          candidates: s.resonance.candidates ?? [],
+          dynamicCandidates: s.resonance.dynamicCandidates ?? [],
+        }
+        : this.state.resonance,
       curve: s.curve ?? this.state.curve,
       suggestionCurve: null,
     });
@@ -134,6 +140,7 @@ class Store {
         progress: t.resonance.progress,
         enoughVariation: t.resonance.enoughVariation,
         candidates: t.resonance.candidates ?? [],
+        dynamicCandidates: t.resonance.dynamicCandidates ?? [],
         changed: t.resonance.changed,
       };
     }

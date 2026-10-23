@@ -296,20 +296,22 @@ static void testCurveRangeIsFixed (MetalEQAudioProcessor& processor)
 }
 
 //==============================================================================
-static void testSnapshotV4 (MetalEQAudioProcessor& processor)
+static void testSnapshotV5 (MetalEQAudioProcessor& processor)
 {
     metaleq::ui::UiBridge bridge (processor);
     juce::var snapshot;
     check (callNative (bridge, "uiReady", juce::Array<juce::var> {}, snapshot),
            "uiReady is registered with the bridge");
 
-    check (static_cast<int> (getProperty (snapshot, "protocolVersion")) == 4,
-           "snapshot advertises protocol version 4");
+    check (static_cast<int> (getProperty (snapshot, "protocolVersion")) == 5,
+           "snapshot advertises protocol version 5");
 
     const auto resonance = getProperty (snapshot, "resonance");
     check (resonance.isObject(), "snapshot contains the V3 resonance state");
     check (getProperty (resonance, "status").isInt(), "resonance state carries a status");
     check (getProperty (resonance, "candidates").isArray(), "resonance state carries a candidate list");
+    check (getProperty (resonance, "dynamicCandidates").isArray(),
+           "resonance state carries a dynamic-suggestion list");
     check (getProperty (resonance, "enoughVariation").isBool(),
            "resonance state reports whether the capture varied enough");
 
@@ -341,6 +343,21 @@ static void testSnapshotV4 (MetalEQAudioProcessor& processor)
     check (callNative (bridge, "clearSurgicalBands", juce::Array<juce::var> {}, result),
            "clearSurgicalBands is registered");
     check (resultOk (result), "clearing flat surgical bands succeeds");
+    check (callNative (bridge, "applyResonanceToDynamic", makeArgs (juce::Array<juce::var> {}), result),
+           "applyResonanceToDynamic is registered");
+    check (resultOk (result), "applying an empty dynamic selection is a no-op success");
+    check (callNative (bridge, "clearDynamicBands", juce::Array<juce::var> {}, result),
+           "clearDynamicBands is registered");
+    check (resultOk (result), "clearing flat dynamic bands succeeds");
+
+    setPlain (processor, "dyn1Range", 5.0f);
+    setPlain (processor, "dyn1On", 1.0f);
+    check (readPlain (processor, "dyn1On") > 0.5f, "a dynamic test band is enabled before clearing");
+    check (callNative (bridge, "clearDynamicBands", juce::Array<juce::var> {}, result),
+           "clearDynamicBands remains registered after a band is active");
+    check (resultOk (result), "clearing active dynamic bands succeeds");
+    check (readPlain (processor, "dyn1On") < 0.5f, "clearDynamicBands disables every dynamic band");
+    check (readPlain (processor, "dyn1Range") < 1.0e-3f, "clearDynamicBands zeroes every maximum cut");
 
     const auto presets = getProperty (snapshot, "factoryPresets");
     check (presets.isArray() && presets.size() == metaleq::getNumPresets(),
@@ -405,7 +422,7 @@ int main()
 
     {
         MetalEQAudioProcessor processor;
-        testSnapshotV4 (processor);
+        testSnapshotV5 (processor);
     }
 
     if (failures == 0)

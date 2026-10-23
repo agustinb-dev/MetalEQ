@@ -1,11 +1,11 @@
 /*
-    Wire types for the MetalEQ bridge protocol (version 4).
+    Wire types for the MetalEQ bridge protocol (version 5).
 
     These mirror Source/ui/MetalEqUiBridge.cpp exactly: the native side is the
     single source of truth, JS only renders what it receives and sends requests.
 */
 
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
 export type ParamKind = 'float' | 'choice' | 'bool';
 
@@ -89,12 +89,30 @@ export interface ResonanceCandidateInfo {
   cutDb: number;
 }
 
+/** A complete V3.1 dynamic-band suggestion for one scan candidate. */
+export interface DynamicCandidateInfo {
+  /** Index into ResonanceInfo.candidates. */
+  candidateIndex: number;
+  freq: number;
+  q: number;
+  threshold: number;
+  ratio: number;
+  attack: number;
+  release: number;
+  maxCut: number;
+  confidence: number;
+  /** Hot-point (90th percentile) relative excess measured with the live detector. */
+  excessDb: number;
+}
+
 export interface ResonanceInfo {
   status: number;
   progress: number;
   /** False when the capture was too static to separate harmonics from resonances. */
   enoughVariation: boolean;
   candidates: ResonanceCandidateInfo[];
+  /** Candidates that measured enough relative excess for a dynamic cut. */
+  dynamicCandidates: DynamicCandidateInfo[];
   changed?: boolean;
 }
 
@@ -182,6 +200,9 @@ export interface MetalEqBridge {
   /** Selected candidate indices, in order; up to six are copied to surgical bands. */
   applyResonanceSelection(indices: number[]): Promise<OpResult>;
   clearSurgicalBands(): Promise<OpResult>;
+  /** Selected candidate indices, in order; up to four are copied to dynamic bands. */
+  applyResonanceToDynamic(indices: number[]): Promise<OpResult>;
+  clearDynamicBands(): Promise<OpResult>;
   /** Advanced view asks the native editor to grow for the numeric band panel. */
   setEditorExpanded(expanded: boolean): Promise<OpResult>;
 }

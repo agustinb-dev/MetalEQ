@@ -191,6 +191,14 @@ MetalEQAudioProcessor::MetalEQAudioProcessor()
     for (auto& value : resonanceResidual)     value.store (0.0f, std::memory_order_relaxed);
     for (auto& value : resonanceConfidence)   value.store (0.0f, std::memory_order_relaxed);
     for (auto& value : resonanceCut)          value.store (0.0f, std::memory_order_relaxed);
+    for (auto& value : resonanceDynamicEligible)  value.store (false, std::memory_order_relaxed);
+    for (auto& value : resonanceDynamicQ)         value.store (0.0f, std::memory_order_relaxed);
+    for (auto& value : resonanceDynamicThreshold) value.store (0.0f, std::memory_order_relaxed);
+    for (auto& value : resonanceDynamicRatio)     value.store (0.0f, std::memory_order_relaxed);
+    for (auto& value : resonanceDynamicAttack)    value.store (0.0f, std::memory_order_relaxed);
+    for (auto& value : resonanceDynamicRelease)   value.store (0.0f, std::memory_order_relaxed);
+    for (auto& value : resonanceDynamicMaxCut)    value.store (0.0f, std::memory_order_relaxed);
+    for (auto& value : resonanceDynamicExcess)    value.store (0.0f, std::memory_order_relaxed);
 
     for (auto& level : peakLevels)
         level.store (0.0f, std::memory_order_relaxed);
@@ -2371,6 +2379,33 @@ bool MetalEQAudioProcessor::getResonanceCandidate (
     return true;
 }
 
+bool MetalEQAudioProcessor::getResonanceDynamicSuggestion (
+    int candidateIndex,
+    metaleq::DynamicBandSettings& band,
+    double& confidence,
+    double& measuredExcessDb) const noexcept
+{
+    if (candidateIndex < 0 || candidateIndex >= getResonanceCandidateCount())
+        return false;
+
+    const auto slot = static_cast<size_t> (candidateIndex);
+    if (! resonanceDynamicEligible[slot].load (std::memory_order_acquire))
+        return false;
+
+    band.freq        = resonanceFreq[slot].load (std::memory_order_relaxed);
+    band.q           = resonanceDynamicQ[slot].load (std::memory_order_relaxed);
+    band.thresholdDb = resonanceDynamicThreshold[slot].load (std::memory_order_relaxed);
+    band.ratio       = resonanceDynamicRatio[slot].load (std::memory_order_relaxed);
+    band.attackMs    = resonanceDynamicAttack[slot].load (std::memory_order_relaxed);
+    band.releaseMs   = resonanceDynamicRelease[slot].load (std::memory_order_relaxed);
+    band.maxCutDb    = resonanceDynamicMaxCut[slot].load (std::memory_order_relaxed);
+    band.on          = true;
+
+    confidence = resonanceConfidence[slot].load (std::memory_order_relaxed);
+    measuredExcessDb = resonanceDynamicExcess[slot].load (std::memory_order_relaxed);
+    return true;
+}
+
 unsigned long long MetalEQAudioProcessor::getResonanceRevision() const noexcept
 {
     return resonanceRevision.load (std::memory_order_acquire);
@@ -2378,6 +2413,9 @@ unsigned long long MetalEQAudioProcessor::getResonanceRevision() const noexcept
 
 void MetalEQAudioProcessor::clearResonanceCandidates() noexcept
 {
+    for (auto& eligible : resonanceDynamicEligible)
+        eligible.store (false, std::memory_order_relaxed);
+
     resonanceCandidateCount.store (0, std::memory_order_release);
     resonanceEnoughVariation.store (false, std::memory_order_relaxed);
     resonanceRevision.fetch_add (1, std::memory_order_acq_rel);
@@ -2446,6 +2484,86 @@ void MetalEQAudioProcessor::clearSurgicalBands()
     {
         setFloatParameter (ParameterIDs::resGain[band], 0.0);
         setFloatParameter (ParameterIDs::resOn[band], 0.0);
+    }
+    applyingPreset.store (false, std::memory_order_release);
+    markCurrentToneAsCustom();
+}
+
+void MetalEQAudioProcessor::applyResonanceToDynamic (const std::vector<int>& candidateIndices)
+{
+    if (getResonanceStatus() != AnalyzerStatus::ready)
+        return;
+
+    std::array<metaleq::DynamicBandSettings, metaleq::kNumDynamicBands> selected {};
+    std::vector<int> seen;
+    seen.reserve (metaleq::kNumDynamicBands);
+    int numSelected = 0;
+
+    for (const int index : candidateIndices)
+    {
+        if (numSelected >= metaleq::kNumDynamicBands)
+            break;
+        if (index < 0 || index >= getResonanceCandidateCount())
+            continue;
+        if (std::find (seen.begin(), seen.end(), index) != seen.end())
+            continue;
+
+        metaleq::DynamicBandSettings band;
+        double confidence = 0.0;
+        double excessDb = 0.0;
+        if (! getResonanceDynamicSuggestion (index, band, confidence, excessDb))
+            continue;
+
+        seen.push_back (index);
+        selected[static_cast<size_t> (numSelected++)] = band;
+    }
+
+    if (numSelected == 0)
+        return;
+
+    applyingPreset.store (true, std::memory_order_relaxed);
+
+    for (int bandIndex = 0; bandIndex < metaleq::kNumDynamicBands; ++bandIndex)
+    {
+        if (bandIndex < numSelected)
+        {
+            const auto& band = selected[static_cast<size_t> (bandIndex)];
+            setFloatParameter (ParameterIDs::dynFreq[bandIndex], band.freq);
+            setFloatParameter (ParameterIDs::dynQ[bandIndex], band.q);
+            setFloatParameter (ParameterIDs::dynThreshold[bandIndex], band.thresholdDb);
+            setFloatParameter (ParameterIDs::dynRatio[bandIndex], band.ratio);
+            setFloatParameter (ParameterIDs::dynAttack[bandIndex], band.attackMs);
+            setFloatParameter (ParameterIDs::dynRelease[bandIndex], band.releaseMs);
+            setFloatParameter (ParameterIDs::dynRange[bandIndex], band.maxCutDb);
+            setFloatParameter (ParameterIDs::dynOn[bandIndex], 1.0);
+        }
+        else
+        {
+            setFloatParameter (ParameterIDs::dynRange[bandIndex], 0.0);
+            setFloatParameter (ParameterIDs::dynOn[bandIndex], 0.0);
+        }
+    }
+
+    applyingPreset.store (false, std::memory_order_release);
+    markCurrentToneAsCustom();
+}
+
+void MetalEQAudioProcessor::clearDynamicBands()
+{
+    bool changed = false;
+    for (int band = 0; band < metaleq::kNumDynamicBands; ++band)
+        if (apvts->getRawParameterValue (ParameterIDs::dynOn[band])->load() >= 0.5f
+            || std::abs (apvts->getRawParameterValue (ParameterIDs::dynRange[band])->load()) > 1.0e-3f)
+            changed = true;
+
+    if (! changed)
+        return;
+
+    applyingPreset.store (true, std::memory_order_relaxed);
+    for (int band = 0; band < metaleq::kNumDynamicBands; ++band)
+    {
+        setFloatParameter (ParameterIDs::dynRange[band], 0.0);
+        setFloatParameter (ParameterIDs::dynOn[band], 0.0);
     }
     applyingPreset.store (false, std::memory_order_release);
     markCurrentToneAsCustom();
@@ -2568,6 +2686,33 @@ void MetalEQAudioProcessor::analyzeResonanceCapture (int sampleCount, double sam
         resonanceResidual[slot].store (static_cast<float> (candidate.residualDb), std::memory_order_relaxed);
         resonanceConfidence[slot].store (static_cast<float> (candidate.confidence), std::memory_order_relaxed);
         resonanceCut[slot].store (static_cast<float> (candidate.suggestedCutDb), std::memory_order_relaxed);
+    }
+
+    for (auto& eligible : resonanceDynamicEligible)
+        eligible.store (false, std::memory_order_relaxed);
+
+    for (int i = 0; i < result.numDynamicSuggestions; ++i)
+    {
+        const auto& suggestion = result.dynamicSuggestions[static_cast<size_t> (i)];
+        const int candidateIndex = suggestion.candidateIndex;
+        if (candidateIndex < 0 || candidateIndex >= count)
+            continue;
+
+        const auto slot = static_cast<size_t> (candidateIndex);
+        const auto& band = suggestion.band;
+        resonanceDynamicQ[slot].store (static_cast<float> (band.q), std::memory_order_relaxed);
+        resonanceDynamicThreshold[slot].store (static_cast<float> (band.thresholdDb),
+                                                std::memory_order_relaxed);
+        resonanceDynamicRatio[slot].store (static_cast<float> (band.ratio), std::memory_order_relaxed);
+        resonanceDynamicAttack[slot].store (static_cast<float> (band.attackMs),
+                                            std::memory_order_relaxed);
+        resonanceDynamicRelease[slot].store (static_cast<float> (band.releaseMs),
+                                             std::memory_order_relaxed);
+        resonanceDynamicMaxCut[slot].store (static_cast<float> (band.maxCutDb),
+                                            std::memory_order_relaxed);
+        resonanceDynamicExcess[slot].store (static_cast<float> (suggestion.measuredExcessDb),
+                                            std::memory_order_relaxed);
+        resonanceDynamicEligible[slot].store (true, std::memory_order_release);
     }
 
     resonanceEnoughVariation.store (result.enoughVariation, std::memory_order_relaxed);

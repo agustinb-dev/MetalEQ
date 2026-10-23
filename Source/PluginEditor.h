@@ -12,7 +12,7 @@
     * a watchdog: if the page never calls uiReady() (broken WebView2 runtime,
       missing assets) the editor swaps in the preserved native UI
       (MetalEQNativeFallbackEditor) so the plugin always remains usable,
-    * resizing the host window when the front-end opens the Fine EQ panel.
+    * resizing the host window when the front-end opens the Advanced view.
 
     The native fallback runs as a child component; its setSize() calls are
     propagated to this top-level editor via a ComponentListener so window
@@ -56,7 +56,7 @@ private:
     void timerCallback() override;
 
     // ComponentListener for the nested native fallback editor: forwards its
-    // resize (FINE EQ expand) to this top-level editor.
+    // resize requests to this top-level editor.
     void componentMovedOrResized (juce::Component& component, bool, bool) override;
     void componentParentHierarchyChanged (juce::Component& component) override;
 
@@ -72,9 +72,10 @@ private:
     UiBrowser webComponent;
     std::unique_ptr<MetalEQNativeFallbackEditor> fallbackEditor;
 
-    // Fine EQ expansion, mirroring the native editor's sizing rules.
+    // Advanced-view expansion: the WebView asks for extra height for the
+    // numeric controls, shelves and analyzer.
     int collapsedHeight = 900;
-    bool fineExpanded = false;
+    bool advancedExpanded = false;
     bool fallbackActive = false;
 
     // uiReady watchdog: if the page has not checked in after a few seconds

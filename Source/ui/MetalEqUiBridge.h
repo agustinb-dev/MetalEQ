@@ -14,31 +14,37 @@
     * The audio thread never touches the bridge, the WebView, or any state
       owned here. Parameters travel exclusively through APVTS atomics.
 
-    Protocol (version 1)
+    Protocol (version 2)
     --------------------
     JS -> C++ via registered native functions (promise based):
         uiReady()                              -> full initial snapshot
         setParameter (id, plainValue)          -> { ok, value, error? }
-        applyPreset (index)
+        applyPreset (canonicalIndex)           // 0 Custom, 1..N factory
+        applyPresetById (stableId)
         loadUserPreset (name)                  -> { ok, error? }
         saveUserPreset (name, overwrite)       -> { ok, error? }
         renameUserPreset (old, new)            -> { ok, error? }
         deleteUserPreset (name)                -> { ok, error? }
         revertToPreset()
         resetToNeutral()
+        setAbSlot (slot)                       // 0 = A, 1 = B
+        copyAbToOther()
+        swapAbSlots()
         startAnalyzerCapture (targetProfile)
         cancelAnalyzerCapture()
         applyAnalyzerSuggestion (amount)
         getSuggestionCurve (amount)            -> { ok, curve, error? }
-        setEditorExpanded (expanded)           -> { ok } (Fine EQ window grow)
+        setEditorExpanded (expanded)           -> { ok } (Advanced view window grow)
 
     C++ -> JS via one event ("metaleq.tick") carrying a JSON object:
         {
           seq,            // monotonic tick counter
           params,         // { id: plainValue } - full map on the first tick
                           // and after forceFullSync(), diffs otherwise
-          preset,         // { index, name, kind, dirty } when changed
+          preset,         // { index, presetId, name, kind, dirty, abSlot } when changed
           userPresets,    // [ names ] when changed
+          factoryPresets, // metadata on the uiReady snapshot only
+          analyzerTargets,// stable target ids/labels on the uiReady snapshot only
           meters,         // { in, out } every tick (cheap atomics)
           analyzer,       // { status, progress, suggestion[5] } when changed
           curve,          // [ dB x 240 ] when EQ-relevant params changed
@@ -92,7 +98,7 @@ std::optional<double> validateParameterWrite (juce::AudioProcessorValueTreeState
 class UiBridge : public juce::OptionsBuilder<juce::WebBrowserComponent::Options>
 {
 public:
-    static constexpr int protocolVersion = 1;
+    static constexpr int protocolVersion = 2;
     static constexpr int numCurvePoints  = 240;
     static constexpr int tickHz          = 20;
 
@@ -113,9 +119,9 @@ public:
     /** The WebView that events are emitted to. Set by the editor before load. */
     void setWebComponent (juce::WebBrowserComponent* web) noexcept { webComponent = web; }
 
-    /** Called by the front-end when the Fine EQ panel opens/closes so the
-        editor can resize the host window (mirrors the native FINE EQ button).
-        Set by the editor; runs on the message thread.
+    /** Called by the front-end when the Advanced view opens/closes so the
+        editor can resize the host window. Set by the editor; runs on the
+        message thread.
     */
     void setExpansionHandler (std::function<void (bool)> handler) noexcept
     {
@@ -144,12 +150,16 @@ private:
     juce::var handleUiReady();
     juce::var handleSetParameter (const juce::Array<juce::var>& args);
     juce::var handleApplyPreset (const juce::Array<juce::var>& args);
+    juce::var handleApplyPresetById (const juce::Array<juce::var>& args);
     juce::var handleLoadUserPreset (const juce::Array<juce::var>& args);
     juce::var handleSaveUserPreset (const juce::Array<juce::var>& args);
     juce::var handleRenameUserPreset (const juce::Array<juce::var>& args);
     juce::var handleDeleteUserPreset (const juce::Array<juce::var>& args);
     juce::var handleRevertToPreset();
     juce::var handleResetToNeutral();
+    juce::var handleSetAbSlot (const juce::Array<juce::var>& args);
+    juce::var handleCopyAbToOther();
+    juce::var handleSwapAbSlots();
     juce::var handleStartAnalyzerCapture (const juce::Array<juce::var>& args);
     juce::var handleCancelAnalyzerCapture();
     juce::var handleApplyAnalyzerSuggestion (const juce::Array<juce::var>& args);
@@ -163,6 +173,7 @@ private:
     juce::var buildAnalyzerObject();
     juce::var buildCurveArray();
     juce::var buildFactoryPresetList();
+    juce::var buildAnalyzerTargetList();
 
     double readPlainValue (const char* paramId) const;
     void markUserPresetsChanged() noexcept { userPresetsDirty = true; }

@@ -130,6 +130,11 @@ juce::WebBrowserComponent::Options UiBridge::addOptions (juce::WebBrowserCompone
             {
                 complete (self->handleApplyPreset (args));
             })
+        .withNativeFunction ("applyPresetById",
+            [self] (const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion complete)
+            {
+                complete (self->handleApplyPresetById (args));
+            })
         .withNativeFunction ("loadUserPreset",
             [self] (const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion complete)
             {
@@ -159,6 +164,21 @@ juce::WebBrowserComponent::Options UiBridge::addOptions (juce::WebBrowserCompone
             [self] (const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion complete)
             {
                 complete (self->handleResetToNeutral());
+            })
+        .withNativeFunction ("setAbSlot",
+            [self] (const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion complete)
+            {
+                complete (self->handleSetAbSlot (args));
+            })
+        .withNativeFunction ("copyAbToOther",
+            [self] (const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion complete)
+            {
+                complete (self->handleCopyAbToOther());
+            })
+        .withNativeFunction ("swapAbSlots",
+            [self] (const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion complete)
+            {
+                complete (self->handleSwapAbSlots());
             })
         .withNativeFunction ("startAnalyzerCapture",
             [self] (const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion complete)
@@ -271,6 +291,19 @@ juce::var UiBridge::handleApplyPreset (const juce::Array<juce::var>& args)
     return okResult();
 }
 
+juce::var UiBridge::handleApplyPresetById (const juce::Array<juce::var>& args)
+{
+    if (args.size() < 1 || ! args[0].isString())
+        return errorResult ("applyPresetById expects a stable preset id.");
+
+    if (! processor.applyPresetById (args[0].toString()))
+        return errorResult ("Unknown factory preset id.");
+
+    markCurveDirty();
+    markUserPresetsChanged();
+    return okResult();
+}
+
 juce::var UiBridge::handleLoadUserPreset (const juce::Array<juce::var>& args)
 {
     if (args.size() < 1 || ! args[0].isString())
@@ -339,13 +372,43 @@ juce::var UiBridge::handleResetToNeutral()
     return okResult();
 }
 
+juce::var UiBridge::handleSetAbSlot (const juce::Array<juce::var>& args)
+{
+    const auto slot = numberOrNull (args, 0);
+    if (slot.isVoid())
+        return errorResult ("setAbSlot expects 0 (A) or 1 (B).");
+
+    processor.setAbSlot (static_cast<int> (static_cast<double> (slot)));
+    markCurveDirty();
+    return okResult();
+}
+
+juce::var UiBridge::handleCopyAbToOther()
+{
+    if (! processor.copyActiveAbToOther())
+        return errorResult ("The other A/B slot could not be copied.");
+
+    markCurveDirty();
+    return okResult();
+}
+
+juce::var UiBridge::handleSwapAbSlots()
+{
+    if (! processor.swapAbSlots())
+        return errorResult ("The A/B slots could not be swapped.");
+
+    markCurveDirty();
+    return okResult();
+}
+
 juce::var UiBridge::handleStartAnalyzerCapture (const juce::Array<juce::var>& args)
 {
     const auto profile = numberOrNull (args, 0);
     if (profile.isVoid())
         return errorResult ("startAnalyzerCapture expects a target profile index.");
 
-    processor.startAnalyzerCapture (juce::jlimit (0, 3, static_cast<int> (static_cast<double> (profile))));
+    processor.startAnalyzerCapture (juce::jlimit (0, metaleq::getNumAnalyzerTargets() - 1,
+        static_cast<int> (static_cast<double> (profile))));
     return okResult();
 }
 
@@ -426,10 +489,12 @@ juce::var UiBridge::buildPresetObject()
 
     auto* obj = new juce::DynamicObject();
     obj->setProperty ("index", state.presetIndex);
+    obj->setProperty ("presetId", state.presetId);
     obj->setProperty ("name", state.presetName);
     obj->setProperty ("kind", state.userPreset ? "user"
                         : (state.presetIndex > 0 ? "factory" : "custom"));
     obj->setProperty ("dirty", state.presetDirty);
+    obj->setProperty ("abSlot", state.abSlot);
     return juce::var (obj);
 }
 
@@ -517,13 +582,33 @@ juce::var UiBridge::buildFactoryPresetList()
         const auto& preset = metaleq::getPreset (i);
         auto* obj = new juce::DynamicObject();
         obj->setProperty ("index", i + 1); // 0 is reserved for Custom
+        obj->setProperty ("id", preset.id);
         obj->setProperty ("name", preset.name);
+        obj->setProperty ("genre", preset.genre);
+        obj->setProperty ("subgenre", preset.subgenre);
         obj->setProperty ("placement", metaleq::placementToString (preset.placement));
         obj->setProperty ("description", preset.description);
         presets.add (juce::var (obj));
     }
 
     return juce::var (presets);
+}
+
+juce::var UiBridge::buildAnalyzerTargetList()
+{
+    juce::Array<juce::var> targets;
+
+    for (int i = 0; i < metaleq::getNumAnalyzerTargets(); ++i)
+    {
+        const auto& target = metaleq::getAnalyzerTarget (i);
+        auto* obj = new juce::DynamicObject();
+        obj->setProperty ("index", i);
+        obj->setProperty ("presetId", target.presetId);
+        obj->setProperty ("label", target.label);
+        targets.add (juce::var (obj));
+    }
+
+    return juce::var (targets);
 }
 
 juce::var UiBridge::buildFullSnapshot()
@@ -534,6 +619,7 @@ juce::var UiBridge::buildFullSnapshot()
     obj->setProperty ("params", buildParamsObject (true));
     obj->setProperty ("preset", buildPresetObject());
     obj->setProperty ("factoryPresets", buildFactoryPresetList());
+    obj->setProperty ("analyzerTargets", buildAnalyzerTargetList());
 
     lastUserPresets = processor.getUserPresetNames();
     juce::Array<juce::var> userPresets;

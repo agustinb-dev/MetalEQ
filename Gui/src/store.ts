@@ -13,6 +13,7 @@
 import { useSyncExternalStore } from 'react';
 import type {
   AnalyzerInfo,
+  AnalyzerTargetInfo,
   CurveInfo,
   FactoryPresetInfo,
   MetersInfo,
@@ -28,6 +29,7 @@ export interface UiState {
   params: Record<string, number>;
   preset: PresetInfo;
   factoryPresets: FactoryPresetInfo[];
+  analyzerTargets: AnalyzerTargetInfo[];
   userPresets: string[];
   meters: MetersInfo;
   analyzer: AnalyzerInfo;
@@ -39,7 +41,14 @@ export interface UiState {
   lastError: string | null;
 }
 
-const initialPreset: PresetInfo = { index: 0, name: 'Custom', kind: 'custom', dirty: false };
+const initialPreset: PresetInfo = {
+  index: 0,
+  presetId: '',
+  name: 'Custom',
+  kind: 'custom',
+  dirty: false,
+  abSlot: 0,
+};
 
 const initialState: UiState = {
   ready: false,
@@ -47,6 +56,7 @@ const initialState: UiState = {
   params: defaultParams(),
   preset: initialPreset,
   factoryPresets: [],
+  analyzerTargets: [],
   userPresets: [],
   meters: { in: 0, out: 0 },
   analyzer: { status: 0, progress: 0, suggestion: [0, 0, 0, 0, 0] },
@@ -81,6 +91,7 @@ class Store {
       params: { ...this.state.params, ...s.params },
       preset: s.preset,
       factoryPresets: s.factoryPresets ?? [],
+      analyzerTargets: s.analyzerTargets ?? [],
       userPresets: s.userPresets ?? [],
       analyzer: s.analyzer ?? this.state.analyzer,
       curve: s.curve ?? this.state.curve,

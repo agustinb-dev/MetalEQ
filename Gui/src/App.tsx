@@ -1,22 +1,32 @@
 /*
     MetalEQ WebView UI - root component.
 
-    Layout mirrors Source/native/MetalEQNativeFallbackEditor.cpp resized():
-    header (title + peak meters), preset row, EQ graph, macro knobs, shape
-    toggles, high-pass row, low-pass row, Fine EQ toggle (+ 220 px band
-    panel), analyzer target row, status line and disclaimer.
+    Two levels of control, sharing one bridge and one EQ engine:
+
+      Simple    the default. Pick a genre/subgenre tone, shape it with macros
+                and the fixed character switches, and drag the graph directly.
+      Advanced  every numeric parameter, including the five parametric bands
+                and the filters, plus the analyzer.
+
+    The choice is remembered after the user makes it. The first run always
+    starts in Simple.
 
     Every control sends requests through the bridge; nothing here is
     authoritative. Authoritative values come back via metaleq.tick and the
     setParameter() result and overwrite local state.
 */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { isJuceBackendAvailable, JuceBridge } from './bridge';
 import { MockBridge } from './mockBridge';
 import { store, useUiState } from './store';
 import { AnalyzerStatus, PROTOCOL_VERSION } from './types';
-import type { MetalEqBridge, ParamSpec, PresetInfo } from './types';
+import type {
+  FactoryPresetInfo,
+  MetalEqBridge,
+  ParamSpec,
+  PresetInfo,
+} from './types';
 import {
   NUM_BANDS,
   formatFreqPlain,
@@ -43,15 +53,6 @@ const SLOPE_CHOICES = [
   { value: '3', label: '36 dB/oct' },
 ];
 
-// Target profiles, mirroring targetCombo in the native editor. The analyzer
-// compares the captured spectrum with the selected profile's target curve.
-const TARGET_PROFILES = [
-  'Metalcore · Tight Rhythm',
-  'Thrash · Technical Clarity',
-  'Classic Thrash · Midrange Punch',
-  'Post-Amp · Mix Cleanup',
-];
-
 const MACRO_KNOBS: Array<{ id: string; title: string; tip: string }> = [
   { id: 'tight', title: 'TIGHT', tip: 'Controls low-end looseness and low-mid buildup.' },
   { id: 'body', title: 'BODY', tip: 'Adds or reduces low-mid fullness. Centre is neutral.' },
@@ -70,18 +71,44 @@ const SHAPES: Array<{ id: string; label: string; tip: string }> = [
   { id: 'shapeBrightenOn', label: 'BRIGHTEN', tip: 'Adds controlled presence to a dark guitar tone.' },
 ];
 
+const VIEW_STORAGE_KEY = 'metaleq.editorView';
+
+type ViewMode = 'simple' | 'advanced';
+
+type PresetChoice =
+  | { kind: 'custom' }
+  | { kind: 'factory'; presetId: string }
+  | { kind: 'user'; name: string };
+
 function specOf(id: string): ParamSpec {
   const spec = getSpec(id);
   if (spec == null) throw new Error(`missing param spec: ${id}`);
   return spec;
 }
 
-type ModalState =
-  | { kind: 'saveAs' }
-  | { kind: 'overwrite'; name: string }
-  | { kind: 'rename' }
-  | { kind: 'delete'; name: string }
-  | { kind: 'error'; message: string };
+function initialView(): ViewMode {
+  if (typeof window === 'undefined') return 'simple';
+
+  // Browser preview / screenshot aid. Never stored: only an explicit click
+  // on the Advanced toggle persists a preference.
+  const query = new URLSearchParams(window.location.search);
+  if (query.get('view') === 'advanced' || query.has('advanced') || query.has('fine')) return 'advanced';
+
+  try {
+    return window.localStorage.getItem(VIEW_STORAGE_KEY) === 'advanced' ? 'advanced' : 'simple';
+  } catch {
+    return 'simple';
+  }
+}
+
+function rememberView(view: ViewMode): void {
+  try {
+    window.localStorage.setItem(VIEW_STORAGE_KEY, view);
+  } catch {
+    // Storage can be unavailable in a restricted host; the in-memory choice
+    // still applies for this session.
+  }
+}
 
 /** Mirror of the native preset state label (FACTORY / USER / CUSTOM + dirty *). */
 function presetStateText(preset: PresetInfo): string {
@@ -89,7 +116,7 @@ function presetStateText(preset: PresetInfo): string {
   return preset.dirty ? `${kind} *` : kind;
 }
 
-/** Mirror of MetalEQNativeFallbackEditor::updateAnalyzerUi() strings. */
+/** Mirror of the native updateAnalyzerUi() strings. */
 function analyzerStatusText(status: number, progress: number, suggestion: number[]): string {
   switch (status) {
     case AnalyzerStatus.capturing:
@@ -105,6 +132,554 @@ function analyzerStatusText(status: number, progress: number, suggestion: number
   }
 }
 
+//----------------------------------------------------------------------------
+// Small presentational pieces
+
+function ViewToggle({ view, onChange }: { view: ViewMode; onChange: (view: ViewMode) => void }) {
+  return (
+    <div className="view-toggle" role="group" aria-label="Editor view">
+      <button
+        type="button"
+        className={`view-btn${view === 'simple' ? ' active' : ''}`}
+        aria-pressed={view === 'simple'}
+        onClick={() => onChange('simple')}
+        title="Simple view: presets, macros, shapes and direct graph editing."
+      >
+        Simple
+      </button>
+      <button
+        type="button"
+        className={`view-btn${view === 'advanced' ? ' active' : ''}`}
+        aria-pressed={view === 'advanced'}
+        onClick={() => onChange('advanced')}
+        title="Advanced view: numeric bands, filters and the analyzer."
+      >
+        Advanced
+      </button>
+    </div>
+  );
+}
+
+function AbControls({
+  slot,
+  onSlot,
+  onCopy,
+  onSwap,
+}: {
+  slot: number;
+  onSlot: (slot: number) => void;
+  onCopy: () => void;
+  onSwap: () => void;
+}) {
+  return (
+    <div className="ab-controls" title="A/B holds two complete EQ setups. Output trim stays global for level-matched comparison.">
+      <span className="ab-label">A/B</span>
+      <div className="ab-segment" role="group" aria-label="A/B slot">
+        <button
+          type="button"
+          className={`ab-btn${slot === 0 ? ' active' : ''}`}
+          aria-pressed={slot === 0}
+          onClick={() => onSlot(0)}
+          title="Recall slot A"
+        >
+          A
+        </button>
+        <button
+          type="button"
+          className={`ab-btn${slot === 1 ? ' active' : ''}`}
+          aria-pressed={slot === 1}
+          onClick={() => onSlot(1)}
+          title="Recall slot B"
+        >
+          B
+        </button>
+      </div>
+      <button type="button" className="btn compact" onClick={onCopy} title="Copy the active slot to the other slot">
+        Copy
+      </button>
+      <button type="button" className="btn compact" onClick={onSwap} title="Swap the complete A and B setups">
+        Swap
+      </button>
+    </div>
+  );
+}
+
+interface PresetBrowserProps {
+  factoryPresets: FactoryPresetInfo[];
+  userPresets: string[];
+  current: PresetInfo;
+  onChoose: (choice: PresetChoice) => void;
+  onSaveAs: () => void;
+  onClose: () => void;
+}
+
+function PresetBrowser({
+  factoryPresets,
+  userPresets,
+  current,
+  onChoose,
+  onSaveAs,
+  onClose,
+}: PresetBrowserProps) {
+  const [filter, setFilter] = useState('All');
+  const [query, setQuery] = useState('');
+
+  const groups = useMemo(() => {
+    const byGenre = new Map<string, Map<string, FactoryPresetInfo[]>>();
+    for (const preset of factoryPresets) {
+      const subs = byGenre.get(preset.genre) ?? new Map<string, FactoryPresetInfo[]>();
+      const list = subs.get(preset.subgenre) ?? [];
+      list.push(preset);
+      subs.set(preset.subgenre, list);
+      byGenre.set(preset.genre, subs);
+    }
+    return Array.from(byGenre, ([genre, subs]) => ({
+      genre,
+      subs: Array.from(subs, ([subgenre, presets]) => ({ subgenre, presets })),
+    }));
+  }, [factoryPresets]);
+
+  const normalizedQuery = query.trim().toLowerCase();
+  const matches = useCallback(
+    (preset: FactoryPresetInfo) =>
+      normalizedQuery.length === 0
+      || [preset.name, preset.description, preset.genre, preset.subgenre, preset.placement]
+        .some((text) => text.toLowerCase().includes(normalizedQuery)),
+    [normalizedQuery],
+  );
+
+  const visibleGroups = groups
+    .filter((group) => filter === 'All' || filter === group.genre)
+    .map((group) => ({
+      ...group,
+      subs: group.subs
+        .map((sub) => ({ ...sub, presets: sub.presets.filter(matches) }))
+        .filter((sub) => sub.presets.length > 0),
+    }))
+    .filter((group) => group.subs.length > 0);
+
+  const showUsers = filter === 'All' || filter === 'User';
+  const visibleUsers = showUsers
+    ? userPresets.filter((name) => normalizedQuery.length === 0 || name.toLowerCase().includes(normalizedQuery))
+    : [];
+  const showCustom =
+    filter === 'All'
+    && (normalizedQuery.length === 0
+      || 'custom neutral'.includes(normalizedQuery)
+      || 'custom / neutral'.includes(normalizedQuery));
+
+  const currentFactory = current.presetId.length > 0
+    ? factoryPresets.find((preset) => preset.id === current.presetId)
+    : current.kind === 'factory'
+      ? factoryPresets.find((preset) => preset.index === current.index)
+      : undefined;
+
+  const genreTabs = ['All', ...groups.map((group) => group.genre), 'User'];
+
+  return (
+    <div
+      className="browser-backdrop"
+      onPointerDown={(event) => event.target === event.currentTarget && onClose()}
+    >
+      <div
+        className="preset-browser"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Tone library"
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            onClose();
+          }
+        }}
+      >
+        <div className="browser-header">
+          <div>
+            <div className="browser-title">Tone library</div>
+            <div className="browser-subtitle">
+              Start with a complete sound, then shape it with the graph, macros and switches.
+            </div>
+          </div>
+          <button type="button" className="btn" onClick={onClose} aria-label="Close tone library">
+            Close
+          </button>
+        </div>
+
+        <div className="browser-search-row">
+          <input
+            className="browser-search"
+            type="search"
+            autoFocus
+            value={query}
+            placeholder="Search tones (e.g. drop tuning, thrash, fizz)…"
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </div>
+
+        <div className="browser-tabs" role="tablist" aria-label="Tone category">
+          {genreTabs.map((genre) => (
+            <button
+              key={genre}
+              type="button"
+              role="tab"
+              aria-selected={filter === genre}
+              className={`browser-tab${filter === genre ? ' active' : ''}`}
+              onClick={() => setFilter(genre)}
+            >
+              {genre}
+              {genre === 'User' && userPresets.length > 0 ? ` (${userPresets.length})` : ''}
+            </button>
+          ))}
+        </div>
+
+        <div className="browser-list">
+          {showCustom && (
+            <section className="browser-group">
+              <div className="browser-group-title">Start from scratch</div>
+              <button
+                type="button"
+                className={`preset-card custom${current.kind === 'custom' ? ' current' : ''}`}
+                onClick={() => onChoose({ kind: 'custom' })}
+              >
+                <span className="preset-card-main">
+                  <span className="preset-card-name">Custom / Neutral</span>
+                  <span className="preset-card-meta">Flat EQ · no filters · no output trim</span>
+                </span>
+                <span className="preset-card-badge">CUSTOM</span>
+              </button>
+            </section>
+          )}
+
+          {visibleGroups.map((group) => (
+            <section className="browser-group" key={group.genre}>
+              <div className="browser-group-title">{group.genre}</div>
+              {group.subs.map((sub) => (
+                <div className="browser-subgroup" key={`${group.genre}:${sub.subgenre}`}>
+                  <div className="browser-subgroup-title">{sub.subgenre}</div>
+                  <div className="preset-card-grid">
+                    {sub.presets.map((preset) => {
+                      const isCurrent = currentFactory?.id === preset.id;
+                      return (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          className={`preset-card${isCurrent ? ' current' : ''}`}
+                          onClick={() => onChoose({ kind: 'factory', presetId: preset.id })}
+                        >
+                          <span className="preset-card-main">
+                            <span className="preset-card-name">{preset.name}</span>
+                            <span className="preset-card-meta">
+                              {preset.genre} · {preset.subgenre} · {preset.placement}
+                            </span>
+                            <span className="preset-card-description">{preset.description}</span>
+                          </span>
+                          <span className={`preset-card-badge${isCurrent ? ' active' : ''}`}>
+                            {isCurrent ? 'LOADED' : 'FACTORY'}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </section>
+          ))}
+
+          {visibleUsers.length > 0 && (
+            <section className="browser-group">
+              <div className="browser-group-title">User presets</div>
+              <div className="preset-card-grid">
+                {visibleUsers.map((name) => (
+                  <button
+                    key={name}
+                    type="button"
+                    className={`preset-card${current.kind === 'user' && current.name === name ? ' current' : ''}`}
+                    onClick={() => onChoose({ kind: 'user', name })}
+                  >
+                    <span className="preset-card-main">
+                      <span className="preset-card-name">{name}</span>
+                      <span className="preset-card-meta">Saved user preset</span>
+                    </span>
+                    <span className={`preset-card-badge${current.kind === 'user' && current.name === name ? ' active' : ''}`}>
+                      {current.kind === 'user' && current.name === name ? 'LOADED' : 'USER'}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {filter === 'User' && visibleUsers.length === 0 && (
+            <div className="browser-empty">
+              No user presets yet. Dial in a sound, then use Save As to keep it here.
+            </div>
+          )}
+          {filter !== 'User' && visibleGroups.length === 0 && visibleUsers.length === 0 && !showCustom && (
+            <div className="browser-empty">No tones match that search.</div>
+          )}
+        </div>
+
+        <div className="browser-footer">
+          <span className="browser-footer-note">
+            Factory tones are read-only. User presets are stored with your project/application data.
+          </span>
+          <button type="button" className="btn primary" onClick={onSaveAs}>
+            Save current as…
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FilterPanel({
+  params,
+  onParam,
+  onDrag,
+}: {
+  params: Record<string, number>;
+  onParam: (id: string, value: number) => void;
+  onDrag: (id: string, dragging: boolean) => void;
+}) {
+  const hpFreq = specOf('hpFreq');
+  const lpFreq = specOf('lpFreq');
+
+  return (
+    <div className="filter-card-grid">
+      <div className="filter-card">
+        <div className="filter-card-head">
+          <span>HIGH-PASS</span>
+          <span className="filter-hint">tighten the low end</span>
+        </div>
+        <div className="filter-controls">
+          <Slider
+            label="CUTOFF"
+            value={params.hpFreq ?? 80}
+            min={hpFreq.min}
+            max={hpFreq.max}
+            skew={hpFreq.skew}
+            format={formatFreqPlain}
+            tip="High-pass cutoff. Removes rumble and excess sub-bass; use a lower cutoff on drop tunings."
+            onDragStateChange={(dragging) => onDrag('hpFreq', dragging)}
+            onChange={(value) => onParam('hpFreq', snapPlain(hpFreq, value))}
+          />
+          <Select
+            className="slope-select"
+            value={String(Math.round(params.hpSlope ?? 0))}
+            options={SLOPE_CHOICES}
+            onChange={(value) => onParam('hpSlope', Number(value))}
+            ariaLabel="High-pass slope"
+            tip="Steeper slopes remove more low-frequency energy below cutoff."
+          />
+        </div>
+      </div>
+
+      <div className="filter-card">
+        <div className="filter-card-head">
+          <span>LOW-PASS / HIGH CUT</span>
+          <span className="filter-hint">tame fizz and harshness</span>
+        </div>
+        <div className="filter-controls">
+          <Toggle
+            label="Enabled"
+            checked={(params.lpOn ?? 0) >= 0.5}
+            onChange={(enabled) => onParam('lpOn', enabled ? 1 : 0)}
+            tip="Enable or bypass the high-frequency low-pass filter."
+          />
+          <Slider
+            label="CUTOFF"
+            value={params.lpFreq ?? 12000}
+            min={lpFreq.min}
+            max={lpFreq.max}
+            skew={lpFreq.skew}
+            format={formatFreqPlain}
+            tip="For post-amp guitars, audition around 8–12 kHz when the top end is fizzy."
+            onDragStateChange={(dragging) => onDrag('lpFreq', dragging)}
+            onChange={(value) => onParam('lpFreq', snapPlain(lpFreq, value))}
+          />
+          <Select
+            className="slope-select"
+            value={String(Math.round(params.lpSlope ?? 0))}
+            options={SLOPE_CHOICES}
+            onChange={(value) => onParam('lpSlope', Number(value))}
+            ariaLabel="Low-pass slope"
+            tip="Steeper slopes remove more high frequencies above the cutoff."
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ShelfPanel({
+  params,
+  onParam,
+  onDrag,
+}: {
+  params: Record<string, number>;
+  onParam: (id: string, value: number) => void;
+  onDrag: (id: string, dragging: boolean) => void;
+}) {
+  const lsFreq = specOf('lsFreq');
+  const lsGain = specOf('lsGain');
+  const hsFreq = specOf('hsFreq');
+  const hsGain = specOf('hsGain');
+
+  return (
+    <div className="shelf-panel">
+      <div className="shelf-group">
+        <div className="shelf-title">
+          <span>LOW SHELF</span>
+          <span className="filter-hint">broad weight in the low end</span>
+        </div>
+        <Slider
+          label="FREQ"
+          value={params.lsFreq ?? lsFreq.def}
+          min={lsFreq.min}
+          max={lsFreq.max}
+          skew={lsFreq.skew}
+          format={formatFreqPlain}
+          tip="Low-shelf corner frequency. Boost or cut everything below it as one broad move."
+          onDragStateChange={(dragging) => onDrag('lsFreq', dragging)}
+          onChange={(value) => onParam('lsFreq', snapPlain(lsFreq, value))}
+        />
+        <Slider
+          label="GAIN"
+          value={params.lsGain ?? lsGain.def}
+          min={lsGain.min}
+          max={lsGain.max}
+          format={formatGain}
+          tip="Low-shelf gain. Positive adds weight; negative tightens the low end."
+          onDragStateChange={(dragging) => onDrag('lsGain', dragging)}
+          onChange={(value) => onParam('lsGain', snapPlain(lsGain, value))}
+        />
+      </div>
+
+      <div className="shelf-group">
+        <div className="shelf-title">
+          <span>HIGH SHELF</span>
+          <span className="filter-hint">broad top-end balance</span>
+        </div>
+        <Slider
+          label="FREQ"
+          value={params.hsFreq ?? hsFreq.def}
+          min={hsFreq.min}
+          max={hsFreq.max}
+          skew={hsFreq.skew}
+          format={formatFreqPlain}
+          tip="High-shelf corner frequency. Adjusts the overall brightness above it."
+          onDragStateChange={(dragging) => onDrag('hsFreq', dragging)}
+          onChange={(value) => onParam('hsFreq', snapPlain(hsFreq, value))}
+        />
+        <Slider
+          label="GAIN"
+          value={params.hsGain ?? hsGain.def}
+          min={hsGain.min}
+          max={hsGain.max}
+          format={formatGain}
+          tip="High-shelf gain. Positive adds air and presence; negative darkens the tone."
+          onDragStateChange={(dragging) => onDrag('hsGain', dragging)}
+          onChange={(value) => onParam('hsGain', snapPlain(hsGain, value))}
+        />
+      </div>
+    </div>
+  );
+}
+
+function BandPanel({
+  params,
+  selectedBand,
+  onSelectBand,
+  onParam,
+  onDrag,
+}: {
+  params: Record<string, number>;
+  selectedBand: number;
+  onSelectBand: (index: number) => void;
+  onParam: (id: string, value: number) => void;
+  onDrag: (id: string, dragging: boolean) => void;
+}) {
+  return (
+    <div className="band-panel" role="group" aria-label="Parametric EQ bands">
+      {Array.from({ length: NUM_BANDS }, (_, i) => {
+        const n = i + 1;
+        const freqId = `band${n}Freq`;
+        const gainId = `band${n}Gain`;
+        const qId = `band${n}Q`;
+        const onId = `band${n}On`;
+        const freqSpec = specOf(freqId);
+        const gainSpec = specOf(gainId);
+        const qSpec = specOf(qId);
+        return (
+          <div
+            className={`band-card${selectedBand === i ? ' selected' : ''}`}
+            key={n}
+            onPointerDown={() => onSelectBand(i)}
+          >
+            <div className="band-card-head">
+              <button
+                type="button"
+                className={`band-selector${selectedBand === i ? ' active' : ''}`}
+                onClick={() => onSelectBand(i)}
+                title="Select this band on the graph"
+              >
+                {n}
+              </button>
+              <div className="band-title">BAND {n}</div>
+              <Toggle
+                label="ON"
+                checked={(params[onId] ?? 1) >= 0.5}
+                onChange={(enabled) => onParam(onId, enabled ? 1 : 0)}
+                tip="Enable or bypass this parametric EQ band."
+              />
+            </div>
+            <Slider
+              label="FREQ"
+              value={params[freqId] ?? freqSpec.def}
+              min={freqSpec.min}
+              max={freqSpec.max}
+              skew={freqSpec.skew}
+              format={formatFreqPlain}
+              tip="Band centre frequency. Logarithmic range from 60 Hz to 16 kHz."
+              onDragStateChange={(dragging) => onDrag(freqId, dragging)}
+              onChange={(value) => onParam(freqId, snapPlain(freqSpec, value))}
+            />
+            <Slider
+              label="GAIN"
+              value={params[gainId] ?? gainSpec.def}
+              min={gainSpec.min}
+              max={gainSpec.max}
+              format={formatGain}
+              tip="Boost or cut this band in decibels."
+              onDragStateChange={(dragging) => onDrag(gainId, dragging)}
+              onChange={(value) => onParam(gainId, snapPlain(gainSpec, value))}
+            />
+            <Slider
+              label="Q"
+              value={params[qId] ?? qSpec.def}
+              min={qSpec.min}
+              max={qSpec.max}
+              format={formatQ}
+              tip="Bandwidth: lower Q is broad, higher Q is narrow."
+              onDragStateChange={(dragging) => onDrag(qId, dragging)}
+              onChange={(value) => onParam(qId, snapPlain(qSpec, value))}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+//----------------------------------------------------------------------------
+
+type ModalState =
+  | { kind: 'saveAs' }
+  | { kind: 'overwrite'; name: string }
+  | { kind: 'rename' }
+  | { kind: 'delete'; name: string }
+  | { kind: 'error'; message: string };
+
 export function App(): React.JSX.Element {
   const state = useUiState();
 
@@ -116,17 +691,17 @@ export function App(): React.JSX.Element {
   );
   const isMock = useMemo(() => !isJuceBackendAvailable(), []);
 
-  const [amount, setAmount] = useState(0.75);
-  const [profile, setProfile] = useState(0);
-  // Mock-only screenshot/QA aid: ?fine=1 opens the Fine EQ panel at startup,
-  // ?preset=N applies factory preset N (index as reported by the bridge).
-  // The plugin always serves the fixed index.html, so these never trigger
-  // inside the real editor.
-  const [fineOpen, setFineOpen] = useState(
-    () => isMock && new URLSearchParams(window.location.search).has('fine'),
+  const [view, setView] = useState<ViewMode>(initialView);
+  // Mock-only screenshot aid: ?browser=1 opens the tone library on load.
+  const [browserOpen, setBrowserOpen] = useState(
+    () => !isJuceBackendAvailable()
+      && new URLSearchParams(window.location.search).has('browser'),
   );
   const [modal, setModal] = useState<ModalState | null>(null);
   const [manageMenuOpen, setManageMenuOpen] = useState(false);
+  const [amount, setAmount] = useState(0.75);
+  const [profile, setProfile] = useState(0);
+  const [selectedBand, setSelectedBand] = useState(0);
   const manageRootRef = useRef<HTMLDivElement>(null);
   const graphSlotRef = useRef<HTMLDivElement>(null);
   const [graphSize, setGraphSize] = useState({ width: 924, height: 292 });
@@ -134,12 +709,18 @@ export function App(): React.JSX.Element {
   const analyzerReady = state.analyzer.status === AnalyzerStatus.ready;
   const capturing = state.analyzer.status === AnalyzerStatus.capturing;
 
+  const analyzerTargets = state.analyzerTargets;
+  const targetOptions = useMemo<SelectOption[]>(
+    () => analyzerTargets.map((target) => ({ value: String(target.index), label: target.label })),
+    [analyzerTargets],
+  );
+
   //----------------------------------------------------------------------
   // Bridge lifecycle: uiReady() -> snapshot, then metaleq.tick stream.
   useEffect(() => {
     let cancelled = false;
     bridge
-      .init({ onTick: (t) => store.applyTick(t) })
+      .init({ onTick: (tick) => store.applyTick(tick) })
       .then((snapshot) => {
         if (cancelled) return;
         store.applySnapshot(snapshot);
@@ -148,10 +729,9 @@ export function App(): React.JSX.Element {
             `UI/native protocol mismatch (native v${snapshot.protocolVersion}, UI v${PROTOCOL_VERSION}).`,
           );
         }
-        // Mock-only QA aid (see fineOpen): ?preset=N applies a factory preset
-        // so screenshots can capture a non-flat response curve, and
-        // ?capture=1 starts the simulated analyzer (with headless virtual
-        // time the 8 s capture completes and the suggestion curve renders).
+
+        // Mock-only QA aid: ?preset=N applies a canonical preset, ?capture=1
+        // starts the simulated analyzer. These never trigger in the plugin.
         if (isMock) {
           const query = new URLSearchParams(window.location.search);
           const presetParam = query.get('preset');
@@ -168,11 +748,20 @@ export function App(): React.JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, [bridge]);
+  }, [bridge, isMock]);
+
+  // Tell the native editor once whether this session starts in Advanced.
+  // The toggle path calls setEditorExpanded directly on every change.
+  const didApplyInitialSize = useRef(false);
+  useEffect(() => {
+    if (!state.ready || didApplyInitialSize.current) return;
+    didApplyInitialSize.current = true;
+    void bridge.setEditorExpanded(view === 'advanced');
+  }, [bridge, state.ready, view]);
 
   // Graph slot tracks its container so the SVG fills whatever the host
   // window gives us (native editor is resizable 780..1440 px wide).
-  useEffect(() => {
+  useLayoutEffect(() => {
     const slot = graphSlotRef.current;
     if (slot == null) return;
     const measure = () =>
@@ -181,16 +770,16 @@ export function App(): React.JSX.Element {
     const observer = new ResizeObserver(measure);
     observer.observe(slot);
     return () => observer.disconnect();
-  }, []);
+  }, [state.ready]);
 
   // Close the Manage menu on outside click / Escape.
   useEffect(() => {
     if (!manageMenuOpen) return;
-    const onDown = (e: PointerEvent) => {
-      if (!manageRootRef.current?.contains(e.target as Node)) setManageMenuOpen(false);
+    const onDown = (event: PointerEvent) => {
+      if (!manageRootRef.current?.contains(event.target as Node)) setManageMenuOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setManageMenuOpen(false);
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setManageMenuOpen(false);
     };
     document.addEventListener('pointerdown', onDown);
     document.addEventListener('keydown', onKey);
@@ -199,6 +788,14 @@ export function App(): React.JSX.Element {
       document.removeEventListener('keydown', onKey);
     };
   }, [manageMenuOpen]);
+
+  useEffect(() => {
+    if (targetOptions.length === 0) {
+      if (profile !== 0) setProfile(0);
+      return;
+    }
+    if (profile >= targetOptions.length) setProfile(0);
+  }, [profile, targetOptions.length]);
 
   // Suggested-correction curve: fetched whenever the analyzer is ready and
   // the amount changes (debounced so dragging the slider stays cheap).
@@ -231,44 +828,61 @@ export function App(): React.JSX.Element {
   const knobChange = useCallback((id: string, value: number) => setParam(id, value), [setParam]);
   const knobDrag = useCallback((id: string, dragging: boolean) => store.setDragging(dragging ? id : null), []);
 
+  const changeView = useCallback(
+    (next: ViewMode) => {
+      setView(next);
+      rememberView(next);
+      void bridge.setEditorExpanded(next === 'advanced');
+      if (next === 'advanced') setBrowserOpen(false);
+    },
+    [bridge],
+  );
+
+  // Direct graph editing. Snap exactly like the numeric controls so dragging
+  // and typing produce the same values.
+  const onBandChange = useCallback(
+    (index: number, freq: number, gainDb: number) => {
+      const n = index + 1;
+      const freqSpec = specOf(`band${n}Freq`);
+      const gainSpec = specOf(`band${n}Gain`);
+      setParam(`band${n}Freq`, snapPlain(freqSpec, freq));
+      setParam(`band${n}Gain`, snapPlain(gainSpec, gainDb));
+      setSelectedBand(index);
+    },
+    [setParam],
+  );
+
+  const onCrossoverChange = useCallback(
+    (kind: 'hp' | 'lp', freq: number) => {
+      const spec = specOf(kind === 'hp' ? 'hpFreq' : 'lpFreq');
+      setParam(spec.id, snapPlain(spec, freq));
+    },
+    [setParam],
+  );
+
   //----------------------------------------------------------------------
   // Preset flows (mirror the native comboBox + AlertWindow behaviour).
   const showError = useCallback((message: string) => setModal({ kind: 'error', message }), []);
 
-  const presetValue = useMemo(() => {
-    if (state.preset.kind === 'user') return `user:${state.preset.name}`;
-    if (state.preset.kind === 'factory') return `f${state.preset.index}`;
-    return 'custom';
-  }, [state.preset]);
+  const userPresetExists = useCallback(
+    (name: string) => state.userPresets.some((n) => n.toLowerCase() === name.toLowerCase()),
+    [state.userPresets],
+  );
 
-  const presetOptions = useMemo<SelectOption[]>(() => {
-    const options: SelectOption[] = [{ value: 'custom', label: 'Custom / Neutral' }];
-    for (const p of state.factoryPresets) options.push({ value: `f${p.index}`, label: p.name });
-    if (state.userPresets.length > 0) {
-      options.push({ value: '__separator__', label: '──────────', disabled: true });
-      for (const name of state.userPresets) options.push({ value: `user:${name}`, label: `User · ${name}` });
-    }
-    return options;
-  }, [state.factoryPresets, state.userPresets]);
-
-  const onPresetSelected = useCallback(
-    (value: string) => {
-      const op =
-        value === 'custom'
+  const recallPreset = useCallback(
+    (choice: PresetChoice) => {
+      setBrowserOpen(false);
+      const operation =
+        choice.kind === 'custom'
           ? bridge.applyPreset(0)
-          : value.startsWith('user:')
-            ? bridge.loadUserPreset(value.slice('user:'.length))
-            : bridge.applyPreset(Number(value.slice(1)));
-      void op.then((result) => {
+          : choice.kind === 'factory'
+            ? bridge.applyPresetById(choice.presetId)
+            : bridge.loadUserPreset(choice.name);
+      void operation.then((result) => {
         if (!result.ok) showError(result.error ?? 'Preset operation failed.');
       });
     },
     [bridge, showError],
-  );
-
-  const userPresetExists = useCallback(
-    (name: string) => state.userPresets.some((n) => n.toLowerCase() === name.toLowerCase()),
-    [state.userPresets],
   );
 
   const savePresetNamed = useCallback(
@@ -280,7 +894,11 @@ export function App(): React.JSX.Element {
     [bridge, showError],
   );
 
-  const openSaveAs = useCallback(() => setModal({ kind: 'saveAs' }), []);
+  const openSaveAs = useCallback(() => {
+    setManageMenuOpen(false);
+    setBrowserOpen(false);
+    setModal({ kind: 'saveAs' });
+  }, []);
 
   const onSaveAsConfirmed = useCallback(
     (text: string | undefined) => {
@@ -333,29 +951,75 @@ export function App(): React.JSX.Element {
     });
   }, [bridge, showError, state.preset]);
 
-  //----------------------------------------------------------------------
-  // Fine EQ: mirrors the native FINE EQ + / - button; the native side grows
-  // the host window by 220 px via setEditorExpanded.
-  const toggleFine = useCallback(() => {
-    setFineOpen((open) => {
-      const next = !open;
-      void bridge.setEditorExpanded(next);
-      return next;
+  const onRevert = useCallback(() => {
+    setManageMenuOpen(false);
+    void bridge.revertToPreset().then((result) => {
+      if (!result.ok) showError(result.error ?? 'Reverting failed.');
     });
-  }, [bridge]);
+  }, [bridge, showError]);
+
+  const onReset = useCallback(() => {
+    void bridge.resetToNeutral().then((result) => {
+      if (!result.ok) showError(result.error ?? 'Reset failed.');
+    });
+  }, [bridge, showError]);
+
+  const onAbSlot = useCallback(
+    (slot: number) => {
+      void bridge.setAbSlot(slot).then((result) => {
+        if (!result.ok) showError(result.error ?? 'Could not switch A/B slot.');
+      });
+    },
+    [bridge, showError],
+  );
+
+  const onAbCopy = useCallback(() => {
+    void bridge.copyAbToOther().then((result) => {
+      if (!result.ok) showError(result.error ?? 'Could not copy the A/B slot.');
+    });
+  }, [bridge, showError]);
+
+  const onAbSwap = useCallback(() => {
+    void bridge.swapAbSlots().then((result) => {
+      if (!result.ok) showError(result.error ?? 'Could not swap the A/B slots.');
+    });
+  }, [bridge, showError]);
 
   const onCaptureClicked = useCallback(() => {
-    const op = capturing ? bridge.cancelAnalyzerCapture() : bridge.startAnalyzerCapture(profile);
-    void op.then((result) => {
+    if (targetOptions.length === 0) return;
+    const operation = capturing
+      ? bridge.cancelAnalyzerCapture()
+      : bridge.startAnalyzerCapture(profile);
+    void operation.then((result) => {
       if (!result.ok) showError(result.error ?? 'Analyzer operation failed.');
     });
-  }, [bridge, capturing, profile, showError]);
+  }, [bridge, capturing, profile, showError, targetOptions.length]);
 
   const onApplySuggestion = useCallback(() => {
     void bridge.applyAnalyzerSuggestion(amount).then((result) => {
       if (!result.ok) showError(result.error ?? 'Applying the suggestion failed.');
     });
   }, [bridge, amount, showError]);
+
+  const activeFactory = useMemo(() => {
+    if (state.preset.presetId.length > 0) {
+      return state.factoryPresets.find((preset) => preset.id === state.preset.presetId);
+    }
+    return state.preset.kind === 'factory'
+      ? state.factoryPresets.find((preset) => preset.index === state.preset.index)
+      : undefined;
+  }, [state.factoryPresets, state.preset]);
+
+  const presetMeta = activeFactory != null
+    ? `${activeFactory.genre} · ${activeFactory.subgenre} · ${activeFactory.placement}`
+    : state.preset.kind === 'user'
+      ? 'User preset · saved on this machine'
+      : 'Custom starting point · no factory identity';
+
+  const presetDescription = activeFactory?.description
+    ?? (state.preset.kind === 'user'
+      ? 'Your saved EQ setup. Save changes to keep them, or use Revert to return to the last saved version.'
+      : 'A blank slate for building a tone from scratch. Start with the graph, macros, or the tone library.');
 
   //----------------------------------------------------------------------
   if (!state.ready) {
@@ -378,15 +1042,85 @@ export function App(): React.JSX.Element {
           format={isTrim ? formatTrim : formatPercent}
           title={knob.title}
           tip={knob.tip}
-          onChange={(v) => knobChange(knob.id, v)}
-          onDragStateChange={(d) => knobDrag(knob.id, d)}
+          onChange={(value) => knobChange(knob.id, value)}
+          onDragStateChange={(dragging) => knobDrag(knob.id, dragging)}
         />
       </div>
     );
   });
 
+  const shapeToggles = (
+    <div className="shapes-row">
+      {SHAPES.map((shape) => (
+        <Toggle
+          key={shape.id}
+          label={shape.label}
+          tip={shape.tip}
+          checked={(state.params[shape.id] ?? 0) >= 0.5}
+          onChange={(enabled) => setParam(shape.id, enabled ? 1 : 0)}
+        />
+      ))}
+      <button
+        type="button"
+        className="btn reset-btn"
+        title="Reset all EQ and macros to neutral. Shape toggles are switched off."
+        onClick={onReset}
+      >
+        RESET EQ
+      </button>
+    </div>
+  );
+
+  const analyzerPanel = (
+    <section className="analyzer-section">
+      <div className="section-heading">
+        <span className="section-title">Analyzer</span>
+        <span className="section-hint">match a captured spectrum to a reference tone</span>
+      </div>
+      <div className="analyzer-row">
+        <span className="row-label target-label">TARGET</span>
+        <Select
+          className="target-select"
+          value={String(profile)}
+          options={targetOptions}
+          onChange={(value) => setProfile(Number(value))}
+          ariaLabel="Analyzer target profile"
+          tip="The analyzer compares the captured spectrum with this target; it does not detect the source genre."
+        />
+        <button
+          type="button"
+          className="btn capture-btn"
+          onClick={onCaptureClicked}
+          disabled={targetOptions.length === 0}
+        >
+          {capturing ? 'Stop capture' : 'Capture 8 seconds'}
+        </button>
+        <span className="row-label amount-label">AMOUNT</span>
+        <Slider
+          label=""
+          value={amount}
+          min={0}
+          max={1}
+          format={formatPercent}
+          onDragStateChange={(dragging) => knobDrag('__amount__', dragging)}
+          onChange={setAmount}
+        />
+        <div className="analyzer-spacer" />
+        <button type="button" className="btn primary apply-btn" disabled={!analyzerReady} onClick={onApplySuggestion}>
+          Apply suggestion
+        </button>
+      </div>
+      <div className="analyzer-status">
+        {analyzerStatusText(state.analyzer.status, state.analyzer.progress, state.analyzer.suggestion)}
+      </div>
+      <div className="analyzer-disclaimer">
+        Average-spectrum suggestion only. Capture is temporary and never saved in presets.
+      </div>
+    </section>
+  );
+
   return (
-    <div className="metaleq-app">
+    <div className={`metaleq-app ${view}`}>
       {isMock && <div className="mock-badge">UI preview · mock data (not the plugin)</div>}
       {state.lastError != null && (
         <div className="error-banner" role="alert">
@@ -397,110 +1131,113 @@ export function App(): React.JSX.Element {
         </div>
       )}
 
-      {/*------------------------------------------------ header (34 px) */}
+      {/*------------------------------------------------ header */}
       <div className="header-row">
         <span className="app-title">MetalEQ</span>
         <span className="app-subtitle">Zero-latency guitar EQ · before or after an amp</span>
         <div className="header-spacer" />
         <Meter title="INPUT PEAK" peak={state.meters.in} />
         <Meter title="OUTPUT PEAK" peak={state.meters.out} />
+        <ViewToggle view={view} onChange={changeView} />
       </div>
 
-      {/*------------------------------------------------ preset row (36 px) */}
-      <div className="preset-row">
-        <span className="row-label preset-label">PRESET</span>
-        <Select
-          className="preset-select"
-          value={presetValue}
-          options={presetOptions}
-          onChange={onPresetSelected}
-          ariaLabel="Preset"
-          tip="Factory presets are read-only. User presets are stored in your Windows app-data folder."
-        />
-        <span className={`preset-state ${state.preset.dirty ? 'dirty' : ''}`}>
-          {presetStateText(state.preset)}
-        </span>
-        <button
-          type="button"
-          className="btn"
-          title="Overwrite the selected user preset after confirmation, or open Save As for a factory or custom sound."
-          onClick={onSaveClicked}
-        >
-          Save
-        </button>
-        <div className="manage-root" ref={manageRootRef}>
-          <button
-            type="button"
-            className={`btn ${manageMenuOpen ? 'active' : ''}`}
-            title="Manage user presets: Save As creates a preset and asks before overwriting; Rename and Delete apply to the selected user preset; Revert restores the loaded preset."
-            onClick={() => setManageMenuOpen((open) => !open)}
-          >
-            Manage
-          </button>
-          {manageMenuOpen && (
-            <div className="manage-menu" role="menu">
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  setManageMenuOpen(false);
-                  openSaveAs();
-                }}
-              >
-                Save As…
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                disabled={state.preset.kind !== 'user'}
-                onClick={() => {
-                  setManageMenuOpen(false);
-                  setModal({ kind: 'rename' });
-                }}
-              >
-                Rename…
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                disabled={state.preset.kind !== 'user'}
-                onClick={() => {
-                  setManageMenuOpen(false);
-                  setModal({ kind: 'delete', name: state.preset.name });
-                }}
-              >
-                Delete…
-              </button>
-              <div className="manage-separator" />
-              <button
-                type="button"
-                role="menuitem"
-                disabled={!state.preset.dirty}
-                onClick={() => {
-                  setManageMenuOpen(false);
-                  void bridge.revertToPreset().then((result) => {
-                    if (!result.ok) showError(result.error ?? 'Reverting failed.');
-                  });
-                }}
-              >
-                Revert to loaded preset
-              </button>
-            </div>
-          )}
+      {/*------------------------------------------------ tone identity / actions */}
+      <section className="tone-hero">
+        <div className="tone-identity">
+          <div className="tone-eyebrow">
+            <span>{view === 'simple' ? 'SIMPLE TONE' : 'ADVANCED EDITOR'}</span>
+            <span className={`preset-state ${state.preset.dirty ? 'dirty' : ''}`}>
+              {presetStateText(state.preset)}
+            </span>
+          </div>
+          <div className="tone-name-row">
+            <h1 className="tone-name">{state.preset.name}</h1>
+            <span className="tone-ab-badge">{state.preset.abSlot === 1 ? 'B' : 'A'}</span>
+          </div>
+          <div className="tone-meta">{presetMeta}</div>
+          <p className="tone-description">{presetDescription}</p>
         </div>
-        <Toggle
-          label="Bypass"
-          checked={(state.params.bypass ?? 0) >= 0.5}
-          onChange={(v) => setParam('bypass', v ? 1 : 0)}
-          variant="accent"
-        />
-        <Toggle
-          label="A/B"
-          checked={(state.params.abCompare ?? 0) >= 0.5}
-          onChange={(v) => setParam('abCompare', v ? 1 : 0)}
-          tip="Compare against flat EQ at the same output trim."
-        />
-      </div>
+
+        <div className="tone-actions">
+          <div className="tone-action-row">
+            <button
+              type="button"
+              className="btn primary browse-btn"
+              onClick={() => setBrowserOpen(true)}
+              title="Browse factory tones by genre and subgenre, or load a user preset."
+            >
+              Browse tones
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={onSaveClicked}
+              title="Overwrite the selected user preset after confirmation, or save this sound as a new user preset."
+            >
+              Save
+            </button>
+            <div className="manage-root" ref={manageRootRef}>
+              <button
+                type="button"
+                className={`btn ${manageMenuOpen ? 'active' : ''}`}
+                title="Manage user presets and revert the loaded preset."
+                onClick={() => setManageMenuOpen((open) => !open)}
+              >
+                Manage
+              </button>
+              {manageMenuOpen && (
+                <div className="manage-menu" role="menu">
+                  <button type="button" role="menuitem" onClick={openSaveAs}>
+                    Save As…
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={state.preset.kind !== 'user'}
+                    onClick={() => {
+                      setManageMenuOpen(false);
+                      setModal({ kind: 'rename' });
+                    }}
+                  >
+                    Rename…
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={state.preset.kind !== 'user'}
+                    onClick={() => {
+                      setManageMenuOpen(false);
+                      setModal({ kind: 'delete', name: state.preset.name });
+                    }}
+                  >
+                    Delete…
+                  </button>
+                  <div className="manage-separator" />
+                  <button type="button" role="menuitem" disabled={!state.preset.dirty} onClick={onRevert}>
+                    Revert to loaded preset
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="tone-action-row">
+            <AbControls
+              slot={state.preset.abSlot}
+              onSlot={onAbSlot}
+              onCopy={onAbCopy}
+              onSwap={onAbSwap}
+            />
+            <Toggle
+              label="Bypass"
+              checked={(state.params.bypass ?? 0) >= 0.5}
+              onChange={(enabled) => setParam('bypass', enabled ? 1 : 0)}
+              variant="accent"
+              tip="Bypass the EQ without changing any settings."
+            />
+          </div>
+        </div>
+      </section>
 
       {/*------------------------------------------------ EQ graph */}
       <div className="graph-slot" ref={graphSlotRef}>
@@ -510,190 +1247,60 @@ export function App(): React.JSX.Element {
           curve={state.curve}
           params={state.params}
           suggestionCurve={analyzerReady ? state.suggestionCurve : null}
+          editable
+          selectedBand={selectedBand}
+          onSelectBand={setSelectedBand}
+          onBandChange={onBandChange}
+          onCrossoverChange={onCrossoverChange}
         />
       </div>
 
-      {/*------------------------------------------------ macro knobs (140 px) */}
+      {/*------------------------------------------------ macro knobs */}
       <div className="knobs-row">{macroKnobs}</div>
 
-      {/*------------------------------------------------ shapes row (42 px) */}
-      <div className="shapes-row">
-        {SHAPES.map((shape) => (
-          <Toggle
-            key={shape.id}
-            label={shape.label}
-            tip={shape.tip}
-            checked={(state.params[shape.id] ?? 0) >= 0.5}
-            onChange={(v) => setParam(shape.id, v ? 1 : 0)}
-          />
-        ))}
-        <button
-          type="button"
-          className="btn reset-btn"
-          title="Reset all EQ and macros to neutral. Shape toggles are switched off."
-          onClick={() => void bridge.resetToNeutral()}
-        >
-          RESET EQ
-        </button>
-      </div>
+      {/*------------------------------------------------ shapes */}
+      {shapeToggles}
 
-      {/*------------------------------------------------ high-pass row (46 px) */}
-      <div className="filter-row">
-        <span className="row-label hp-label" title="Removes low-frequency rumble; use a lower cutoff on drop tunings.">
-          HIGH-PASS
-        </span>
-        <Slider
-          label=""
-          value={state.params.hpFreq ?? 80}
-          min={specOf('hpFreq').min}
-          max={specOf('hpFreq').max}
-          skew={specOf('hpFreq').skew}
-          format={formatFreqPlain}
-          tip="High-pass cutoff. Tightens low end; avoid cutting the fundamental of low-tuned notes."
-          onDragStateChange={(d) => knobDrag('hpFreq', d)}
-          onChange={(v) => setParam('hpFreq', snapPlain(specOf('hpFreq'), v))}
-        />
-        <Select
-          className="slope-select"
-          value={String(Math.round(state.params.hpSlope ?? 0))}
-          options={SLOPE_CHOICES}
-          onChange={(v) => setParam('hpSlope', Number(v))}
-          ariaLabel="High-pass slope"
-          tip="Steeper slopes remove more low-frequency energy below cutoff."
-        />
-      </div>
+      {view === 'simple' ? (
+        <>
+          <FilterPanel params={state.params} onParam={setParam} onDrag={knobDrag} />
+          <div className="simple-tip">
+            <strong>Quick start:</strong> pick a preset from the tone library, then use TIGHT, BODY and
+            BITE to fit it to your guitar. Drag a numbered node on the graph for precise frequency and gain.
+          </div>
+        </>
+      ) : (
+        <>
+          <section className="parameter-section">
+            <div className="section-heading">
+              <span className="section-title">Parametric bands</span>
+              <span className="section-hint">drag a band on the graph, or use the numeric controls below</span>
+            </div>
+            <BandPanel
+              params={state.params}
+              selectedBand={selectedBand}
+              onSelectBand={setSelectedBand}
+              onParam={setParam}
+              onDrag={knobDrag}
+            />
+          </section>
 
-      {/*------------------------------------------------ low-pass row (50 px) */}
-      <div className="filter-row lp-row">
-        <span className="row-label lp-label">LOW-PASS / HIGH CUT</span>
-        <Toggle
-          label="Enabled"
-          checked={(state.params.lpOn ?? 1) >= 0.5}
-          onChange={(v) => setParam('lpOn', v ? 1 : 0)}
-          tip="Enable or bypass the high-frequency low-pass filter. This reduces top-end content; it is not a noise gate."
-        />
-        <span className="row-label cutoff-label">CUTOFF</span>
-        <Slider
-          label=""
-          value={state.params.lpFreq ?? 12000}
-          min={specOf('lpFreq').min}
-          max={specOf('lpFreq').max}
-          skew={specOf('lpFreq').skew}
-          format={formatFreqPlain}
-          tip="Cutoff frequency. For post-amp guitars, audition around 8–12 kHz when the top end is fizzy."
-          onDragStateChange={(d) => knobDrag('lpFreq', d)}
-          onChange={(v) => setParam('lpFreq', snapPlain(specOf('lpFreq'), v))}
-        />
-        <Select
-          className="slope-select"
-          value={String(Math.round(state.params.lpSlope ?? 0))}
-          options={SLOPE_CHOICES}
-          onChange={(v) => setParam('lpSlope', Number(v))}
-          ariaLabel="Low-pass slope"
-          tip="Steeper slopes remove more high frequencies above the cutoff."
-        />
-      </div>
+          <section className="parameter-section">
+            <div className="section-heading">
+              <span className="section-title">Filters &amp; shelves</span>
+              <span className="section-hint">remove rumble, tame fizz, and balance the broad extremes</span>
+            </div>
+            <FilterPanel params={state.params} onParam={setParam} onDrag={knobDrag} />
+            <ShelfPanel params={state.params} onParam={setParam} onDrag={knobDrag} />
+          </section>
 
-      {/*------------------------------------------------ fine EQ toggle + panel */}
-      <button
-        type="button"
-        className="btn fine-btn"
-        title="Open five precise parametric bands with frequency, gain, Q and bypass controls."
-        onClick={toggleFine}
-      >
-        {fineOpen ? 'FINE EQ −' : 'FINE EQ +'}
-      </button>
-
-      {fineOpen && (
-        <div className="fine-panel">
-          {Array.from({ length: NUM_BANDS }, (_, i) => {
-            const n = i + 1;
-            const freqId = `band${n}Freq`;
-            const gainId = `band${n}Gain`;
-            const qId = `band${n}Q`;
-            const onId = `band${n}On`;
-            const freqSpec = specOf(freqId);
-            const gainSpec = specOf(gainId);
-            const qSpec = specOf(qId);
-            return (
-              <div className="band-card" key={n}>
-                <Toggle
-                  label="ON"
-                  checked={(state.params[onId] ?? 1) >= 0.5}
-                  onChange={(v) => setParam(onId, v ? 1 : 0)}
-                  tip="Enable or bypass this parametric EQ band."
-                />
-                <div className="band-title">BAND {n}</div>
-                <Slider
-                  label="FREQ"
-                  value={state.params[freqId] ?? freqSpec.def}
-                  min={freqSpec.min}
-                  max={freqSpec.max}
-                  skew={freqSpec.skew}
-                  format={formatFreqPlain}
-                  tip="Band centre frequency. Logarithmic range from 60 Hz to 16 kHz."
-                  onDragStateChange={(d) => knobDrag(freqId, d)}
-                  onChange={(v) => setParam(freqId, snapPlain(freqSpec, v))}
-                />
-                <Slider
-                  label="GAIN"
-                  value={state.params[gainId] ?? gainSpec.def}
-                  min={gainSpec.min}
-                  max={gainSpec.max}
-                  format={formatGain}
-                  tip="Boost or cut this band in decibels."
-                  onDragStateChange={(d) => knobDrag(gainId, d)}
-                  onChange={(v) => setParam(gainId, snapPlain(gainSpec, v))}
-                />
-                <Slider
-                  label="Q"
-                  value={state.params[qId] ?? qSpec.def}
-                  min={qSpec.min}
-                  max={qSpec.max}
-                  format={formatQ}
-                  tip="Bandwidth: lower Q is broad, higher Q is narrow."
-                  onDragStateChange={(d) => knobDrag(qId, d)}
-                  onChange={(v) => setParam(qId, snapPlain(qSpec, v))}
-                />
-              </div>
-            );
-          })}
-        </div>
+          {analyzerPanel}
+        </>
       )}
 
-      {/*------------------------------------------------ analyzer target row (34 px) */}
-      <div className="analyzer-row">
-        <span className="row-label target-label">TARGET</span>
-        <Select
-          className="target-select"
-          value={String(profile)}
-          options={TARGET_PROFILES.map((name, i) => ({ value: String(i), label: name }))}
-          onChange={(v) => setProfile(Number(v))}
-          ariaLabel="Analyzer target profile"
-          tip="The analyzer compares the captured spectrum with this target; it does not detect the source genre."
-        />
-        <button type="button" className="btn capture-btn" onClick={onCaptureClicked}>
-          {capturing ? 'Stop capture' : 'Capture 8 seconds'}
-        </button>
-        <span className="row-label amount-label">AMOUNT</span>
-        <Slider
-          label=""
-          value={amount}
-          min={0}
-          max={1}
-          format={formatPercent}
-          onDragStateChange={(d) => knobDrag('__amount__', d)}
-          onChange={setAmount}
-        />
-        <div className="analyzer-spacer" />
-        <button type="button" className="btn primary apply-btn" disabled={!analyzerReady} onClick={onApplySuggestion}>
-          Apply suggestion
-        </button>
-      </div>
-
-      <div className="analyzer-status">{analyzerStatusText(state.analyzer.status, state.analyzer.progress, state.analyzer.suggestion)}</div>
-      <div className="analyzer-disclaimer">
-        Average-spectrum suggestion only. Capture is temporary and never saved in presets.
+      <div className="app-footer">
+        <span>MetalEQ · zero added latency · output trim is global for A/B</span>
+        <span>Factory tones are read-only; user presets live in your application data.</span>
       </div>
 
       {/*------------------------------------------------ modals */}
@@ -747,6 +1354,17 @@ export function App(): React.JSX.Element {
           cancelLabel=""
           onConfirm={() => undefined}
           onClose={() => setModal(null)}
+        />
+      )}
+
+      {browserOpen && (
+        <PresetBrowser
+          factoryPresets={state.factoryPresets}
+          userPresets={state.userPresets}
+          current={state.preset}
+          onChoose={recallPreset}
+          onSaveAs={openSaveAs}
+          onClose={() => setBrowserOpen(false)}
         />
       )}
     </div>

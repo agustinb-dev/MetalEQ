@@ -1,6 +1,6 @@
 # MetalEQ
 
-MetalEQ is a zero added-latency VST3 equalizer for high-gain guitar. It combines editable filters and tone macros with metalcore and thrash factory presets. Its optional analyzer captures up to eight seconds of live input and compares the average spectrum with a selected target profile.
+MetalEQ is a zero added-latency VST3 equalizer for high-gain guitar. It combines editable filters and tone macros with a 25-preset metalcore, thrash and utility library. A simple view gets a player to a usable rhythm or lead sound quickly; an advanced view exposes every filter and parametric band. The optional analyzer captures up to eight seconds of live input and compares the average spectrum with a selected target profile.
 
 ## Build
 
@@ -18,14 +18,15 @@ Build Debug with `cmake --build build --config Debug`.
 
 ## Controls
 
-- **Factory and user presets:** all factory profiles are available in the selector. Use Save As to create a user preset; Save on a user preset asks before overwriting. Rename and Delete operate only on user presets. Revert restores the last loaded preset, and the dirty marker indicates edits since loading or saving.
-- **User preset storage:** files are stored under `%APPDATA%\MetalEQ\Presets` in a versioned `.metaleq` format. Preset files exclude analyzer captures. DAW project state is stored independently, so saved sessions still restore when preset files are moved or deleted.
-- **Tone shapes:** Tighten, Scoop, Mid Punch, Pick Attack, Fizz Tamer, and Brighten are independent toggles. Enabling one adds its EQ contribution; disabling it removes only that contribution, preserving macros and detailed EQ edits. Reset EQ is a separate action.
+- **Simple and Advanced:** the editor starts in Simple on first run. Simple keeps presets, macros, shape switches, filters and the editable graph in one screen. Advanced adds the five numeric parametric bands and the analyzer. An explicit view choice is remembered.
+- **Tone library:** factory tones are grouped by genre and subgenre: Metalcore (2000s, Modern, Melodic, Progressive), Thrash (Classic, Technical, Modern) and Utility (Pre-Amp, Post-Amp, Reference, Neutral). User presets appear in the same browser. Factory presets have stable identities, so recalling by id is project-safe.
+- **User preset storage:** files are stored under `%APPDATA%\MetalEQ\Presets` in a versioned `.metaleq` format. Use Save As to create one; Save on a user preset asks before overwriting. Rename and Delete operate only on user presets. Revert restores the last loaded preset, and the dirty marker indicates tone edits since loading or saving. Preset files exclude analyzer captures. DAW project state is stored independently, so saved sessions still restore when preset files are moved or deleted.
+- **Tone shapes:** Tighten, Scoop, Mid Punch, Pick Attack, Fizz Tamer, and Brighten are independent toggles. Enabling one adds its fixed EQ contribution; disabling it removes only that contribution, preserving macros and detailed EQ edits. Reset EQ is a separate action.
 - **Macros:** Tight, Body, Scoop, Bite, Fizz Cut, and Output Trim.
-- **Filters and fine EQ:** high-pass and low-pass each have enable, cutoff, and slope controls. The low-pass is a conventional high-cut used to tame excessive top-end fizz; it is not a noise gate. Expand Fine EQ to edit the five bell bands' frequency, gain, Q, and enable state.
-- **Graph:** logarithmic frequency scale with guitar-focused landmarks, adaptive labels, gain grid, active filter cutoffs, and the combined response. Input and output peak meters are polled by the UI.
-- **Bypass and A/B:** bypass leaves the signal untouched; A/B compares the EQ with a neutral curve while preserving output trim.
-- **Analyzer:** choose a metalcore or thrash target, capture while the host sends audio, inspect the suggested curve, adjust its amount, and apply it to the five parametric bands. It compares the average captured spectrum with the selected target; it does not identify the source genre.
+- **Filters and shelves:** high-pass and low-pass each have enable, cutoff, and slope controls. The low-pass is a conventional high-cut used to tame excessive top-end fizz; it is not a noise gate. It defaults to Off; enabling it while the slope is Off selects 24 dB/oct. Effective low-pass filtering requires both Enabled and a non-Off slope. Advanced also exposes the low and high shelves' corner frequency and gain for broad weight and brightness moves.
+- **Graph:** logarithmic frequency scale with guitar-focused landmarks, adaptive labels, gain grid, active filter cutoffs, and the combined response. Drag a numbered band node to set frequency and gain, or drag the HP/LP markers to move a cutoff. The advanced numeric controls remain available for precise edits. Input and output peak meters are polled by the UI.
+- **Bypass and real A/B:** bypass leaves the signal untouched. A and B each hold a complete EQ, macro and shape snapshot. Copy sends the active slot to the other slot; Swap exchanges them. Output trim is deliberately global, so A/B remains level-matched. Host automation of the A/B parameter switches the same slots.
+- **Analyzer:** choose a target from the stable analyzer list, capture while the host sends audio, inspect the suggested curve, adjust its amount, and apply it to the five parametric bands. It compares the average captured spectrum with the selected target; it does not identify the source genre.
 
 The audio callback uses preallocated capture storage and fixed-size DSP state. FFT analysis runs on a background worker after capture completes. Capture adds no signal path latency. If the host pauses, capture progress pauses too; resume playback to finish or cancel the capture.
 
@@ -38,7 +39,7 @@ cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-The tests cover logarithmic graph mapping and label density, shape composition and removal, low-pass bypass/slopes at representative sample rates, factory preset validity, user-preset save/load/overwrite/rename/delete, and DAW state round-trip. REAPER and pluginval were unavailable in the build environment; scan/instantiation, GUI interaction, host automation during playback, audible transition quality, and in-host project recall still require validation in REAPER.
+The tests cover logarithmic graph mapping and label density, shape composition and removal, low-pass bypass/slopes and legacy migration at representative sample rates, chain retirement, factory preset validity and stable ids, user-preset save/load/overwrite/rename/delete, canonical preset recall, real A/B snapshots, bridge protocol v2 and DAW state schema v2 round-trip. REAPER and pluginval were unavailable in the build environment; scan/instantiation, GUI interaction, host automation during playback, audible transition quality, and in-host project recall still require validation in REAPER.
 
 ## License
 

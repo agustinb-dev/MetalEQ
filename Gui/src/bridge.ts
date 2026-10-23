@@ -113,6 +113,10 @@ export class JuceBridge implements MetalEqBridge {
     return this.call<OpResult>('applyPreset', [index]);
   }
 
+  applyPresetById(presetId: string): Promise<OpResult> {
+    return this.call<OpResult>('applyPresetById', [presetId]);
+  }
+
   loadUserPreset(name: string): Promise<OpResult> {
     return this.call<OpResult>('loadUserPreset', [name]);
   }
@@ -135,6 +139,18 @@ export class JuceBridge implements MetalEqBridge {
 
   resetToNeutral(): Promise<OpResult> {
     return this.call<OpResult>('resetToNeutral', []);
+  }
+
+  setAbSlot(slot: number): Promise<OpResult> {
+    return this.call<OpResult>('setAbSlot', [slot]);
+  }
+
+  copyAbToOther(): Promise<OpResult> {
+    return this.call<OpResult>('copyAbToOther', []);
+  }
+
+  swapAbSlots(): Promise<OpResult> {
+    return this.call<OpResult>('swapAbSlots', []);
   }
 
   startAnalyzerCapture(profile: number): Promise<OpResult> {

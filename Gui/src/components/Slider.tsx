@@ -1,6 +1,6 @@
 /*
-    Fine-adjust horizontal slider used by the HP/LP rows, the Fine EQ panel
-    and the analyzer AMOUNT control. Mirrors the native juce::Slider
+    Horizontal slider used by the HP/LP rows, the numeric band/filter
+    panels and the analyzer AMOUNT control. Mirrors the native juce::Slider
     LinearHorizontal style: track left, value box right, skew-aware mapping
     identical to Knob.tsx (juce::NormalisableRange power curve).
 */

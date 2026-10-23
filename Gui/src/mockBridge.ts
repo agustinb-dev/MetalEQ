@@ -18,7 +18,6 @@
 import type {
   AnalyzerInfo,
   CurveInfo,
-  FactoryPresetInfo,
   MetalEqBridge,
   OpResult,
   PresetInfo,
@@ -30,7 +29,13 @@ import type {
 import { PROTOCOL_VERSION } from './types';
 import { PARAMS, clampPlain, getSpec, snapPlain, defaultParams } from './params';
 import { buildChain, chainResponseDb, NUM_BANDS, type EqSettings, type MacroSettings } from './dspMirror';
-import { FACTORY_PRESETS, neutralEq } from './presets';
+import { ANALYZER_TARGETS, FACTORY_PRESETS, factoryPresetInfos, neutralEq } from './presets';
+
+interface AbSlotSnapshot {
+  params: Record<string, number>;
+  loadedSnapshot: Record<string, number> | null;
+  preset: PresetInfo;
+}
 
 const TICK_MS = 1000 / 20; // matches UiBridge::tickHz = 20
 const CURVE_POINTS = 240; // matches UiBridge::numCurvePoints
@@ -143,8 +148,12 @@ function analyzerResponseDb(
 
 export class MockBridge implements MetalEqBridge {
   private params: Record<string, number> = defaultParams();
-  private preset: PresetInfo = { index: 0, name: 'Custom', kind: 'custom', dirty: false };
+  private preset: PresetInfo = {
+    index: 0, presetId: '', name: 'Custom', kind: 'custom', dirty: false, abSlot: 0,
+  };
   private userPresets: UserPresetFile[] = loadUserPresetFiles();
+  private activeAb = 0;
+  private abSlots: Array<AbSlotSnapshot | null> = [null, null];
   private analyzer: AnalyzerInfo = { status: 0, progress: 0, suggestion: [0, 0, 0, 0, 0] };
   private curveDirty = true;
   private analyzerDirty = false;
@@ -165,6 +174,15 @@ export class MockBridge implements MetalEqBridge {
     this.emit = handlers.onTick;
     for (const spec of PARAMS) this.lastSent.set(spec.id, Number.NaN);
 
+    if (this.abSlots[0] == null) {
+      const source = this.captureActiveSlot();
+      this.abSlots[1] = {
+        params: { ...source.params },
+        loadedSnapshot: source.loadedSnapshot ? { ...source.loadedSnapshot } : null,
+        preset: { ...source.preset },
+      };
+    }
+
     if (!this.timer) {
       this.timer = setInterval(() => this.tick(), TICK_MS);
     }
@@ -173,7 +191,8 @@ export class MockBridge implements MetalEqBridge {
       protocolVersion: PROTOCOL_VERSION,
       params: { ...this.params },
       preset: { ...this.preset },
-      factoryPresets: this.factoryPresetInfos(),
+      factoryPresets: factoryPresetInfos(),
+      analyzerTargets: ANALYZER_TARGETS.map((t) => ({ ...t })),
       userPresets: this.userPresets.map((f) => f.name),
       analyzer: { ...this.analyzer },
       curve: this.buildCurve(),
@@ -181,15 +200,6 @@ export class MockBridge implements MetalEqBridge {
     this.curveDirty = false;
     this.fullSync = true;
     return Promise.resolve(snapshot);
-  }
-
-  private factoryPresetInfos(): FactoryPresetInfo[] {
-    return FACTORY_PRESETS.map((p) => ({
-      index: p.index,
-      name: p.name,
-      placement: p.placement,
-      description: p.description,
-    }));
   }
 
   private buildCurve(): CurveInfo {
@@ -246,7 +256,8 @@ export class MockBridge implements MetalEqBridge {
     if (this.loadedSnapshot) {
       let dirty = false;
       for (const spec of PARAMS) {
-        if (spec.id === 'bypass' || spec.id === 'abCompare') continue;
+        // Trim is the global level-match control; it never dirties a preset.
+        if (spec.id === 'trim' || spec.id === 'bypass' || spec.id === 'abCompare') continue;
         if (!nearlyEqual(this.params[spec.id], this.loadedSnapshot[spec.id] ?? 0)) {
           dirty = true;
           break;
@@ -304,9 +315,8 @@ export class MockBridge implements MetalEqBridge {
       return Promise.resolve({ ok: true });
     }
 
-    // Native applyPreset(safeIndex) reads getPreset(safeIndex) which clamps to
-    // numPresets - 1; mirrors the exact (shared) indexing of the C++ side.
-    const def = FACTORY_PRESETS[Math.min(safe, FACTORY_PRESETS.length - 1)];
+    // Canonical v2 mapping: selector 1 = factory[0].
+    const def = FACTORY_PRESETS[safe - 1];
     const eq = def.eq;
     this.params.hpFreq = eq.hpFreq;
     this.params.hpSlope = eq.hpSlope;
@@ -336,7 +346,10 @@ export class MockBridge implements MetalEqBridge {
       this.params.fizzCut = def.macros.fizzCut;
     }
 
-    this.preset = { index: safe, name: def.name, kind: 'factory', dirty: false };
+    this.preset = {
+      index: safe, presetId: def.id, name: def.name, kind: 'factory', dirty: false,
+      abSlot: this.activeAb,
+    };
     this.loadedSnapshot = { ...this.params };
     this.markDirty();
     this.markUserPresetsChanged();
@@ -375,10 +388,18 @@ export class MockBridge implements MetalEqBridge {
   resetToNeutral(): Promise<OpResult> {
     this.resetToNeutralInternal();
     // applyPreset(0) semantics: back to Custom.
-    this.preset = { index: 0, name: 'Custom', kind: 'custom', dirty: false };
+    this.preset = {
+      index: 0, presetId: '', name: 'Custom', kind: 'custom', dirty: false, abSlot: this.activeAb,
+    };
     this.loadedSnapshot = { ...this.params };
     this.markDirty();
     return Promise.resolve({ ok: true });
+  }
+
+  applyPresetById(presetId: string): Promise<OpResult> {
+    const found = FACTORY_PRESETS.find((p) => p.id === presetId);
+    if (!found) return Promise.resolve({ ok: false, error: `Unknown factory preset id: ${presetId}` });
+    return this.applyPreset(found.index);
   }
 
   loadUserPreset(name: string): Promise<OpResult> {
@@ -392,7 +413,9 @@ export class MockBridge implements MetalEqBridge {
         this.params[key] = snapPlain(spec, value);
       }
     }
-    this.preset = { index: 0, name, kind: 'user', dirty: false };
+    this.preset = {
+      index: 0, presetId: '', name, kind: 'user', dirty: false, abSlot: this.activeAb,
+    };
     this.loadedSnapshot = { ...this.params };
     this.markDirty();
     return Promise.resolve({ ok: true });
@@ -414,7 +437,9 @@ export class MockBridge implements MetalEqBridge {
       this.userPresets.push({ name: trimmed, params: this.allSoundParams() });
     }
     saveUserPresetFiles(this.userPresets);
-    this.preset = { index: 0, name: trimmed, kind: 'user', dirty: false };
+    this.preset = {
+      index: 0, presetId: '', name: trimmed, kind: 'user', dirty: false, abSlot: this.activeAb,
+    };
     this.loadedSnapshot = { ...this.params };
     this.markUserPresetsChanged();
     return Promise.resolve({ ok: true });
@@ -444,7 +469,9 @@ export class MockBridge implements MetalEqBridge {
     }
     saveUserPresetFiles(this.userPresets);
     if (this.preset.kind === 'user' && this.preset.name === name) {
-      this.preset = { index: 0, name: 'Custom', kind: 'custom', dirty: false };
+      this.preset = {
+        index: 0, presetId: '', name: 'Custom', kind: 'custom', dirty: false, abSlot: this.activeAb,
+      };
       this.loadedSnapshot = { ...this.params };
     }
     this.markUserPresetsChanged();
@@ -461,11 +488,87 @@ export class MockBridge implements MetalEqBridge {
     return Promise.resolve({ ok: true });
   }
 
+  //--- real A/B slots (mirror the native snapshots) -----------------------
+
+  private captureActiveSlot(): AbSlotSnapshot {
+    const params = this.allSoundParams();
+    delete params.trim;
+    const snapshot: AbSlotSnapshot = {
+      params,
+      loadedSnapshot: this.loadedSnapshot ? { ...this.loadedSnapshot } : null,
+      preset: { ...this.preset, abSlot: this.activeAb },
+    };
+    this.abSlots[this.activeAb] = snapshot;
+    return snapshot;
+  }
+
+  private loadSlot(slot: number): void {
+    const stored = this.abSlots[slot];
+    if (!stored) return;
+
+    const trim = this.params.trim;
+    for (const [key, value] of Object.entries(stored.params)) this.params[key] = value;
+    this.params.trim = trim; // output trim is global, not per-slot
+    this.preset = { ...stored.preset, abSlot: slot };
+    this.loadedSnapshot = stored.loadedSnapshot ? { ...stored.loadedSnapshot } : null;
+    this.params.abCompare = slot === 1 ? 1 : 0;
+    this.markDirty();
+  }
+
+  setAbSlot(slot: number): Promise<OpResult> {
+    if (!Number.isFinite(slot) || (slot !== 0 && slot !== 1)) {
+      return Promise.resolve({ ok: false, error: 'setAbSlot expects 0 (A) or 1 (B).' });
+    }
+    if (slot === this.activeAb) return Promise.resolve({ ok: true });
+
+    this.captureActiveSlot();
+    if (!this.abSlots[slot]) {
+      this.abSlots[slot] = this.abSlots[this.activeAb]
+        ? {
+            params: { ...this.abSlots[this.activeAb]!.params },
+            loadedSnapshot: this.abSlots[this.activeAb]!.loadedSnapshot
+              ? { ...this.abSlots[this.activeAb]!.loadedSnapshot! }
+              : null,
+            preset: { ...this.abSlots[this.activeAb]!.preset },
+          }
+        : null;
+    }
+    this.activeAb = slot;
+    this.loadSlot(slot);
+    return Promise.resolve({ ok: true });
+  }
+
+  copyAbToOther(): Promise<OpResult> {
+    this.captureActiveSlot();
+    const other = this.activeAb === 0 ? 1 : 0;
+    const source = this.abSlots[this.activeAb];
+    this.abSlots[other] = source
+      ? {
+          params: { ...source.params },
+          loadedSnapshot: source.loadedSnapshot ? { ...source.loadedSnapshot } : null,
+          preset: { ...source.preset, abSlot: other },
+        }
+      : null;
+    return source ? Promise.resolve({ ok: true })
+                  : Promise.resolve({ ok: false, error: 'Could not copy the A/B slot.' });
+  }
+
+  swapAbSlots(): Promise<OpResult> {
+    this.captureActiveSlot();
+    const a = this.abSlots[0];
+    const b = this.abSlots[1];
+    if (!a || !b) return Promise.resolve({ ok: false, error: 'Could not swap the A/B slots.' });
+    this.abSlots[0] = b;
+    this.abSlots[1] = a;
+    this.loadSlot(this.activeAb);
+    return Promise.resolve({ ok: true });
+  }
+
   //--- analyzer (simulated) ----------------------------------------------
 
   startAnalyzerCapture(profile: number): Promise<OpResult> {
     this.cancelCaptureTimer();
-    const target = Math.min(3, Math.max(0, Math.round(profile)));
+    const target = Math.min(ANALYZER_TARGETS.length - 1, Math.max(0, Math.round(profile)));
     this.analyzer = { status: 1, progress: 0, suggestion: [0, 0, 0, 0, 0] };
     this.analyzerDirty = true;
 
@@ -517,7 +620,9 @@ export class MockBridge implements MetalEqBridge {
       this.params[`band${i + 1}Q`] = 0.8;
       this.params[`band${i + 1}On`] = 1;
     }
-    this.preset = { index: 0, name: 'Custom', kind: 'custom', dirty: false };
+    this.preset = {
+      index: 0, presetId: '', name: 'Custom', kind: 'custom', dirty: false, abSlot: this.activeAb,
+    };
     this.loadedSnapshot = { ...this.params };
     this.markDirty();
     return Promise.resolve({ ok: true });

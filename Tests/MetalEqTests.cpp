@@ -1,6 +1,8 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <set>
+#include <string>
 
 #include "../Source/dsp/MetalEqDsp.h"
 #include "../Source/dsp/MetalEqGraphAxis.h"
@@ -41,6 +43,8 @@ void testGraphAxis()
 
 void testNonDestructiveShapes()
 {
+    check (metaleq::getNumShapes() == 6, "six fixed tonal shapes are available");
+
     metaleq::EqSettings eq;
     metaleq::MacroSettings macros;
     eq.bands[1] = { 437.0, -2.75, 1.4, true };
@@ -53,6 +57,7 @@ void testNonDestructiveShapes()
         eq.shapes[i] = true;
         metaleq::buildChain (shaped, eq, macros, 48000.0);
         const int onceCount = shaped.numFilters;
+        check (onceCount > baseline.numFilters, "enabling a shape adds at least one fixed filter");
         metaleq::buildChain (repeated, eq, macros, 48000.0);
         check (repeated.numFilters == onceCount, "rebuilding enabled shape does not accumulate filters");
         check (eq.bands[1].freq == 437.0 && eq.bands[1].gainDb == -2.75,
@@ -75,6 +80,16 @@ void testNonDestructiveShapes()
     check (repeated.numFilters < shaped.numFilters,
            "disabling one shape leaves another active");
     check (repeated.numFilters <= metaleq::kMaxChainSize, "combined shapes fit fixed DSP capacity");
+
+    // Shape metadata drives both the UI and DSP, so every entry must be valid.
+    for (int i = 0; i < metaleq::getNumShapes(); ++i)
+    {
+        const auto& definition = metaleq::getShapeDefinition (i);
+        check (definition.id != nullptr && *definition.id != 0, "shape has a stable id");
+        check (definition.name != nullptr && *definition.name != 0, "shape has a display name");
+        check (definition.numFilters > 0 && definition.numFilters
+               <= static_cast<int> (definition.filters.size()), "shape filter count is in range");
+    }
 }
 
 void testLowPass()
@@ -115,22 +130,117 @@ void testLowPass()
         metaleq::buildChain (bypassChain, off, metaleq::MacroSettings {}, rate);
         near (metaleq::chainResponseDb (bypassChain, rate, 16000.0), 0.0, 1.0e-8,
               "disabled LPF is transparent");
+
+        // Enabled but with no slope is the transparent default. This is the
+        // legacy state that must never become an accidental filter.
+        metaleq::EqSettings enabledNoSlope;
+        enabledNoSlope.lpEnabled = true;
+        enabledNoSlope.lpSlope = 0;
+        metaleq::ChainSpec transparent;
+        metaleq::buildChain (transparent, enabledNoSlope, metaleq::MacroSettings {}, rate);
+        near (metaleq::chainResponseDb (transparent, rate, 16000.0), 0.0, 1.0e-8,
+              "enabled low-pass with Off slope is transparent");
     }
+}
+
+void testChainRetirement()
+{
+    metaleq::EqEngine engine;
+    engine.prepare (48000.0);
+
+    metaleq::EqSettings eq;
+    eq.hpSlope = 2;
+    eq.lpEnabled = true;
+    eq.lpSlope = 2;
+    eq.lpFreq = 6000.0;
+    eq.bands[0] = { 120.0, 6.0, 1.0, true };
+
+    metaleq::ChainSpec chain;
+    metaleq::buildChain (chain, eq, metaleq::MacroSettings {}, 48000.0);
+    engine.setChain (chain, 1);
+    check (engine.getNumActiveFilters() == chain.numFilters, "engine installs the target chain");
+
+    metaleq::ChainSpec empty;
+    engine.setChain (empty, 64);
+    check (engine.getNumActiveFilters() == 0, "engine reports the new, empty target chain");
+
+    std::array<float, 512> samples {};
+    float* channels[] = { samples.data() };
+    engine.process (channels, 1, static_cast<int> (samples.size()));
+
+    for (float sample : samples)
+        check (std::isfinite (sample), "chain retirement never produces non-finite samples");
+
+    // A second block runs entirely after the ramp; it must be transparent.
+    samples.fill (0.0f);
+    samples[0] = 1.0f;
+    engine.process (channels, 1, static_cast<int> (samples.size()));
+    near (samples[0], 1.0, 1.0e-7, "retired chain is transparent");
 }
 
 void testFactorySettings()
 {
-    check (metaleq::getNumPresets() == 16, "all factory profiles remain available");
+    check (metaleq::getNumPresets() == 25, "all factory profiles remain available");
+
+    std::set<std::string> ids;
+    std::set<std::string> names;
+    std::set<std::string> genres;
+
     for (int i = 0; i < metaleq::getNumPresets(); ++i)
-        check (metaleq::params::isValidEqSettings (metaleq::getPreset (i).eq), "factory preset parameters are valid");
+    {
+        const auto& preset = metaleq::getPreset (i);
+
+        check (metaleq::params::isValidEqSettings (preset.eq), "factory preset parameters are valid");
+        check (preset.id != nullptr && *preset.id != 0, "factory preset has a stable id");
+        check (preset.genre != nullptr && *preset.genre != 0, "factory preset has a genre");
+        check (preset.subgenre != nullptr && *preset.subgenre != 0, "factory preset has a subgenre");
+        check (preset.name != nullptr && *preset.name != 0, "factory preset has a name");
+        check (ids.insert (preset.id).second, "factory preset ids are unique");
+        check (names.insert (preset.name).second, "factory preset names are unique");
+        genres.insert (preset.genre);
+
+        check (! (preset.eq.lpEnabled && preset.eq.lpSlope == 0),
+               "factory preset has no contradictory low-pass state");
+
+        check (metaleq::findPresetById (preset.id) == i, "stable id resolves to the same preset");
+        check (metaleq::findPresetByName (preset.name) == i, "display name resolves to the same preset");
+    }
+
+    check (genres.count ("Metalcore") == 1, "Metalcore genre is present");
+    check (genres.count ("Thrash") == 1, "Thrash genre is present");
+    check (genres.count ("Utility") == 1, "Utility genre is present");
+
+    check (metaleq::findPresetById ("no-such-preset") == -1, "unknown stable id is rejected");
+    check (metaleq::findPresetByName ("No Such Preset") == -1, "unknown name is rejected");
+
+    const int neutralIndex = metaleq::findPresetById ("utility-neutral-flat");
+    check (neutralIndex >= 0, "neutral reference preset exists");
+    if (neutralIndex >= 0)
+    {
+        const auto& neutral = metaleq::getPreset (neutralIndex);
+        check (neutral.setsMacros, "neutral preset resets macros");
+        check (neutral.macros.tight == 0.0 && neutral.macros.body == 0.5
+                   && neutral.macros.scoop == 0.0 && neutral.macros.bite == 0.0
+                   && neutral.macros.fizzCut == 0.0,
+               "neutral preset uses centred/off macros");
+    }
+
+    for (int i = 0; i < metaleq::getNumAnalyzerTargets(); ++i)
+    {
+        const auto& target = metaleq::getAnalyzerTarget (i);
+        check (target.label != nullptr && *target.label != 0, "analyzer target has a label");
+        check (metaleq::findPresetById (target.presetId) >= 0,
+               "analyzer target points at an existing stable preset id");
+    }
 }
-}
+} // namespace
 
 int main()
 {
     testGraphAxis();
     testNonDestructiveShapes();
     testLowPass();
+    testChainRetirement();
     testFactorySettings();
     if (failures != 0)
         return EXIT_FAILURE;

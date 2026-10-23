@@ -248,7 +248,9 @@ struct EqSettings
     double lpFreq   = 12000.0;
     int    hpSlope  = 0;   // 0 = off, 1 = 12, 2 = 24, 3 = 36 dB/oct
     int    lpSlope  = 0;
-    bool   lpEnabled = true;
+    // A low-pass is audible only when it is enabled AND its slope is > 0.
+    // Default off: the transparent state must not roll off any top end.
+    bool   lpEnabled = false;
     double lsFreq   = 140.0;
     double lsGainDb = 0.0;
     double hsFreq   = 7000.0;
@@ -272,11 +274,105 @@ struct MacroSettings
     double fizzCut = 0.0;
 };
 
+inline bool operator== (const BandSettings& a, const BandSettings& b) noexcept
+{
+    return a.freq == b.freq && a.gainDb == b.gainDb && a.q == b.q && a.on == b.on;
+}
+
+inline bool operator!= (const BandSettings& a, const BandSettings& b) noexcept { return ! (a == b); }
+
+inline bool operator== (const EqSettings& a, const EqSettings& b) noexcept
+{
+    return a.hpFreq == b.hpFreq && a.lpFreq == b.lpFreq
+        && a.hpSlope == b.hpSlope && a.lpSlope == b.lpSlope
+        && a.lpEnabled == b.lpEnabled
+        && a.lsFreq == b.lsFreq && a.lsGainDb == b.lsGainDb
+        && a.hsFreq == b.hsFreq && a.hsGainDb == b.hsGainDb
+        && a.bands == b.bands && a.shapes == b.shapes
+        && a.trimDb == b.trimDb;
+}
+
+inline bool operator!= (const EqSettings& a, const EqSettings& b) noexcept { return ! (a == b); }
+
+inline bool operator== (const MacroSettings& a, const MacroSettings& b) noexcept
+{
+    return a.tight == b.tight && a.body == b.body && a.scoop == b.scoop
+        && a.bite == b.bite && a.fizzCut == b.fizzCut;
+}
+
+inline bool operator!= (const MacroSettings& a, const MacroSettings& b) noexcept { return ! (a == b); }
+
 //==============================================================================
-// Chain construction
+// One-click tonal shapes
 //==============================================================================
 
 inline constexpr double kButterworthQ = 0.70710678118654752440;
+
+/** A single fixed filter contributed by a shape. Kept as data so buildChain()
+    is the only place that turns a shape toggle into sound.
+*/
+struct ShapeFilterSpec
+{
+    FilterType type   = FilterType::peak;
+    double     freq   = 1000.0;
+    double     q      = 0.7071;
+    double     gainDb = 0.0;
+};
+
+struct ShapeDefinition
+{
+    const char* id = "";
+    const char* name = "";
+    const char* tooltip = "";
+    std::array<ShapeFilterSpec, 3> filters {};
+    int numFilters = 0;
+};
+
+/** Order matches EqSettings::shapes and the shapeOn parameter array. */
+inline constexpr std::array<ShapeDefinition, 6> shapeDefinitions {{
+    { "tighten", "TIGHTEN",
+      "Tightens excess lows and clears low-mid looseness.",
+      {{ { FilterType::lowShelf, 130.0, kButterworthQ, -3.0 },
+         { FilterType::peak,     300.0, 0.85,          -3.0 },
+         { FilterType::peak,    1800.0, 1.0,            1.0 } }}, 3 },
+    { "scoop", "SCOOP",
+      "Applies a broad midrange scoop; use gently in dense mixes.",
+      {{ { FilterType::peak, 550.0, 0.55, -4.5 },
+         { FilterType::peak, 1800.0, 0.9, 1.5 },
+         { FilterType::peak, 1000.0, 1.0, 0.0 } }}, 2 },
+    { "midPunch", "MID PUNCH",
+      "Adds forward midrange body and authority.",
+      {{ { FilterType::peak, 320.0, 0.9, -3.0 },
+         { FilterType::peak, 1600.0, 0.75, 4.0 },
+         { FilterType::peak, 3000.0, 1.0, 1.5 } }}, 3 },
+    { "pickAttack", "PICK ATTACK",
+      "Adds pick definition around the attack region.",
+      {{ { FilterType::peak, 350.0, 1.0, -2.0 },
+         { FilterType::peak, 2600.0, 0.7, 4.0 },
+         { FilterType::peak, 5000.0, 1.0, 1.5 } }}, 3 },
+    { "fizzTamer", "FIZZ TAMER",
+      "Reduces fizz and harshness while retaining pick attack.",
+      {{ { FilterType::highShelf, 7000.0, kButterworthQ, -2.0 },
+         { FilterType::peak,      5200.0, 1.0, -3.5 },
+         { FilterType::peak,      8500.0, 0.8, -2.5 } }}, 3 },
+    { "brighten", "BRIGHTEN",
+      "Adds controlled presence to a dark guitar tone.",
+      {{ { FilterType::highShelf, 8000.0, kButterworthQ, 3.0 },
+         { FilterType::peak,      3000.0, 0.9, 2.0 },
+         { FilterType::peak,     10000.0, 0.7, 1.5 } }}, 3 }
+}};
+
+inline const ShapeDefinition& getShapeDefinition (int index) noexcept
+{
+    return shapeDefinitions[static_cast<size_t> (
+        clampValue (index, 0, static_cast<int> (shapeDefinitions.size()) - 1))];
+}
+
+inline int getNumShapes() noexcept { return static_cast<int> (shapeDefinitions.size()); }
+
+//==============================================================================
+// Chain construction
+//==============================================================================
 
 /** Cascaded Butterworth (Linkwitz-Riley even order) crossover sections.
 
@@ -368,47 +464,25 @@ inline void buildChain (ChainSpec& chain,
         chain.add (FilterType::highShelf, 7000.0, kButterworthQ, -5.5 * fizzCut);
 
     //--- independent, non-destructive tonal-shape layers -------------------
-    // These fixed contributions are deliberately separate from the manual
-    // bands and macros. Each layer is present at most once, so toggling cannot
-    // accumulate filters or overwrite a user edit.
-    if (eq.shapes[0]) // TIGHTEN
+    // The filter table is the single source of truth: the graph, the audio
+    // thread and the UI all derive the same sound from these entries.
+    for (int shape = 0; shape < getNumShapes(); ++shape)
     {
-        chain.add (FilterType::lowShelf, 130.0, kButterworthQ, -3.0);
-        chain.add (FilterType::peak, 300.0, 0.85, -3.0);
-        chain.add (FilterType::peak, 1800.0, 1.0, 1.0);
-    }
-    if (eq.shapes[1]) // SCOOP
-    {
-        chain.add (FilterType::peak, 550.0, 0.55, -4.5);
-        chain.add (FilterType::peak, 1800.0, 0.9, 1.5);
-    }
-    if (eq.shapes[2]) // MID PUNCH
-    {
-        chain.add (FilterType::peak, 320.0, 0.9, -3.0);
-        chain.add (FilterType::peak, 1600.0, 0.75, 4.0);
-        chain.add (FilterType::peak, 3000.0, 1.0, 1.5);
-    }
-    if (eq.shapes[3]) // PICK ATTACK
-    {
-        chain.add (FilterType::peak, 350.0, 1.0, -2.0);
-        chain.add (FilterType::peak, 2600.0, 0.7, 4.0);
-        chain.add (FilterType::peak, 5000.0, 1.0, 1.5);
-    }
-    if (eq.shapes[4]) // FIZZ TAMER
-    {
-        chain.add (FilterType::highShelf, 7000.0, kButterworthQ, -2.0);
-        chain.add (FilterType::peak, 5200.0, 1.0, -3.5);
-        chain.add (FilterType::peak, 8500.0, 0.8, -2.5);
-    }
-    if (eq.shapes[5]) // BRIGHTEN
-    {
-        chain.add (FilterType::highShelf, 8000.0, kButterworthQ, 3.0);
-        chain.add (FilterType::peak, 3000.0, 0.9, 2.0);
-        chain.add (FilterType::peak, 10000.0, 0.7, 1.5);
+        if (! eq.shapes[static_cast<size_t> (shape)])
+            continue;
+
+        const auto& definition = shapeDefinitions[static_cast<size_t> (shape)];
+        for (int f = 0; f < definition.numFilters; ++f)
+        {
+            const auto& filter = definition.filters[static_cast<size_t> (f)];
+            chain.add (filter.type, filter.freq, filter.q, filter.gainDb);
+        }
     }
 
     //--- low pass ------------------------------------------------------------
-    if (eq.lpEnabled)
+    // Both switches matter: enabled without a slope is the transparent
+    // default, and a slope without enabling must never filter anything.
+    if (eq.lpEnabled && eq.lpSlope > 0)
         addCrossover (chain, FilterType::lowPass, eq.lpFreq, eq.lpSlope, sampleRate);
 
     chain.trimDb = eq.trimDb;
@@ -536,6 +610,24 @@ public:
 
     bool isActive() const noexcept { return active_; }
 
+    /** True while any channel is still gliding towards its target. */
+    bool isRamping() const noexcept
+    {
+        for (const auto& c : channels_)
+            if (c.remaining > 0)
+                return true;
+        return false;
+    }
+
+    /** Ramp to identity without abruptly removing the section from the chain.
+        Used when the chain shrinks; EqEngine keeps processing the retiring
+        tail until every channel has settled, then switches it off.
+    */
+    void rampToPassthrough (int rampLength) noexcept
+    {
+        setTarget (BiquadCoeffs {}, rampLength);
+    }
+
     BiquadCoeffs getCurrent() const noexcept
     {
         const auto& c = channels_[0];
@@ -639,6 +731,7 @@ public:
             f.prepare (sampleRate_);
 
         numActiveFilters_ = 0;
+        numInstalledFilters_ = 0;
         trimGain_ = 1.0f;
         trimRampStart_ = 1.0f;
 
@@ -652,6 +745,7 @@ public:
             f.reset();
 
         numActiveFilters_ = 0;
+        numInstalledFilters_ = 0;
         trimGain_ = 1.0f;
         trimRampStart_ = 1.0f;
 
@@ -667,6 +761,7 @@ public:
     void setChain (const ChainSpec& chain, int rampLength) noexcept
     {
         const int n = clampValue (chain.numFilters, 0, kMaxChainSize);
+        const int previousInstalled = numInstalledFilters_;
 
         for (int i = 0; i < n; ++i)
         {
@@ -676,9 +771,14 @@ public:
             filters_[static_cast<size_t> (i)].setTarget (c, rampLength);
         }
 
-        for (int i = n; i < numActiveFilters_; ++i)
-            filters_[static_cast<size_t> (i)].setPassthrough();
+        // Do not drop removed sections instantly: ramp them to identity and
+        // keep processing them until the glide has finished. This avoids the
+        // click that a hard bypass would produce on preset changes.
+        if (n < previousInstalled)
+            for (int i = n; i < previousInstalled; ++i)
+                filters_[static_cast<size_t> (i)].rampToPassthrough (rampLength);
 
+        numInstalledFilters_ = std::max (previousInstalled, n);
         numActiveFilters_ = n;
 
         setTrimGain (chain.trimDb, rampLength);
@@ -745,7 +845,7 @@ public:
             if (data == nullptr)
                 continue;
 
-            for (int i = 0; i < numActiveFilters_; ++i)
+            for (int i = 0; i < numInstalledFilters_; ++i)
                 filters_[static_cast<size_t> (i)].processChannel (ch, data, numSamples);
 
             //--- smoothed output trim --------------------------------------
@@ -771,6 +871,8 @@ public:
                 for (; i < numSamples; ++i)
                     data[i] *= t.gain;
         }
+
+        retireFinishedFilters();
     }
 
     /** Magnitude of the coefficients currently installed. Message thread only. */
@@ -787,6 +889,22 @@ public:
     int getNumActiveFilters() const noexcept { return numActiveFilters_; }
 
 private:
+    /** Once every retiring section has reached identity, stop processing it. */
+    void retireFinishedFilters() noexcept
+    {
+        if (numInstalledFilters_ <= numActiveFilters_)
+            return;
+
+        for (int i = numActiveFilters_; i < numInstalledFilters_; ++i)
+            if (filters_[static_cast<size_t> (i)].isRamping())
+                return;
+
+        for (int i = numActiveFilters_; i < numInstalledFilters_; ++i)
+            filters_[static_cast<size_t> (i)].setPassthrough();
+
+        numInstalledFilters_ = numActiveFilters_;
+    }
+
     struct TrimState
     {
         float gain      = 1.0f;
@@ -799,6 +917,7 @@ private:
 
     std::array<BiquadSection, kMaxChainSize> filters_ {};
     int numActiveFilters_ = 0;
+    int numInstalledFilters_ = 0;
 
     std::array<TrimState, kMaxChannels> trim_ {};
     float trimGain_ = 1.0f;

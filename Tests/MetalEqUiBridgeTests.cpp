@@ -8,11 +8,11 @@
       1. validateParameterWrite() never lets an out-of-range or non-finite
          value through - JavaScript is never authoritative.
       2. handleSetParameter() reproduces the native low-pass enable side
-         effect (enabling while the slope is Off jumps it to 24 dB/oct), so
-         the web UI and the preserved native UI behave identically.
-      3. applyPreset() mirrors the native combo's index mapping exactly,
-         including its shared off-by-one quirk, so a preset chosen in the web
-         UI loads the same settings as the same choice in the native UI.
+         effect (enabling while the slope is Off jumps it to 24 dB/oct).
+      3. applyPreset() uses the canonical v2 mapping: 0 = Custom and
+         selector 1..N = factory preset 0..N-1.
+      4. The v2 snapshot exposes stable preset ids, taxonomy and analyzer
+         targets, and the A/B native functions control the real A/B slots.
 
     Like MetalEqStateTests, these exercise the real processor and run headless
     (no audio device, no WebView, no message loop) under CTest.
@@ -104,7 +104,14 @@ bool resultOk (const juce::var& result)
         return obj->getProperty ("ok").equals (true);
     return false;
 }
+
+juce::var getProperty (const juce::var& object, const char* name)
+{
+    if (auto* obj = object.getDynamicObject())
+        return obj->getProperty (name);
+    return {};
 }
+} // namespace
 
 //==============================================================================
 static void testValidateParameterWrite (MetalEQAudioProcessor& processor)
@@ -198,14 +205,8 @@ static void testApplyPresetIndexMapping (MetalEQAudioProcessor& processor)
 {
     metaleq::ui::UiBridge bridge (processor);
 
-    // The web UI reports factory preset i (0-based) as index i+1 because index
-    // 0 is reserved for "Custom". handleApplyPreset must pass that number
-    // straight through to the processor, which reads getPreset(safeIndex) - the
-    // same +1 shift the native combo box applies. This is a shared quirk: the
-    // name shown for a factory slot is off by one from the values it loads,
-    // identically in both UIs. These checks pin that mapping down so the web
-    // UI can never drift from the native one.
-    for (int reported = 1; reported < metaleq::getNumPresets() + 2; ++reported)
+    // Canonical v2 mapping: index 0 is Custom, factory preset i is index i+1.
+    for (int reported = 1; reported <= metaleq::getNumPresets(); ++reported)
     {
         processor.applyPreset (0);
         juce::var result;
@@ -213,10 +214,11 @@ static void testApplyPresetIndexMapping (MetalEQAudioProcessor& processor)
                "applyPreset is registered with the bridge");
         check (resultOk (result), "applyPreset reports success");
 
-        // Reproduce what the processor does with the same index and compare a
-        // value the preset actually changes.
-        const int expectedIndex = juce::jlimit (0, metaleq::getNumPresets(), reported);
-        const auto& expected = metaleq::getPreset (juce::jlimit (0, metaleq::getNumPresets() - 1, expectedIndex));
+        const auto& expected = metaleq::getPreset (reported - 1);
+        check (processor.getLastPresetName() == expected.name,
+               "applyPreset loads the factory preset at the canonical index");
+        check (processor.getLastPresetId() == expected.id,
+               "applyPreset reports the stable factory id");
         checkNear (readPlain (processor, "lpFreq"), expected.eq.lpFreq, 1.0e-3,
                    "applyPreset loads the same low-pass cutoff as the indexed factory preset");
     }
@@ -230,12 +232,73 @@ static void testApplyPresetIndexMapping (MetalEQAudioProcessor& processor)
     checkNear (readPlain (processor, "lsGain"), 0.0, 1.0e-4,
                "applying the Custom preset resets the gain to neutral");
 
+    // Stable-id recall is the project-safe path.
+    processor.applyPreset (0);
+    check (callNative (bridge, "applyPresetById", makeArgs (juce::String (metaleq::getPreset (7).id)), result),
+           "applyPresetById is registered with the bridge");
+    check (resultOk (result), "applyPresetById succeeds");
+    check (processor.getLastPresetId() == metaleq::getPreset (7).id,
+           "applyPresetById recalls the matching preset");
+    check (callNative (bridge, "applyPresetById", makeArgs (juce::String ("missing")), result),
+           "applyPresetById handles an unknown id");
+    check (! resultOk (result), "applyPresetById rejects an unknown id");
+
     // A missing or non-numeric index is rejected, not silently defaulted.
     check (callNative (bridge, "applyPreset", juce::Array<juce::var> {}, result), "applyPreset handles no argument");
     check (! resultOk (result), "applyPreset rejects a missing index");
     check (callNative (bridge, "applyPreset", makeArgs (juce::String { "x" }), result),
            "applyPreset handles a non-numeric index");
     check (! resultOk (result), "applyPreset rejects a non-numeric index");
+}
+
+//==============================================================================
+static void testSnapshotV2 (MetalEQAudioProcessor& processor)
+{
+    metaleq::ui::UiBridge bridge (processor);
+    juce::var snapshot;
+    check (callNative (bridge, "uiReady", juce::Array<juce::var> {}, snapshot),
+           "uiReady is registered with the bridge");
+
+    check (static_cast<int> (getProperty (snapshot, "protocolVersion")) == 2,
+           "snapshot advertises protocol version 2");
+
+    const auto presets = getProperty (snapshot, "factoryPresets");
+    check (presets.isArray() && presets.size() == metaleq::getNumPresets(),
+           "snapshot contains every factory preset");
+    if (presets.isArray() && presets.size() > 0)
+    {
+        const auto first = presets[0];
+        check (getProperty (first, "index").equals (1), "factory snapshot indices start at 1");
+        check (getProperty (first, "id").toString().isNotEmpty(), "factory snapshot carries stable id");
+        check (getProperty (first, "genre").toString().isNotEmpty(), "factory snapshot carries genre");
+        check (getProperty (first, "subgenre").toString().isNotEmpty(), "factory snapshot carries subgenre");
+    }
+
+    const auto targets = getProperty (snapshot, "analyzerTargets");
+    check (targets.isArray() && targets.size() == metaleq::getNumAnalyzerTargets(),
+           "snapshot contains analyzer targets");
+    if (targets.isArray() && targets.size() > 0)
+        check (getProperty (targets[0], "presetId").toString() == metaleq::getAnalyzerTarget (0).presetId,
+               "analyzer target carries its stable preset id");
+
+    const auto preset = getProperty (snapshot, "preset");
+    check (getProperty (preset, "abSlot").isInt(), "preset snapshot carries the active A/B slot");
+    check (getProperty (preset, "presetId").isString(), "preset snapshot carries the stable id field");
+
+    juce::var result;
+    check (callNative (bridge, "setAbSlot", makeArgs (1.0), result), "setAbSlot is registered");
+    check (resultOk (result), "setAbSlot succeeds");
+    check (processor.getActiveAbSlot() == 1, "setAbSlot switches to B");
+
+    check (callNative (bridge, "copyAbToOther", juce::Array<juce::var> {}, result),
+           "copyAbToOther is registered");
+    check (resultOk (result), "copyAbToOther succeeds");
+    check (callNative (bridge, "swapAbSlots", juce::Array<juce::var> {}, result),
+           "swapAbSlots is registered");
+    check (resultOk (result), "swapAbSlots succeeds");
+    check (callNative (bridge, "setAbSlot", makeArgs (0.0), result), "setAbSlot handles A");
+    check (resultOk (result), "setAbSlot returns to A");
+    check (processor.getActiveAbSlot() == 0, "setAbSlot switches back to A");
 }
 
 //==============================================================================
@@ -254,6 +317,11 @@ int main()
     {
         MetalEQAudioProcessor processor;
         testApplyPresetIndexMapping (processor);
+    }
+
+    {
+        MetalEQAudioProcessor processor;
+        testSnapshotV2 (processor);
     }
 
     if (failures == 0)

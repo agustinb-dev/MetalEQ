@@ -130,17 +130,18 @@ void MetalEQAudioProcessorEditor::parentHierarchyChanged()
 //==============================================================================
 void MetalEQAudioProcessorEditor::updateCollapsedHeight (bool expanded)
 {
-    if (fineExpanded == expanded)
+    if (advancedExpanded == expanded)
         return;
 
-    fineExpanded = expanded;
+    advancedExpanded = expanded;
 
     if (expanded)
         collapsedHeight = juce::jmin (getHeight(), 1280);
 
-    // Same rule as the native FINE EQ button: +220 px, clamped to the
-    // resize limits, so the host window grows exactly like before.
-    const auto targetHeight = expanded ? juce::jlimit (1010, 1280, collapsedHeight + 220)
+    // The Advanced view adds the numeric bands, shelves and analyzer. Grow
+    // by 300 px (never below 1180 px); collapsing restores the previous
+    // height. Both values are clamped to the editor's resize limits.
+    const auto targetHeight = expanded ? juce::jlimit (1180, 1280, collapsedHeight + 300)
                                        : collapsedHeight;
     setSize (getWidth(), targetHeight);
 }
@@ -154,7 +155,7 @@ void MetalEQAudioProcessorEditor::attachNativeFallback()
     stopTimer();
 
     // The native editor is embedded as a plain child; its own resize calls
-    // (FINE EQ expand) are forwarded to this editor by the ComponentListener.
+    // are forwarded to this editor by the ComponentListener.
     fallbackEditor = std::make_unique<MetalEQNativeFallbackEditor> (processorRef);
     fallbackEditor->addComponentListener (this);
     addAndMakeVisible (*fallbackEditor);
@@ -176,8 +177,8 @@ void MetalEQAudioProcessorEditor::detachNativeFallback()
 
 void MetalEQAudioProcessorEditor::componentMovedOrResized (juce::Component& component, bool /*wasMoved*/, bool /*wasResized*/)
 {
-    // The nested fallback editor asked for a new size (its FINE EQ button):
-    // grow/shrink this top-level editor to match, like the original window.
+    // The nested fallback editor asked for a new size: grow/shrink this
+    // top-level editor to match.
     if (&component == fallbackEditor.get())
     {
         const auto w = component.getWidth();

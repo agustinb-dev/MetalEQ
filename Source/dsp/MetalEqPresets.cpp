@@ -39,6 +39,9 @@ EqSettings makeEq (const EqParts& p) noexcept
     EqSettings e;
     e.hpFreq = p.hpFreq;   e.hpSlope = p.hpSlope;
     e.lpFreq = p.lpFreq;   e.lpSlope = p.lpSlope;
+    // A preset that specifies a non-zero LP slope means an audible low-pass.
+    // Slope 0 is the transparent default; lpOn is never left contradictory.
+    e.lpEnabled = p.lpSlope > 0;
     e.lsFreq = p.lsFreq;   e.lsGainDb = p.lsGain;
     e.hsFreq = p.hsFreq;   e.hsGainDb = p.hsGain;
     e.bands  = p.bands;
@@ -52,6 +55,7 @@ EqSettings neutralEq() noexcept
     EqSettings e;
     e.hpSlope = 0;
     e.lpSlope = 0;
+    e.lpEnabled = false;
     e.bands[0] = flatBand (120.0);
     e.bands[1] = flatBand (400.0);
     e.bands[2] = flatBand (1200.0);
@@ -62,331 +66,292 @@ EqSettings neutralEq() noexcept
 
 constexpr MacroSettings neutralMacros { 0.0, 0.5, 0.0, 0.0, 0.0 };
 
+PresetDefinition preset (const char* id, const char* genre, const char* subgenre,
+                         const char* name, Placement placement, const char* description,
+                         const EqParts& parts, bool setsMacros = false,
+                         MacroSettings macros = neutralMacros) noexcept
+{
+    PresetDefinition p;
+    p.id = id;
+    p.genre = genre;
+    p.subgenre = subgenre;
+    p.name = name;
+    p.placement = placement;
+    p.description = description;
+    p.eq = makeEq (parts);
+    p.setsMacros = setsMacros;
+    p.macros = macros;
+    return p;
+}
+
 //==============================================================================
-// Preset table. Frequencies in Hz, gains in dB, Q dimensionless.
+// Preset table. Ordered by browsing taxonomy; ids are stable forever.
 //
 // Post-amp profiles work on an already distorted signal: they clean up rumble,
 // muddiness, boxiness and fizz and add attack where the guitar needs it.
 // Pre-amp profiles shape what enters the preamp, which changes how it
 // distorts, so they deliberately keep low end and boost rather than cut mids.
 //==============================================================================
-const PresetDefinition presets[] =
+const std::array<PresetDefinition, 25> presets {{
+    //--- Metalcore / 2000s ---------------------------------------------------
+    preset ("metalcore-2000s-tight-rhythm", "Metalcore", "2000s",
+            "2000s Metalcore: Tight Rhythm", Placement::postAmp,
+            "Post-amp. Tight low end, controlled low mids, aggressive attack and "
+            "restrained fizz. The safe starting point for palm-muted rhythm.",
+            { 85.0, 2, 12000.0, 2, 120.0, -2.5, 7000.0, -1.5,
+              { band (240.0, -3.5, 1.0), band (420.0, -2.0, 1.4),
+                band (2200.0, 3.0, 0.9), band (5200.0, -2.0, 1.2),
+                band (8500.0, -2.5, 0.8) }, 0.0 }),
+
+    preset ("metalcore-2000s-double-track", "Metalcore", "2000s",
+            "2000s Metalcore: Double Track", Placement::postAmp,
+            "Post-amp. Keeps doubled rhythm guitars from turning into a midrange "
+            "pile-up while preserving the pick attack that cuts through drums.",
+            { 90.0, 2, 14000.0, 2, 130.0, -2.0, 7200.0, -1.0,
+              { band (260.0, -3.0, 1.0), band (500.0, -2.5, 1.3),
+                band (2100.0, 2.0, 0.9), band (4800.0, -2.0, 1.1),
+                band (9000.0, -2.0, 0.8) }, 0.0 }),
+
+    preset ("metalcore-2000s-lead", "Metalcore", "2000s",
+            "2000s Metalcore: Lead", Placement::postAmp,
+            "Post-amp. A focused lead voice with enough upper mids to sit on top "
+            "of a dense rhythm section without becoming brittle.",
+            { 95.0, 2, 16000.0, 1, 150.0, -1.5, 7500.0, 0.5,
+              { band (280.0, -3.0, 1.0), band (650.0, -2.0, 1.2),
+                band (2600.0, 4.0, 0.8), band (5500.0, 1.0, 1.2),
+                band (9500.0, -2.0, 0.7) }, 0.0 }),
+
+    //--- Metalcore / Modern --------------------------------------------------
+    preset ("metalcore-modern-drop-tuning", "Metalcore", "Modern",
+            "Modern Metalcore: Drop Tuning", Placement::postAmp,
+            "Post-amp. A 36 dB/oct high-pass at 70 Hz keeps the low notes of a "
+            "drop tuning separate instead of rumbling into each other.",
+            { 70.0, 3, 11000.0, 2, 100.0, -3.5, 6000.0, -2.0,
+              { band (180.0, -4.0, 0.9), band (350.0, -3.0, 1.3),
+                band (1900.0, 3.5, 0.8), band (4500.0, -3.0, 1.0),
+                band (8000.0, -2.5, 0.8) }, 0.0 }),
+
+    preset ("metalcore-modern-aggressive-mids", "Metalcore", "Modern",
+            "Modern Metalcore: Aggressive Mids", Placement::postAmp,
+            "Post-amp. A forward, angry midrange for riffs that need to punch "
+            "through a busy mix. Scoop the midrange back if it feels crowded.",
+            { 80.0, 2, 13500.0, 2, 110.0, -2.0, 7200.0, -2.5,
+              { band (220.0, -3.0, 1.0), band (450.0, -1.5, 1.0),
+                band (1600.0, 4.0, 0.8), band (3200.0, 2.0, 1.0),
+                band (8000.0, -2.0, 0.8) }, 0.0 }),
+
+    preset ("metalcore-modern-wide-rhythm", "Metalcore", "Modern",
+            "Modern Metalcore: Wide Rhythm", Placement::postAmp,
+            "Post-amp. Broad low-mid shaping for wall-of-guitar rhythm tones. "
+            "Use one guitar per side rather than stacking several bright takes.",
+            { 105.0, 3, 9000.0, 2, 100.0, -4.0, 6500.0, -2.0,
+              { band (180.0, -4.5, 0.8), band (380.0, -3.5, 1.2),
+                band (1600.0, 2.5, 0.7), band (3500.0, -1.0, 1.0),
+                band (7500.0, -3.0, 0.8) }, 0.0 }),
+
+    //--- Metalcore / Melodic -------------------------------------------------
+    preset ("metalcore-melodic-cut-through", "Metalcore", "Melodic",
+            "Melodic Metalcore: Cut Through", Placement::postAmp,
+            "Post-amp. Articulate chords with enough midrange to stay audible "
+            "when two rhythm guitars are doubled.",
+            { 95.0, 2, 14000.0, 2, 150.0, -1.5, 8000.0, -2.0,
+              { band (260.0, -2.5, 1.0), band (700.0, -1.5, 1.2),
+                band (2400.0, 3.5, 0.8), band (6000.0, -3.0, 1.0),
+                band (10000.0, -2.0, 0.7) }, 0.0 }),
+
+    preset ("metalcore-melodic-lead-presence", "Metalcore", "Melodic",
+            "Melodic Metalcore: Lead Presence", Placement::postAmp,
+            "Post-amp. Smooth, singing lead tone with a controlled top end for "
+            "harmonised melodies and sustained notes.",
+            { 95.0, 2, 16000.0, 1, 150.0, -1.0, 6000.0, 1.5,
+              { band (280.0, -2.0, 1.0), band (700.0, -2.5, 1.1),
+                band (2800.0, 3.5, 0.8), band (5500.0, 1.5, 1.1),
+                band (9500.0, -1.5, 0.7) }, 0.0 }),
+
+    //--- Metalcore / Progressive ---------------------------------------------
+    preset ("metalcore-progressive-djent-tight", "Metalcore", "Progressive",
+            "Progressive Metalcore: Djent Tight", Placement::postAmp,
+            "Post-amp. Fast, percussive low-end response for palm-muted "
+            "syncopation. The high-pass is intentionally steep.",
+            { 120.0, 3, 10000.0, 2, 90.0, -4.0, 6500.0, -1.5,
+              { band (160.0, -5.0, 0.8), band (300.0, -3.0, 1.1),
+                band (1200.0, 1.5, 0.8), band (2800.0, 3.5, 0.7),
+                band (6500.0, -2.5, 0.8) }, 0.0 }),
+
+    preset ("metalcore-progressive-open-clean", "Metalcore", "Progressive",
+            "Progressive Metalcore: Open Clean", Placement::postAmp,
+            "Post-amp. An open, ambient clean foundation for layered passages. "
+            "Use the output trim to match the level of your distortion tone.",
+            { 70.0, 1, 18000.0, 1, 160.0, 1.0, 8000.0, 2.0,
+              { band (220.0, -1.5, 1.0), band (500.0, 1.0, 1.0),
+                band (1800.0, 2.0, 0.8), band (4000.0, 1.5, 0.9),
+                band (10000.0, 1.0, 0.7) }, 0.0 }),
+
+    //--- Thrash / Classic ----------------------------------------------------
+    preset ("thrash-classic-midrange-punch", "Thrash", "Classic",
+            "Classic Thrash: Midrange Punch", Placement::postAmp,
+            "Post-amp. The old-school recipe: tight lows, a strong midrange push "
+            "and enough top-end bite for fast alternate picking.",
+            { 75.0, 2, 15000.0, 2, 130.0, -2.0, 8000.0, -1.0,
+              { band (250.0, -3.5, 1.0), band (700.0, -2.0, 1.1),
+                band (1800.0, 4.0, 0.8), band (3500.0, 1.5, 1.0),
+                band (8000.0, -2.0, 0.8) }, 0.0 }),
+
+    preset ("thrash-classic-deep-scoop", "Thrash", "Classic",
+            "Classic Thrash: Deep Scoop", Placement::postAmp,
+            "Post-amp. A wide, scooped rhythm tone. Keep some midrange if you "
+            "need the guitar to survive a dense mix.",
+            { 80.0, 2, 16000.0, 2, 100.0, -3.0, 6500.0, -2.0,
+              { band (220.0, -3.0, 1.0), band (500.0, -5.0, 1.2),
+                band (1400.0, -2.0, 0.9), band (3200.0, 2.0, 1.0),
+                band (8500.0, -2.5, 0.8) },
+            0.0 }),
+
+    preset ("thrash-classic-bright-attack", "Thrash", "Classic",
+            "Classic Thrash: Bright Attack", Placement::postAmp,
+            "Post-amp. A bright, immediate attack for fast riffs. Back the high "
+            "shelf down if the amp is already bright.",
+            { 70.0, 2, 19000.0, 1, 180.0, -1.0, 7500.0, 2.5,
+              { band (300.0, -2.0, 1.0), band (800.0, -1.0, 1.0),
+                band (1800.0, 4.0, 0.8), band (4500.0, 2.5, 1.1),
+                band (9000.0, -1.0, 0.8) }, 0.0 }),
+
+    //--- Thrash / Technical --------------------------------------------------
+    preset ("thrash-technical-clarity", "Thrash", "Technical",
+            "Thrash: Technical Clarity", Placement::postAmp,
+            "Post-amp. Separates fast, intricate picking from chord work by "
+            "cleaning the low mids and adding definition around 3 kHz.",
+            { 90.0, 2, 16000.0, 2, 120.0, -2.0, 7000.0, 0.0,
+              { band (200.0, -3.0, 1.0), band (500.0, -3.0, 1.2),
+                band (2800.0, 4.0, 0.8), band (5000.0, 1.0, 1.1),
+                band (9000.0, -1.5, 0.8) }, 0.0 }),
+
+    preset ("thrash-technical-fast-picking", "Thrash", "Technical",
+            "Thrash: Fast Picking", Placement::postAmp,
+            "Post-amp. A percussive attack with a tight low end for tremolo and "
+            "alternate picking at speed.",
+            { 100.0, 3, 14000.0, 2, 110.0, -2.0, 7500.0, -1.5,
+              { band (200.0, -3.0, 1.0), band (600.0, -1.5, 1.0),
+                band (2600.0, 4.0, 0.8), band (4800.0, -2.0, 1.1),
+                band (8500.0, -2.0, 0.8) }, 0.0 }),
+
+    //--- Thrash / Modern -----------------------------------------------------
+    preset ("thrash-modern-tight-rhythm", "Thrash", "Modern",
+            "Modern Thrash: Tight Rhythm", Placement::postAmp,
+            "Post-amp. Modern tightness without losing the midrange snarl that "
+            "makes thrash riffs read.",
+            { 85.0, 3, 13000.0, 2, 120.0, -2.5, 7000.0, -1.0,
+              { band (240.0, -4.0, 1.0), band (450.0, -2.0, 1.2),
+                band (2000.0, 3.0, 0.8), band (4000.0, 0.5, 1.0),
+                band (8000.0, -2.0, 0.8) }, 0.0 }),
+
+    preset ("thrash-modern-precision-bite", "Thrash", "Modern",
+            "Modern Thrash: Precision and Bite", Placement::postAmp,
+            "Post-amp. A dry, precise attack for layered rhythm parts. The "
+            "low-pass keeps high-gain fizz under control.",
+            { 95.0, 2, 12000.0, 2, 110.0, -2.5, 8000.0, 0.5,
+              { band (220.0, -3.5, 1.0), band (500.0, -1.0, 1.0),
+                band (2200.0, 3.5, 0.8), band (4500.0, 1.5, 1.0),
+                band (8500.0, -2.5, 0.8) }, 0.0 }),
+
+    //--- Utility / Pre-Amp ---------------------------------------------------
+    preset ("utility-preamp-overdrive-tightener", "Utility", "Pre-Amp",
+            "Pre-Amp: Overdrive Tightener", Placement::preAmp,
+            "Place BEFORE your amp/cab. Keeps the low end out of the preamp, "
+            "lifts the upper mids and takes the edge off above 5 kHz.",
+            { 40.0, 1, 20000.0, 0, 120.0, -4.0, 5500.0, -3.5,
+              { band (300.0, -2.0, 1.0), band (720.0, 4.5, 0.8),
+                band (1200.0, -1.0, 1.2), band (3000.0, 1.5, 1.0),
+                band (9000.0, -2.0, 0.8) }, 0.0 }),
+
+    preset ("utility-preamp-clean-boost", "Utility", "Pre-Amp",
+            "Pre-Amp: Clean Boost", Placement::preAmp,
+            "Place BEFORE your amp/cab. A mostly flat level lift with a little "
+            "upper-mid push; use the output trim to drive the amp input.",
+            { 30.0, 1, 20000.0, 0, 90.0, -1.0, 5000.0, 1.5,
+              { band (250.0, -2.0, 1.0), band (700.0, 3.0, 0.9),
+                band (1200.0, -0.5, 1.0), band (2500.0, 2.0, 1.0),
+                band (7000.0, -1.0, 0.8) }, 0.0 }),
+
+    //--- Utility / Post-Amp --------------------------------------------------
+    preset ("utility-postamp-mix-cleanup", "Utility", "Post-Amp",
+            "Post-Amp: Mix Cleanup", Placement::postAmp,
+            "Post-amp. The general cleanup starting point: rumble out with the "
+            "high-pass, mud out around 300-550 Hz, attack back around 2.4 kHz.",
+            { 75.0, 2, 15000.0, 2, 120.0, -1.5, 7000.0, -1.0,
+              { band (300.0, -2.5, 1.0), band (550.0, -2.0, 1.2),
+                band (2400.0, 2.0, 0.9), band (4500.0, -1.0, 1.0),
+                band (9000.0, -1.5, 0.8) }, 0.0 }),
+
+    preset ("utility-postamp-fizz-control", "Utility", "Post-Amp",
+            "Post-Amp: Fizz Control", Placement::postAmp,
+            "Post-amp. A corrective curve for fizzy high-gain tones: tame the "
+            "harsh region without dulling the pick attack.",
+            { 70.0, 2, 10000.0, 2, 130.0, -1.0, 6500.0, -3.5,
+              { band (280.0, -2.0, 1.0), band (700.0, -1.0, 1.0),
+                band (2200.0, 1.5, 0.9), band (5200.0, -3.0, 1.1),
+                band (8500.0, -2.5, 0.8) }, 0.0 }),
+
+    //--- Utility / Reference -------------------------------------------------
+    preset ("utility-low-tuning-extended-range", "Utility", "Reference",
+            "Low Tuning: Extended Range", Placement::postAmp,
+            "Post-amp. A starting point for baritone and extended-range guitars: "
+            "a low high-pass, tight subs and a controlled top end.",
+            { 55.0, 3, 11000.0, 2, 90.0, -3.0, 6000.0, -2.0,
+              { band (140.0, -4.0, 0.9), band (300.0, -3.0, 1.1),
+                band (1600.0, 3.0, 0.8), band (3800.0, -2.0, 1.0),
+                band (7500.0, -3.0, 0.8) }, 0.0 }),
+
+    preset ("utility-reference-dark-cab", "Utility", "Reference",
+            "Reference: Dark Cab", Placement::postAmp,
+            "Post-amp. A dark, mid-focused reference curve for comparing a "
+            "bright amp or IR without harshness.",
+            { 80.0, 1, 9000.0, 2, 140.0, 0.0, 6000.0, -3.0,
+              { band (180.0, -2.0, 1.0), band (400.0, -1.0, 1.0),
+                band (1200.0, 1.0, 1.0), band (3000.0, -1.0, 1.0),
+                band (7000.0, -3.0, 0.8) }, 0.0 }),
+
+    preset ("utility-reference-bright-amp", "Utility", "Reference",
+            "Reference: Bright Amp", Placement::postAmp,
+            "Post-amp. A bright, open reference curve for comparing a dark amp "
+            "or recording chain.",
+            { 90.0, 2, 16000.0, 1, 120.0, -1.0, 8000.0, 3.0,
+              { band (250.0, -2.0, 1.0), band (600.0, -1.0, 1.0),
+                band (2200.0, 2.0, 0.8), band (4500.0, 1.0, 1.0),
+                band (9000.0, 2.0, 0.8) }, 0.0 }),
+
+    //--- Utility / Neutral ---------------------------------------------------
+    preset ("utility-neutral-flat", "Utility", "Neutral",
+            "Neutral: Flat EQ", Placement::either,
+            "A completely neutral EQ: no filters, no trim, macros centred or "
+            "off. Use it as a clean slate or a level-matched bypass reference.",
+            { 80.0, 0, 12000.0, 0, 140.0, 0.0, 7000.0, 0.0,
+              { flatBand (120.0), flatBand (400.0), flatBand (1200.0),
+                flatBand (3500.0), flatBand (8000.0) }, 0.0 },
+            true, neutralMacros)
+}};
+
+static_assert (std::size (presets) == 25, "Expected 25 factory presets");
+
+bool equalsIgnoreCase (const char* a, const char* b) noexcept
 {
-    //--- 0 -------------------------------------------------------------------
-    {
-        "2000s Metalcore - Tight Rhythm",
-        Placement::postAmp,
-        "Post-amp. Tight low end, controlled low mids, aggressive attack and "
-        "restrained fizz. The safe starting point for palm-muted rhythm.",
-        makeEq ({ 85.0, 2, 12000.0, 2, 120.0, -2.5, 7000.0, -1.5,
-                  { band (240.0, -3.5, 1.0), band (420.0, -2.0, 1.4),
-                    band (2200.0, 3.0, 0.9), band (5200.0, -2.0, 1.2),
-                    band (8500.0, -2.5, 0.8) },
-                  0.0 }),
-        false, neutralMacros
-    },
+    if (a == nullptr || b == nullptr)
+        return false;
 
-    //--- 1 -------------------------------------------------------------------
+    while (*a != 0 && *b != 0)
     {
-        "Melodic Metalcore - Cut Through",
-        Placement::postAmp,
-        "Post-amp. Articulate chords with enough midrange to stay audible when "
-        "two rhythm guitars are doubled.",
-        makeEq ({ 95.0, 2, 14000.0, 2, 150.0, -1.5, 8000.0, -2.0,
-                  { band (260.0, -2.5, 1.0), band (700.0, -1.5, 1.2),
-                    band (2400.0, 3.5, 0.8), band (6000.0, -3.0, 1.0),
-                    band (10000.0, -2.0, 0.7) },
-                  0.0 }),
-        false, neutralMacros
-    },
+        const char ca = (*a >= 'A' && *a <= 'Z') ? static_cast<char> (*a - 'A' + 'a') : *a;
+        const char cb = (*b >= 'A' && *b <= 'Z') ? static_cast<char> (*b - 'A' + 'a') : *b;
 
-    //--- 2 -------------------------------------------------------------------
-    {
-        "Modern Metalcore - Drop Tuning",
-        Placement::postAmp,
-        "Post-amp. A 36 dB/oct high-pass at 70 Hz keeps the low notes of a drop "
-        "tuning separate instead of rumbling into each other.",
-        makeEq ({ 70.0, 3, 11000.0, 2, 100.0, -3.5, 6000.0, -2.0,
-                  { band (180.0, -4.0, 0.9), band (350.0, -3.0, 1.3),
-                    band (1900.0, 3.5, 0.8), band (4500.0, -3.0, 1.0),
-                    band (8000.0, -2.5, 0.8) },
-                  0.0 }),
-        false, neutralMacros
-    },
+        if (ca != cb)
+            return false;
 
-    //--- 3 -------------------------------------------------------------------
-    {
-        "Sneap-Inspired - Precision",
-        Placement::postAmp,
-        "Post-amp. Inspired by the general clarity of modern tight high-gain "
-        "mixing, not by any specific proprietary setting.",
-        makeEq ({ 100.0, 2, 13000.0, 2, 130.0, -3.0, 7500.0, -2.5,
-                  { band (250.0, -3.0, 1.1), band (500.0, -2.5, 1.5),
-                    band (2100.0, 2.5, 1.0), band (5500.0, -2.5, 1.1),
-                    band (9000.0, -2.5, 0.7) },
-                  0.0 }),
-        false, neutralMacros
-    },
-
-    //--- 4 -------------------------------------------------------------------
-    {
-        "Richardson-Inspired - Aggressive Mids",
-        Placement::postAmp,
-        "Post-amp. Inspired by the general 'forward and aggressive' metal "
-        "mixing style, not by any specific proprietary setting.",
-        makeEq ({ 95.0, 2, 15000.0, 1, 160.0, -2.0, 8000.0, 0.0,
-                  { band (300.0, -4.5, 0.9), band (700.0, -2.0, 1.2),
-                    band (1800.0, 4.0, 0.8), band (3200.0, 1.5, 1.0),
-                    band (7000.0, -3.0, 1.0) },
-                  0.0 }),
-        false, neutralMacros
-    },
-
-    //--- 5 -------------------------------------------------------------------
-    {
-        "Metalcore Lead - Presence",
-        Placement::postAmp,
-        "Post-amp. A scooped lead tone: the low mids are out of the way so the "
-        "note is audible, and the top end is open rather than harsh.",
-        makeEq ({ 90.0, 2, 16000.0, 1, 140.0, -2.0, 6000.0, 1.5,
-                  { band (300.0, -3.0, 1.0), band (650.0, -3.5, 0.9),
-                    band (2800.0, 3.0, 0.9), band (5500.0, 1.5, 1.0),
-                    band (9000.0, -2.0, 0.8) },
-                  0.0 }),
-        false, neutralMacros
-    },
-
-    //--- 6 -------------------------------------------------------------------
-    {
-        "Thrash - Technical Clarity",
-        Placement::postAmp,
-        "Post-amp. Fast, precise picking with every note separated and a "
-        "controlled low end.",
-        makeEq ({ 90.0, 2, 15000.0, 2, 120.0, -2.5, 7500.0, -2.0,
-                  { band (220.0, -3.0, 1.0), band (550.0, -2.0, 1.3),
-                    band (2500.0, 3.5, 0.7), band (6000.0, -2.0, 1.0),
-                    band (9500.0, -2.5, 0.7) },
-                  0.0 }),
-        false, neutralMacros
-    },
-
-    //--- 7 -------------------------------------------------------------------
-    {
-        "Classic Thrash - Midrange Punch",
-        Placement::postAmp,
-        "Post-amp. Aggressive and mid-forward with the top left open: a "
-        "1980s-style rhythm starting point.",
-        makeEq ({ 75.0, 2, 18000.0, 1, 180.0, -1.5, 7000.0, -1.0,
-                  { band (280.0, -2.0, 1.0), band (620.0, -1.5, 1.2),
-                    band (1600.0, 4.5, 0.7), band (3600.0, 2.0, 1.0),
-                    band (7500.0, -2.5, 1.0) },
-                  0.0 }),
-        false, neutralMacros
-    },
-
-    //--- 8 -------------------------------------------------------------------
-    {
-        "Deep Scoop - Thrash",
-        Placement::postAmp,
-        "Post-amp. A pronounced broad midrange dip (driven by the SCOOP macro "
-        "so you can widen or close it) with enough low-end body and upper-mid "
-        "attack to stay a rhythm tone.",
-        makeEq ({ 80.0, 2, 14000.0, 2, 200.0, -2.0, 7000.0, -2.0,
-                  { band (200.0, -2.5, 0.9), band (750.0, -2.0, 1.0),
-                    band (2000.0, 3.5, 0.8), band (5000.0, -2.0, 1.0),
-                    band (8500.0, -2.5, 0.8) },
-                  0.0 }),
-        true, MacroSettings { 0.0, 0.5, 0.85, 0.0, 0.0 }
-    },
-
-    //--- 9 -------------------------------------------------------------------
-    {
-        "Thrash - Tight Modern Rhythm",
-        Placement::postAmp,
-        "Post-amp. Disciplined low end, sharp articulation and highs that stay "
-        "under control at high gain.",
-        makeEq ({ 110.0, 2, 12000.0, 2, 130.0, -3.5, 6500.0, -2.5,
-                  { band (240.0, -4.0, 0.9), band (450.0, -2.5, 1.4),
-                    band (2300.0, 3.0, 0.8), band (5500.0, -2.5, 1.0),
-                    band (9000.0, -2.5, 0.7) },
-                  0.0 }),
-        false, neutralMacros
-    },
-
-    //--- 10 ------------------------------------------------------------------
-    {
-        "Megadeth-Inspired - Precision and Bite",
-        Placement::postAmp,
-        "Post-amp. Inspired by the general definition and upper-mid bite of that "
-        "style, not by any specific proprietary setting.",
-        makeEq ({ 100.0, 2, 16000.0, 1, 140.0, -2.0, 7500.0, -2.5,
-                  { band (260.0, -3.5, 1.0), band (480.0, -2.0, 1.2),
-                    band (2600.0, 4.0, 0.8), band (5200.0, -1.5, 1.1),
-                    band (9000.0, -3.0, 0.7) },
-                  0.0 }),
-        false, neutralMacros
-    },
-
-    //--- 11 ------------------------------------------------------------------
-    {
-        "Metallica-Inspired - Heavy Rhythm",
-        Placement::postAmp,
-        "Post-amp. Inspired by the general full, mid-forward rhythm guitar "
-        "sound of that era, not by any specific proprietary setting.",
-        makeEq ({ 70.0, 2, 17000.0, 1, 190.0, -1.0, 6500.0, -1.5,
-                  { band (300.0, -2.5, 0.9), flatBand (800.0),
-                    band (1500.0, 3.5, 0.8), band (2800.0, 1.5, 1.0),
-                    band (5500.0, -2.0, 1.0) },
-                  0.0 }),
-        false, neutralMacros
-    },
-
-    //--- 12 ------------------------------------------------------------------
-    {
-        "Pre-Amp - Overdrive Tightener",
-        Placement::preAmp,
-        "PRE-AMP: place this BEFORE your amp/cab. It keeps low end for the "
-        "preamp to distort, cuts the bottom, lifts around 700 Hz and takes the "
-        "edge off above 5 kHz - a classic overdrive contour.",
-        makeEq ({ 40.0, 1, 20000.0, 0, 120.0, -4.0, 5500.0, -3.5,
-                  { band (300.0, -2.0, 1.0), band (720.0, 4.5, 0.8),
-                    band (1200.0, -1.0, 1.2), band (3000.0, 1.5, 1.0),
-                    band (9000.0, -2.0, 0.8) },
-                  0.0 }),
-        false, neutralMacros
-    },
-
-    //--- 13 ------------------------------------------------------------------
-    {
-        "Post-Amp - Mix Cleanup",
-        Placement::postAmp,
-        "Post-amp. The general cleanup starting point: rumble out with the "
-        "high-pass, muddiness out around 300-550 Hz, attack back around 2.4 kHz "
-        "and the harsh 5-9 kHz region tamed.",
-        makeEq ({ 90.0, 2, 12000.0, 2, 130.0, -2.5, 7000.0, -2.0,
-                  { band (300.0, -4.0, 0.9), band (550.0, -2.0, 1.3),
-                    band (2400.0, 2.0, 0.9), band (5500.0, -3.0, 1.0),
-                    band (9000.0, -2.0, 0.8) },
-                  0.0 }),
-        false, neutralMacros
-    },
-
-    //--- 14 ------------------------------------------------------------------
-    {
-        "Fizz Control",
-        Placement::postAmp,
-        "Post-amp. For amp/cabinet combinations that are too harsh. Cuts the "
-        "5-11 kHz region where fizz lives while leaving the attack at 2-3 kHz "
-        "alone.",
-        makeEq ({ 90.0, 2, 15000.0, 1, 150.0, -2.0, 6500.0, -4.5,
-                  { band (250.0, -2.0, 1.0), band (450.0, -2.0, 1.2),
-                    band (5000.0, -3.5, 1.0), band (7000.0, -3.0, 0.8),
-                    band (10000.0, -2.0, 0.7) },
-                  0.0 }),
-        false, neutralMacros
-    },
-
-    //--- 15 ------------------------------------------------------------------
-    {
-        "Neutral - Flat EQ",
-        Placement::either,
-        "Fully transparent: no filters, no trim, macros at neutral. Useful for "
-        "A/B-ing any other preset or for a known-good starting point.",
-        neutralEq(),
-        true, neutralMacros
+        ++a;
+        ++b;
     }
-};
 
-//==============================================================================
-// One-click tonal shapes. Each one applies a complete, intentional curve made of
-// several parameters - not a single knob move - and every part of it stays
-// editable with the bands and macros afterwards.
-//==============================================================================
-const ShapeDefinition shapes[] =
-{
-    {
-        "TIGHTEN",
-        "Removes low-end and low-mid looseness: raises the high-pass, takes "
-        "weight out below 150 Hz and clears mud around 250-500 Hz.",
-        makeEq ({ 90.0, 2, 12000.0, 0, 120.0, -3.0, 7000.0, 0.0,
-                  { band (250.0, -3.5, 1.0), band (480.0, -2.0, 1.3),
-                    band (1800.0, 1.5, 1.0), flatBand (4000.0),
-                    flatBand (8000.0) },
-                  0.0 }),
-        true, false, neutralMacros
-    },
-
-    {
-        "SCOOP",
-        "A broad, controllable midrange reduction centred around 550 Hz so the "
-        "guitar sits behind a wall of guitars. Restore attack at 1.8 kHz.",
-        makeEq ({ 80.0, 2, 14000.0, 0, 170.0, -1.0, 7000.0, 0.0,
-                  { band (300.0, -1.5, 0.9), band (550.0, -4.5, 0.55),
-                    band (1800.0, 1.5, 0.9), flatBand (4000.0),
-                    flatBand (8000.0) },
-                  0.0 }),
-        true, false, neutralMacros
-    },
-
-    {
-        "MID PUNCH",
-        "Restores the midrange that gives a guitar body and authority: clears "
-        "boxiness around 320 Hz and pushes 1.6 kHz forward.",
-        makeEq ({ 80.0, 0, 16000.0, 0, 150.0, -1.0, 7000.0, 0.0,
-                  { band (320.0, -3.0, 0.9), band (1600.0, 4.0, 0.75),
-                    band (3000.0, 1.5, 1.0), flatBand (5000.0),
-                    flatBand (9000.0) },
-                  0.0 }),
-        false, false, neutralMacros
-    },
-
-    {
-        "PICK ATTACK",
-        "Emphasises articulation and string definition around 2.6 kHz with a "
-        "little air, while clearing low mids that blur the pick.",
-        makeEq ({ 90.0, 0, 18000.0, 0, 140.0, -1.5, 8000.0, 1.0,
-                  { band (350.0, -2.0, 1.0), band (2600.0, 4.5, 0.7),
-                    band (5000.0, 2.0, 1.0), band (9500.0, 1.5, 0.7),
-                    flatBand (15000.0) },
-                  0.0 }),
-        false, false, neutralMacros
-    },
-
-    {
-        "FIZZ TAMER",
-        "Reduces unpleasant high-frequency harshness in the 5-11 kHz region "
-        "without touching the 2-3 kHz attack.",
-        makeEq ({ 90.0, 0, 16000.0, 0, 150.0, -1.5, 7000.0, -2.0,
-                  { flatBand (300.0), band (5200.0, -4.0, 1.0),
-                    band (7500.0, -3.5, 0.8), band (11000.0, -2.5, 0.7),
-                    flatBand (1500.0) },
-                  0.0 }),
-        false, false, neutralMacros
-    },
-
-    {
-        "BRIGHTEN",
-        "Adds controlled presence when the tone is too dark: a high-shelf lift "
-        "plus a little around 3 kHz and 10 kHz.",
-        makeEq ({ 80.0, 0, 20000.0, 0, 150.0, 0.0, 8000.0, 3.0,
-                  { flatBand (300.0), flatBand (800.0),
-                    band (3000.0, 2.5, 0.9), flatBand (5000.0),
-                    band (10000.0, 2.0, 0.7) },
-                  0.0 }),
-        false, false, neutralMacros
-    },
-
-    {
-        "RESET",
-        "Back to a completely neutral EQ: no filters, no trim, macros centred "
-        "or off. This is the audible bypass of the EQ itself.",
-        neutralEq(),
-        true, true, neutralMacros
-    }
-};
-
-static_assert (std::size (presets) == 16, "Expected 16 factory presets");
-static_assert (std::size (shapes)  == 7,  "Expected 7 one-click shapes");
+    return *a == 0 && *b == 0;
+}
 
 } // anonymous namespace
 
@@ -395,7 +360,19 @@ int getNumPresets() noexcept { return static_cast<int> (std::size (presets)); }
 
 const PresetDefinition& getPreset (int index) noexcept
 {
-    return presets[clampValue (index, 0, getNumPresets() - 1)];
+    return presets[static_cast<size_t> (clampValue (index, 0, getNumPresets() - 1))];
+}
+
+int findPresetById (const char* id) noexcept
+{
+    if (id == nullptr || *id == 0)
+        return -1;
+
+    for (int i = 0; i < getNumPresets(); ++i)
+        if (equalsIgnoreCase (presets[static_cast<size_t> (i)].id, id))
+            return i;
+
+    return -1;
 }
 
 int findPresetByName (const char* name) noexcept
@@ -404,34 +381,18 @@ int findPresetByName (const char* name) noexcept
         return -1;
 
     for (int i = 0; i < getNumPresets(); ++i)
-    {
-        const char* a = presets[i].name;
-        const char* b = name;
-
-        while (*a != 0 && *b != 0)
-        {
-            const char ca = (*a >= 'A' && *a <= 'Z') ? static_cast<char> (*a - 'A' + 'a') : *a;
-            const char cb = (*b >= 'A' && *b <= 'Z') ? static_cast<char> (*b - 'A' + 'a') : *b;
-
-            if (ca != cb)
-                break;
-
-            ++a;
-            ++b;
-        }
-
-        if (*a == 0 && *b == 0)
+        if (equalsIgnoreCase (presets[static_cast<size_t> (i)].name, name))
             return i;
-    }
 
     return -1;
 }
 
-int getNumShapes() noexcept { return static_cast<int> (std::size (shapes)); }
+int getNumAnalyzerTargets() noexcept { return static_cast<int> (analyzerTargets.size()); }
 
-const ShapeDefinition& getShape (int index) noexcept
+const AnalyzerTarget& getAnalyzerTarget (int index) noexcept
 {
-    return shapes[clampValue (index, 0, getNumShapes() - 1)];
+    return analyzerTargets[static_cast<size_t> (
+        clampValue (index, 0, getNumAnalyzerTargets() - 1))];
 }
 
 const char* placementToString (Placement p) noexcept

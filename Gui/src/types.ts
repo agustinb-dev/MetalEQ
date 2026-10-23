@@ -1,11 +1,11 @@
 /*
-    Wire types for the MetalEQ bridge protocol (version 1).
+    Wire types for the MetalEQ bridge protocol (version 2).
 
     These mirror Source/ui/MetalEqUiBridge.cpp exactly: the native side is the
     single source of truth, JS only renders what it receives and sends requests.
 */
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 export type ParamKind = 'float' | 'choice' | 'bool';
 
@@ -26,8 +26,15 @@ export interface ParamSpec {
 
 /** Factory-preset entry as sent in the uiReady snapshot. */
 export interface FactoryPresetInfo {
-  index: number; // 0 is reserved for Custom; factory entries are 1..16
+  /** Canonical selector index: 0 is Custom; factory entries are 1..25. */
+  index: number;
+  /** Stable identity saved with the project. Never derive meaning from index. */
+  id: string;
   name: string;
+  /** Browser grouping: "Metalcore" | "Thrash" | "Utility". */
+  genre: string;
+  /** Browser sub-group, e.g. "2000s", "Modern", "Pre-Amp". */
+  subgenre: string;
   placement: string; // "PRE-AMP" | "POST-AMP" | "EITHER"
   description: string;
 }
@@ -36,9 +43,19 @@ export type PresetKind = 'user' | 'factory' | 'custom';
 
 export interface PresetInfo {
   index: number;
+  presetId: string;
   name: string;
   kind: PresetKind;
   dirty: boolean;
+  /** 0 = A, 1 = B. Output trim stays global across both. */
+  abSlot: number;
+}
+
+/** Analyzer target with stable identity (table order may change). */
+export interface AnalyzerTargetInfo {
+  index: number;
+  presetId: string;
+  label: string;
 }
 
 /** Mirrors MetalEQAudioProcessor::AnalyzerStatus. */
@@ -87,6 +104,7 @@ export interface Snapshot {
   params: Record<string, number>;
   preset: PresetInfo;
   factoryPresets: FactoryPresetInfo[];
+  analyzerTargets: AnalyzerTargetInfo[];
   userPresets: string[];
   analyzer?: AnalyzerInfo;
   curve?: CurveInfo;
@@ -110,17 +128,24 @@ export interface MetalEqBridge {
   /** Registers the tick listener, calls uiReady and resolves with the snapshot. */
   init(handlers: { onTick: (t: TickMessage) => void }): Promise<Snapshot>;
   setParameter(id: string, value: number): Promise<SetParamResult>;
+  /** Canonical index: 0 = Custom, 1..N = factory preset 0..N-1. */
   applyPreset(index: number): Promise<OpResult>;
+  /** Project-safe recall that does not depend on table order. */
+  applyPresetById(presetId: string): Promise<OpResult>;
   loadUserPreset(name: string): Promise<OpResult>;
   saveUserPreset(name: string, overwrite: boolean): Promise<OpResult>;
   renameUserPreset(oldName: string, newName: string): Promise<OpResult>;
   deleteUserPreset(name: string): Promise<OpResult>;
   revertToPreset(): Promise<OpResult>;
   resetToNeutral(): Promise<OpResult>;
+  /** Real A/B slots. */
+  setAbSlot(slot: number): Promise<OpResult>;
+  copyAbToOther(): Promise<OpResult>;
+  swapAbSlots(): Promise<OpResult>;
   startAnalyzerCapture(profile: number): Promise<OpResult>;
   cancelAnalyzerCapture(): Promise<OpResult>;
   applyAnalyzerSuggestion(amount: number): Promise<OpResult>;
   getSuggestionCurve(amount: number): Promise<SuggestionCurveResult>;
-  /** Fine EQ open/close: the native side resizes the host window by +220 px. */
+  /** Advanced view asks the native editor to grow for the numeric band panel. */
   setEditorExpanded(expanded: boolean): Promise<OpResult>;
 }

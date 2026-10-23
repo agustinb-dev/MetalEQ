@@ -13,10 +13,12 @@
 #pragma once
 
 #include <atomic>
+#include <array>
 #include <memory>
 #include <thread>
 
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_events/juce_events.h>
 
 #include "dsp/MetalEqDsp.h"
 #include "dsp/MetalEqParams.h"
@@ -28,7 +30,9 @@ class MetalEQAudioProcessor;
 /** Message-thread listener that notices user edits so the preset display can
     switch to "Custom".
 */
-class MetalEQAudioProcessor  : public juce::AudioProcessor
+class MetalEQAudioProcessor  : public juce::AudioProcessor,
+                               private juce::AudioProcessorValueTreeState::Listener,
+                               private juce::AsyncUpdater
 {
 public:
     //==============================================================================
@@ -116,13 +120,22 @@ public:
     //==============================================================================
     juce::AudioProcessorValueTreeState& getValueTreeState() noexcept { return *apvts; }
 
-    /** Recalls a factory preset by index (0 = Custom). */
+    /** Recalls a factory preset by canonical index (0 = Custom, 1..N = factory). */
     void applyPreset (int index);
 
-    /** Applies a one-click tonal shape by index. */
-    void applyShape (int index);
-    void setShapeEnabled (int index, bool enabled);
+    /** Recalls a factory preset by its stable id. Returns false if unknown. */
+    bool applyPresetById (const juce::String& presetId);
+
     void setLowPassEnabled (bool enabled);
+
+    /** Real A/B comparison. Both slots store the complete EQ, macros and shape
+        state; output trim deliberately stays global for level-matched listening.
+    */
+    static constexpr int numAbSlots = 2;
+    int getActiveAbSlot() const noexcept { return activeAbSlot; }
+    void setAbSlot (int slot);
+    bool copyActiveAbToOther();
+    bool swapAbSlots();
 
     /** Back to the fully neutral state, macros included. */
     void resetToNeutral();
@@ -130,7 +143,10 @@ public:
     /** Name of the factory preset that was last recalled (or "Custom"). */
     juce::String getLastPresetName() const { return lastPresetName; }
 
-    /** Index of the currently selected factory preset (0 = custom). */
+    /** Stable id of the loaded factory preset, empty for Custom/user presets. */
+    juce::String getLastPresetId() const { return lastPresetId; }
+
+    /** Canonical selector index (0 = custom, 1..N = factory). */
     int getSelectedPresetIndex() const;
 
     struct DisplayState
@@ -138,7 +154,9 @@ public:
         metaleq::EqSettings     eq {};
         metaleq::MacroSettings macros {};
         juce::String            presetName;
+        juce::String            presetId;
         int                     presetIndex = 0;
+        int                     abSlot = 0;
         bool                    abCompare  = false;
         bool                    bypassed   = false;
         bool                    presetDirty = false;
@@ -197,6 +215,9 @@ public:
 
 private:
     //==============================================================================
+    void parameterChanged (const juce::String& parameterID, float newValue) override;
+    void handleAsyncUpdate() override;
+
     void analyzerWorkerLoop();
     void analyzeCapture (int sampleCount, double sampleRate);
     void captureAnalyzerInput (const juce::AudioBuffer<float>& buffer) noexcept;
@@ -210,25 +231,64 @@ private:
 
     void applyEqSettings (const metaleq::EqSettings& eq, bool includeCrossovers);
     void applyMacroSettings (const metaleq::MacroSettings& macros);
+    void applyNeutralParameters();
     void setFloatParameter (const char* id, double plainValue);
     void setChoiceParameter (const char* id, int index);
-    juce::ValueTree getSoundParameterState() const;
-    bool applySoundParameterState (const juce::ValueTree& state, juce::String& error);
+    juce::ValueTree getSoundParameterState (bool includeTrim = true) const;
+    bool applySoundParameterState (const juce::ValueTree& state, juce::String& error,
+                                   bool includeTrim = true);
     void rememberCurrentAsLoadedPreset (const juce::String& name, bool isUser);
     juce::File getUserPresetFile (const juce::String& name) const;
     static bool isSafePresetName (const juce::String& name);
+
+    /** One half of the real A/B comparison. The active slot lives in APVTS;
+        the other slot is a complete stored snapshot. */
+    struct AbSlotSnapshot
+    {
+        juce::ValueTree params;
+        juce::ValueTree loadedPresetState;
+        juce::String presetName { "Custom" };
+        juce::String presetId;
+        bool userPreset = false;
+        bool valid = false;
+    };
+
+    void captureActiveAbSlot();
+    bool loadAbSlot (int slot);
+    void switchAbSlotInternal (int slot, bool writeParameter);
+    void syncPresetChoiceToLoadedIdentity();
+    void serviceLowPassFix();
+    void servicePendingAutomation();
 
     //==============================================================================
     juce::AudioProcessorValueTreeState::ParameterLayout parameterLayout;
 
     std::unique_ptr<juce::AudioProcessorValueTreeState> apvts;
     juce::String lastPresetName { "Custom" };
+    juce::String lastPresetId;
     juce::ValueTree loadedPresetState;
     bool loadedPresetIsUser = false;
+
+    std::array<AbSlotSnapshot, numAbSlots> abSlots;
+    int activeAbSlot = 0;
 
     /** Guards against reacting to the parameter writes we make ourselves. */
     std::atomic<bool> applyingPreset { false };
     std::atomic<bool> meteringEnabled { false };
+
+    // Host automation may arrive on any thread. The listener only stores an
+    // intent; the actual parameter writes happen asynchronously on the message
+    // thread through AsyncUpdater.
+    std::atomic<int>  pendingPresetIndex { -1 };
+    std::atomic<int>  pendingAbSlot { -1 };
+    std::atomic<bool> pendingLowPassFix { false };
+
+    // Audio-thread-only chain cache. The chain is rebuilt only when a relevant
+    // parameter or the sample rate actually changes.
+    metaleq::EqSettings    cachedEq {};
+    metaleq::MacroSettings cachedMacros {};
+    double                 cachedSampleRate = 0.0;
+    bool                   chainCacheValid = false;
 
     static constexpr int maxCaptureRate = 192000;
     static constexpr int maxCaptureSamples = maxCaptureRate * analyzerDurationSeconds;

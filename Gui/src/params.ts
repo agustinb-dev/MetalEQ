@@ -47,7 +47,7 @@ export const PARAMS: ParamSpec[] = [
   choice('hpSlope', 'High-Pass Slope', slopeChoices, 0),
   { id: 'lpFreq', label: 'Low-Pass Freq', kind: 'float', min: 3000, max: 20000, skew: 0.35, step: 0.01, def: 12000 },
   choice('lpSlope', 'Low-Pass Slope', slopeChoices, 0),
-  flag('lpOn', 'Low-Pass Enabled', 1),
+  flag('lpOn', 'Low-Pass Enabled', 0),
 
   //--- shelves --------------------------------------------------------------
   { id: 'lsFreq', label: 'Low Shelf Freq', kind: 'float', min: 30, max: 400, skew: 0.4, step: 0.01, def: 140 },

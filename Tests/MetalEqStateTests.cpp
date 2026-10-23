@@ -28,7 +28,149 @@ float readPlain (MetalEQAudioProcessor& processor, const char* id)
     const auto* parameter = processor.getValueTreeState().getParameter (id);
     return parameter != nullptr ? parameter->convertFrom0to1 (parameter->getValue()) : -999.0f;
 }
+
+void testFactoryRecall (MetalEQAudioProcessor& processor)
+{
+    check (processor.applyPresetById (metaleq::getPreset (5).id), "factory preset recalls by stable id");
+    check (processor.getLastPresetId() == metaleq::getPreset (5).id, "recalled stable id is reported");
+    check (processor.getLastPresetName() == metaleq::getPreset (5).name, "recalled name is reported");
+    check (processor.getSelectedPresetIndex() == 6, "canonical factory selector index is factory index + 1");
+    check (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::preset) > 5.5f,
+           "preset parameter reports canonical index");
+    check (! processor.applyPresetById ("not-a-real-preset"), "unknown stable id recall fails");
+
+    // Direct canonical recall, including the off-by-one boundary that used to
+    // be wrong in the UI (selector 1 is factory[0]).
+    processor.applyPreset (1);
+    check (processor.getLastPresetName() == metaleq::getPreset (0).name,
+           "selector 1 recalls factory preset 0");
+    check (processor.getSelectedPresetIndex() == 1, "selector 1 is reported canonically");
+
+    processor.applyPreset (0);
+    check (processor.getLastPresetName() == "Custom", "selector 0 resets to Custom");
+    check (processor.getLastPresetId().isEmpty(), "Custom has no factory stable id");
+    check (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::lpOn) < 0.5f,
+           "Custom is transparent at the top end");
+
+    // The neutral reference preset must reset macros as its description
+    // promises, not merely flatten the five bands.
+    const int neutralIndex = metaleq::findPresetById ("utility-neutral-flat");
+    check (neutralIndex >= 0, "neutral reference preset resolves by stable id");
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::tight, 0.9f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::body, 0.1f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::bite, 0.8f);
+    processor.applyPreset (neutralIndex + 1);
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::tight)) < 0.01f,
+           "neutral preset resets Tight");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::body) - 0.5f) < 0.01f,
+           "neutral preset centres Body");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::bite)) < 0.01f,
+           "neutral preset resets Bite");
+
+    // Dirty tracking and revert.
+    processor.applyPreset (2);
+    check (! processor.getDisplayState().presetDirty, "fresh factory recall is clean");
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::bandGain[2], -4.0f);
+    check (processor.getDisplayState().presetDirty, "user edit marks the preset dirty");
+    processor.revertToLoadedPreset();
+    check (! processor.getDisplayState().presetDirty, "revert clears dirty state");
+    check (processor.getLastPresetName() == metaleq::getPreset (1).name,
+           "revert keeps the loaded preset identity");
 }
+
+void testAbSlots (MetalEQAudioProcessor& processor)
+{
+    processor.applyPreset (1);
+    const auto factoryA = processor.getLastPresetName();
+    const auto factoryAId = processor.getLastPresetId();
+
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::trim, 3.0f);
+
+    processor.setAbSlot (1);
+    check (processor.getActiveAbSlot() == 1, "B slot becomes active");
+    check (processor.getLastPresetName() == "Custom", "B starts as the neutral snapshot");
+    check (processor.getLastPresetId().isEmpty(), "neutral B has no factory id");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::trim) - 3.0f) < 0.01f,
+           "output trim stays global across A/B");
+
+    processor.applyPreset (2);
+    const auto factoryB = processor.getLastPresetName();
+    const auto factoryBId = processor.getLastPresetId();
+    check (factoryB != factoryA, "A and B can hold different presets");
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::trim, 3.0f);
+
+    processor.setAbSlot (0);
+    check (processor.getLastPresetName() == factoryA, "A retains its own preset");
+    check (processor.getLastPresetId() == factoryAId, "A retains its own stable id");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::trim) - 3.0f) < 0.01f,
+           "trim remains global when switching back to A");
+
+    processor.setAbSlot (1);
+    check (processor.getLastPresetName() == factoryB, "B retains its own preset");
+    check (processor.getLastPresetId() == factoryBId, "B retains its own stable id");
+
+    // Copy active B into A.
+    check (processor.copyActiveAbToOther(), "copy active slot to the other slot");
+    processor.setAbSlot (0);
+    check (processor.getLastPresetName() == factoryB, "copied slot contains the active sound");
+
+    // Give A a different sound, then swap. The active slot index does not
+    // change, but its contents become the other slot's contents.
+    processor.applyPreset (3);
+    const auto beforeSwap = processor.getLastPresetName();
+    const auto other = factoryB;
+    check (processor.swapAbSlots(), "swap both A/B slots");
+    check (processor.getLastPresetName() == other, "swap loads the other slot's sound");
+    check (processor.getLastPresetName() != beforeSwap, "swap actually changes the active sound");
+    processor.setAbSlot (1);
+    check (processor.getLastPresetName() == beforeSwap, "swap exchanged the A and B contents");
+}
+
+void testStateRoundTrip (MetalEQAudioProcessor& processor)
+{
+    processor.setAbSlot (0);
+    processor.applyPreset (1);
+    const auto aName = processor.getLastPresetName();
+    const auto aId = processor.getLastPresetId();
+    processor.setAbSlot (1);
+    processor.applyPreset (2);
+    const auto bName = processor.getLastPresetName();
+    const auto bId = processor.getLastPresetId();
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::trim, -2.0f);
+
+    juce::MemoryBlock state;
+    processor.getStateInformation (state);
+
+    const auto tree = juce::ValueTree::readFromData (state.getData(), static_cast<size_t> (state.getSize()));
+    check (tree.isValid() && tree.hasType ("MetalEQState"), "state has the expected root type");
+    check (static_cast<int> (tree.getProperty ("version")) == 2, "state uses schema version 2");
+    check (tree.getChildWithName ("AB").isValid(), "state stores A/B slots");
+    check (tree.getChildWithName ("BASELINE").isValid(), "state stores a dirty baseline");
+    check (tree.getChildWithName ("AB").getNumChildren() == 2, "state stores both A/B slots");
+
+    processor.resetToNeutral();
+    processor.setAbSlot (0);
+    processor.setStateInformation (state.getData(), static_cast<int> (state.getSize()));
+
+    check (processor.getActiveAbSlot() == 1, "state restores the active A/B slot");
+    check (processor.getLastPresetName() == bName, "state restores the active slot preset name");
+    check (processor.getLastPresetId() == bId, "state restores the active stable id");
+    check (! processor.getDisplayState().presetDirty, "restored slot is clean");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::trim) + 2.0f) < 0.01f,
+           "state restores the global output trim");
+
+    processor.setAbSlot (0);
+    check (processor.getLastPresetName() == aName, "state restores the inactive A slot sound");
+    check (processor.getLastPresetId() == aId, "state restores the inactive A slot id");
+
+    // Changing a parameter marks the slot dirty; revert restores its baseline.
+    processor.setAbSlot (1);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::bandGain[1], 5.0f);
+    check (processor.getDisplayState().presetDirty, "editing a restored slot marks it dirty");
+    processor.revertToLoadedPreset();
+    check (! processor.getDisplayState().presetDirty, "reverting a restored slot clears dirty");
+}
+} // namespace
 
 int main()
 {
@@ -56,14 +198,15 @@ int main()
             const auto child = defaultTree.getChild (i);
             if (child.getProperty ("id").toString() == MetalEQAudioProcessor::ParameterIDs::lpOn)
                 defaultLowPassWasSerialized = child.hasProperty ("value")
-                    && child.getProperty ("value").toString() == "1.000000000";
+                    && child.getProperty ("value").toString() == "0.000000000";
         }
     }
-    check (defaultLowPassWasSerialized, "untouched default lpOn is serialized with an explicit value");
+    check (defaultLowPassWasSerialized, "untouched default lpOn is serialized as disabled");
     check (processor.deleteUserPreset (defaultPreset, error), "default serialization fixture is removed");
 
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::bandFreq[2], 2137.0f);
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::bandGain[2], -3.25f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::lpSlope, 2.0f);
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::lpOn, 1.0f);
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::shapeOn[3], 1.0f);
     check (processor.saveUserPreset (presetA, false, error), "user preset saves");
@@ -83,8 +226,8 @@ int main()
            "preset round trip restores gain");
     check (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::lpOn) > 0.5f,
            "preset round trip restores low-pass enable");
-    check (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::shapeOn[3]) > 0.5f,
-           "preset round trip restores independent shape state");
+    check (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::lpSlope) > 1.5f,
+           "preset round trip restores low-pass slope");
 
     check (! processor.saveUserPreset (presetA, false, error), "duplicate save is rejected without overwrite");
     check (processor.saveUserPreset (presetA, true, error), "explicit overwrite succeeds");
@@ -147,6 +290,10 @@ int main()
     legacyFile.deleteFile();
     check (! processor.loadUserPreset ("../outside", error), "path traversal preset name is rejected");
     check (! processor.saveUserPreset ("bad/name", false, error), "unsafe preset name is rejected");
+
+    testFactoryRecall (processor);
+    testAbSlots (processor);
+    testStateRoundTrip (processor);
 
     if (failures != 0)
         return EXIT_FAILURE;

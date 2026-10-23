@@ -1,12 +1,19 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include <juce_dsp/juce_dsp.h>
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 
 namespace
 {
     using namespace metaleq;
+
+    bool isSupportedUserPresetSchema (const juce::var& schema)
+    {
+        const auto text = schema.toString();
+        return text == "1" || text == "2";
+    }
 
     bool parsePresetNumber (const juce::String& text, double& result)
     {
@@ -78,6 +85,14 @@ const char* MetalEQAudioProcessor::ParameterIDs::bandQ[metaleq::kNumBands] =
     { "band1Q", "band2Q", "band3Q", "band4Q", "band5Q" };
 const char* MetalEQAudioProcessor::ParameterIDs::bandOn[metaleq::kNumBands] =
     { "band1On", "band2On", "band3On", "band4On", "band5On" };
+const char* MetalEQAudioProcessor::ParameterIDs::resFreq[metaleq::kNumSurgicalBands] =
+    { "res1Freq", "res2Freq", "res3Freq", "res4Freq", "res5Freq", "res6Freq" };
+const char* MetalEQAudioProcessor::ParameterIDs::resGain[metaleq::kNumSurgicalBands] =
+    { "res1Gain", "res2Gain", "res3Gain", "res4Gain", "res5Gain", "res6Gain" };
+const char* MetalEQAudioProcessor::ParameterIDs::resQ[metaleq::kNumSurgicalBands] =
+    { "res1Q", "res2Q", "res3Q", "res4Q", "res5Q", "res6Q" };
+const char* MetalEQAudioProcessor::ParameterIDs::resOn[metaleq::kNumSurgicalBands] =
+    { "res1On", "res2On", "res3On", "res4On", "res5On", "res6On" };
 const char* MetalEQAudioProcessor::ParameterIDs::shapeOn[6] =
     { "shapeTightenOn", "shapeScoopOn", "shapeMidPunchOn", "shapePickAttackOn", "shapeFizzTamerOn", "shapeBrightenOn" };
 const char* MetalEQAudioProcessor::ParameterIDs::trim     = "trim";
@@ -89,6 +104,7 @@ const char* MetalEQAudioProcessor::ParameterIDs::fizzCut  = "fizzCut";
 const char* MetalEQAudioProcessor::ParameterIDs::preset   = "preset";
 const char* MetalEQAudioProcessor::ParameterIDs::abCompare = "abCompare";
 const char* MetalEQAudioProcessor::ParameterIDs::bypass   = kBypassId;
+const char* MetalEQAudioProcessor::ParameterIDs::resAudition = "resAudition";
 
 juce::StringArray MetalEQAudioProcessor::ParameterIDs::allEqParameterIds()
 {
@@ -100,6 +116,14 @@ juce::StringArray MetalEQAudioProcessor::ParameterIDs::allEqParameterIds()
         ids.add (bandGain[i]);
         ids.add (bandQ[i]);
         ids.add (bandOn[i]);
+    }
+
+    for (int i = 0; i < metaleq::kNumSurgicalBands; ++i)
+    {
+        ids.add (resFreq[i]);
+        ids.add (resGain[i]);
+        ids.add (resQ[i]);
+        ids.add (resOn[i]);
     }
 
     ids.add (trim);
@@ -133,12 +157,20 @@ MetalEQAudioProcessor::MetalEQAudioProcessor()
     for (auto& gain : analyzerSuggestion)
         gain.store (0.0f, std::memory_order_relaxed);
 
+    for (auto& value : resonanceFreq)         value.store (0.0f, std::memory_order_relaxed);
+    for (auto& value : resonanceQ)            value.store (0.0f, std::memory_order_relaxed);
+    for (auto& value : resonanceProminence)   value.store (0.0f, std::memory_order_relaxed);
+    for (auto& value : resonanceResidual)     value.store (0.0f, std::memory_order_relaxed);
+    for (auto& value : resonanceConfidence)   value.store (0.0f, std::memory_order_relaxed);
+    for (auto& value : resonanceCut)          value.store (0.0f, std::memory_order_relaxed);
+
     for (auto& level : peakLevels)
         level.store (0.0f, std::memory_order_relaxed);
     for (auto& level : inputPeakLevels)
         level.store (0.0f, std::memory_order_relaxed);
 
     engine.prepare (getSampleRate() > 0.0 ? getSampleRate() : 48000.0);
+    auditionEngine.prepare (getSampleRate() > 0.0 ? getSampleRate() : 48000.0);
     analyzerWorker = std::thread ([this] { analyzerWorkerLoop(); });
 }
 
@@ -229,6 +261,31 @@ juce::AudioProcessorValueTreeState::ParameterLayout MetalEQAudioProcessor::creat
             ParameterIDs::bandOn[i], "Band " + juce::String (i + 1) + " On", true));
     }
 
+    //--- V3 surgical resonance bands ----------------------------------------
+    const double defaultResFreqs[metaleq::kNumSurgicalBands] =
+        { 250.0, 620.0, 1200.0, 2400.0, 4000.0, 6200.0 };
+
+    for (int i = 0; i < metaleq::kNumSurgicalBands; ++i)
+    {
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            ParameterIDs::resFreq[i], "Resonance " + juce::String (i + 1) + " Freq",
+            juce::NormalisableRange<float> ((float) p::surgicalFreqMin, (float) p::surgicalFreqMax, 0.01f, 0.4f),
+            (float) defaultResFreqs[i]));
+
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            ParameterIDs::resGain[i], "Resonance " + juce::String (i + 1) + " Gain",
+            juce::NormalisableRange<float> ((float) p::surgicalGainMin, (float) p::surgicalGainMax, 0.01f),
+            0.0f));
+
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            ParameterIDs::resQ[i], "Resonance " + juce::String (i + 1) + " Q",
+            juce::NormalisableRange<float> ((float) p::surgicalQMin, (float) p::surgicalQMax, 0.01f),
+            7.0f));
+
+        layout.add (std::make_unique<juce::AudioParameterBool> (
+            ParameterIDs::resOn[i], "Resonance " + juce::String (i + 1) + " On", false));
+    }
+
     //--- output trim ---------------------------------------------------------
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         ParameterIDs::trim, "Output Trim",
@@ -272,6 +329,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout MetalEQAudioProcessor::creat
     //--- bypass --------------------------------------------------------------
     layout.add (std::make_unique<juce::AudioParameterBool> (ParameterIDs::bypass, "Bypass", false));
 
+    //--- resonance delta monitor (not saved with the tone) ------------------
+    layout.add (std::make_unique<juce::AudioParameterBool> (ParameterIDs::resAudition,
+                                                           "Resonance Delta Monitor", false));
+
     return layout;
 }
 
@@ -294,24 +355,44 @@ void MetalEQAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
     cachedSampleRate = sampleRate > 0.0 ? sampleRate : 48000.0;
     chainCacheValid = true;
 
+    // The delta monitor runs a second, surgical-only engine. Prepare it with
+    // the same sample rate and give both scratch buffers enough room for the
+    // host's block size; no allocation happens in processBlock().
+    auditionEngine.prepare (sampleRate > 0.0 ? sampleRate : 48000.0);
+    metaleq::ChainSpec auditionChain;
+    metaleq::buildSurgicalChain (auditionChain, cachedEq, cachedSampleRate);
+    auditionEngine.setChain (auditionChain, 1);
+    cachedAuditionEq = cachedEq;
+    cachedAuditionSampleRate = cachedSampleRate;
+    auditionChainCacheValid = true;
+    wasAuditioning = false;
+
+    const int scratchSamples = juce::jmax (1024, samplesPerBlock);
+    auditionDryBuffer.setSize (metaleq::kMaxChannels, scratchSamples, false, true, false);
+    auditionWetBuffer.setSize (metaleq::kMaxChannels, scratchSamples, false, true, false);
+
     for (auto& level : peakLevels)
         level.store (0.0f, std::memory_order_relaxed);
     for (auto& level : inputPeakLevels)
         level.store (0.0f, std::memory_order_relaxed);
-
-    juce::ignoreUnused (samplesPerBlock);
 }
 
 void MetalEQAudioProcessor::releaseResources()
 {
     engine.reset();
+    auditionEngine.reset();
     chainCacheValid = false;
+    auditionChainCacheValid = false;
+    wasAuditioning = false;
 }
 
 void MetalEQAudioProcessor::reset()
 {
     engine.reset();
+    auditionEngine.reset();
     chainCacheValid = false;
+    auditionChainCacheValid = false;
+    wasAuditioning = false;
 }
 
 //==============================================================================
@@ -460,7 +541,9 @@ void MetalEQAudioProcessor::serviceDeferredAnalyzerStart() noexcept
     if (analyzerDeferredStartRequested.compare_exchange_strong (pending, false,
             std::memory_order_acq_rel, std::memory_order_acquire))
         startAnalyzerCaptureWithGeneration (
-            analyzerDeferredStartProfile.load (std::memory_order_relaxed), cancelGeneration);
+            analyzerDeferredStartProfile.load (std::memory_order_relaxed),
+            analyzerDeferredStartMode.load (std::memory_order_relaxed),
+            cancelGeneration);
 }
 
 //==============================================================================
@@ -527,11 +610,78 @@ void MetalEQAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
                 peakLevels[static_cast<size_t> (ch)].store (
                     buffer.getMagnitude (ch, 0, numSamples), std::memory_order_relaxed);
 
+        wasAuditioning = false;
         return;
+    }
+
+    //--- optional delta monitor ---------------------------------------------
+    // The monitor plays dry minus surgical-only wet, so the player hears the
+    // resonance cuts in isolation. It is a monitoring aid, never saved with
+    // the tone. If no surgical band is active the monitor is a no-op.
+    bool hasSurgicalCut = false;
+    for (const auto& band : eq.surgical)
+        if (band.on && std::abs (band.gainDb) > 1.0e-3)
+            hasSurgicalCut = true;
+
+    const bool auditionRequested =
+        apvts->getRawParameterValue (ParameterIDs::resAudition)->load() >= 0.5f;
+    const bool audition = auditionRequested
+        && hasSurgicalCut
+        && numSamples <= auditionDryBuffer.getNumSamples()
+        && numSamples <= auditionWetBuffer.getNumSamples()
+        && numChannels <= auditionDryBuffer.getNumChannels();
+
+    if (audition)
+    {
+        if (! wasAuditioning)
+        {
+            auditionEngine.reset();
+            auditionChainCacheValid = false;
+        }
+
+        for (int ch = 0; ch < numChannels; ++ch)
+            auditionDryBuffer.copyFrom (ch, 0, buffer, ch, 0, numSamples);
     }
 
     //--- run the EQ ----------------------------------------------------------
     engine.process (buffer.getArrayOfWritePointers(), numChannels, numSamples);
+
+    if (audition)
+    {
+        const int rampLength = juce::jmax (2, juce::jmin (numSamples,
+            static_cast<int> (sampleRate * 0.002)));
+
+        if (! auditionChainCacheValid
+            || eq.surgical != cachedAuditionEq.surgical
+            || sampleRate != cachedAuditionSampleRate)
+        {
+            metaleq::ChainSpec auditionChain;
+            metaleq::buildSurgicalChain (auditionChain, eq, sampleRate);
+            auditionEngine.setChain (auditionChain, rampLength);
+            cachedAuditionEq = eq;
+            cachedAuditionSampleRate = sampleRate;
+            auditionChainCacheValid = true;
+        }
+
+        for (int ch = 0; ch < numChannels; ++ch)
+            auditionWetBuffer.copyFrom (ch, 0, auditionDryBuffer, ch, 0, numSamples);
+
+        auditionEngine.process (auditionWetBuffer.getArrayOfWritePointers(),
+                                numChannels, numSamples);
+
+        // 6 dB of monitor gain: the difference signal is naturally quiet.
+        for (int ch = 0; ch < numChannels; ++ch)
+        {
+            auto* output = buffer.getWritePointer (ch);
+            const auto* dry = auditionDryBuffer.getReadPointer (ch);
+            const auto* wet = auditionWetBuffer.getReadPointer (ch);
+
+            for (int i = 0; i < numSamples; ++i)
+                output[i] = 2.0f * (dry[i] - wet[i]);
+        }
+    }
+
+    wasAuditioning = audition;
 
     //--- metering (audio thread: one pass, relaxed atomics only) -------------
     if (meteringEnabled.load (std::memory_order_relaxed))
@@ -736,7 +886,7 @@ void MetalEQAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 
     juce::ValueTree state ("MetalEQState");
 
-    state.setProperty ("version", 2, nullptr);
+    state.setProperty ("version", 3, nullptr);
     state.setProperty ("lastPresetId", lastPresetId, nullptr);
     state.setProperty ("lastPresetName", lastPresetName, nullptr);
     state.setProperty ("lastPresetIsUser", loadedPresetIsUser, nullptr);
@@ -810,6 +960,22 @@ void MetalEQAudioProcessor::setStateInformation (const void* data, int sizeInByt
     if (child.isValid())
         apvts->replaceState (child.createCopy());
 
+    // V3 added the surgical bands. An older session has no values for them:
+    // start them flat and off rather than inheriting whatever was in APVTS.
+    if (version < 3)
+    {
+        static constexpr double defaultResFreqs[metaleq::kNumSurgicalBands] =
+            { 250.0, 620.0, 1200.0, 2400.0, 4000.0, 6200.0 };
+        for (int i = 0; i < metaleq::kNumSurgicalBands; ++i)
+        {
+            setFloatParameter (ParameterIDs::resFreq[i], defaultResFreqs[i]);
+            setFloatParameter (ParameterIDs::resGain[i], 0.0);
+            setFloatParameter (ParameterIDs::resQ[i], 7.0);
+            setFloatParameter (ParameterIDs::resOn[i], 0.0);
+        }
+        setFloatParameter (ParameterIDs::resAudition, 0.0);
+    }
+
     lastPresetName = tree.getProperty ("lastPresetName").toString().isNotEmpty()
                        ? tree.getProperty ("lastPresetName").toString()
                        : juce::String ("Custom");
@@ -833,7 +999,7 @@ void MetalEQAudioProcessor::setStateInformation (const void* data, int sizeInByt
     loadedPresetState = juce::ValueTree();
     const auto baseline = tree.getChildWithName ("BASELINE");
     if (baseline.isValid() && baseline.getChildWithName ("PARAMS").isValid())
-        loadedPresetState = baseline.getChildWithName ("PARAMS").createCopy();
+        loadedPresetState = migrateSoundParameterState (baseline.getChildWithName ("PARAMS"));
 
     for (auto& slot : abSlots)
         slot = AbSlotSnapshot {};
@@ -857,9 +1023,9 @@ void MetalEQAudioProcessor::setStateInformation (const void* data, int sizeInByt
             slot.userPreset = static_cast<bool> (slotTree.getProperty ("presetIsUser", false));
 
             if (slotTree.getChildWithName ("PARAMS").isValid())
-                slot.params = slotTree.getChildWithName ("PARAMS").createCopy();
+                slot.params = migrateSoundParameterState (slotTree.getChildWithName ("PARAMS"), false);
             if (slotTree.getChildWithName ("BASELINE").isValid())
-                slot.loadedPresetState = slotTree.getChildWithName ("BASELINE").createCopy();
+                slot.loadedPresetState = migrateSoundParameterState (slotTree.getChildWithName ("BASELINE"));
             slot.valid = slot.params.isValid();
         }
     }
@@ -938,6 +1104,16 @@ metaleq::EqSettings MetalEQAudioProcessor::readEqSettings() const
         b.on     = load (ParameterIDs::bandOn[i]) >= 0.5f;
     }
 
+    for (int i = 0; i < metaleq::kNumSurgicalBands; ++i)
+    {
+        auto& b = eq.surgical[static_cast<size_t> (i)];
+
+        b.freq   = metaleq::clampValue (static_cast<double> (load (ParameterIDs::resFreq[i])), p::surgicalFreqMin, p::surgicalFreqMax);
+        b.gainDb = metaleq::clampValue (static_cast<double> (load (ParameterIDs::resGain[i])), p::surgicalGainMin, p::surgicalGainMax);
+        b.q      = metaleq::clampValue (static_cast<double> (load (ParameterIDs::resQ[i])), p::surgicalQMin, p::surgicalQMax);
+        b.on     = load (ParameterIDs::resOn[i]) >= 0.5f;
+    }
+
     for (int i = 0; i < static_cast<int> (eq.shapes.size()); ++i)
         eq.shapes[static_cast<size_t> (i)] = load (ParameterIDs::shapeOn[i]) >= 0.5f;
 
@@ -984,6 +1160,17 @@ metaleq::EqSettings MetalEQAudioProcessor::neutralEqSettings()
         b.gainDb = 0.0;
         b.q      = 1.0;
         b.on     = true;
+    }
+
+    static constexpr double defaultResFreqs[metaleq::kNumSurgicalBands] =
+        { 250.0, 620.0, 1200.0, 2400.0, 4000.0, 6200.0 };
+    for (int i = 0; i < metaleq::kNumSurgicalBands; ++i)
+    {
+        auto& b = eq.surgical[static_cast<size_t> (i)];
+        b.freq   = defaultResFreqs[i];
+        b.gainDb = 0.0;
+        b.q      = 7.0;
+        b.on     = false;
     }
 
     return eq;
@@ -1042,6 +1229,16 @@ void MetalEQAudioProcessor::applyEqSettings (const metaleq::EqSettings& eq, bool
         setFloatParameter (ParameterIDs::bandGain[i], b.gainDb);
         setFloatParameter (ParameterIDs::bandQ[i], b.q);
         setFloatParameter (ParameterIDs::bandOn[i], b.on ? 1.0 : 0.0);
+    }
+
+    for (int i = 0; i < metaleq::kNumSurgicalBands; ++i)
+    {
+        const auto& b = eq.surgical[static_cast<size_t> (i)];
+
+        setFloatParameter (ParameterIDs::resFreq[i], b.freq);
+        setFloatParameter (ParameterIDs::resGain[i], b.gainDb);
+        setFloatParameter (ParameterIDs::resQ[i], b.q);
+        setFloatParameter (ParameterIDs::resOn[i], b.on ? 1.0 : 0.0);
     }
 
     if (includeCrossovers)
@@ -1321,7 +1518,7 @@ juce::StringArray MetalEQAudioProcessor::getUserPresetNames() const
             continue;
         const auto tree = juce::ValueTree::fromXml (*xml);
         const auto name = tree.getProperty ("name").toString();
-        if (tree.hasType ("MetalEQUserPreset") && tree.getProperty ("schemaVersion").toString() == "1"
+        if (tree.hasType ("MetalEQUserPreset") && isSupportedUserPresetSchema (tree.getProperty ("schemaVersion"))
             && isSafePresetName (name) && ! names.contains (name, true))
             names.add (name);
     }
@@ -1369,7 +1566,7 @@ bool MetalEQAudioProcessor::saveUserPreset (const juce::String& rawName, bool ov
         return false;
     }
     juce::ValueTree root ("MetalEQUserPreset");
-    root.setProperty ("schemaVersion", 1, nullptr);
+    root.setProperty ("schemaVersion", 2, nullptr);
     root.setProperty ("name", name, nullptr);
     root.appendChild (getSoundParameterState(), nullptr);
     const auto xml = root.createXml();
@@ -1387,6 +1584,72 @@ bool MetalEQAudioProcessor::saveUserPreset (const juce::String& rawName, bool ov
     return true;
 }
 
+bool MetalEQAudioProcessor::isV3SurgicalParameterId (const juce::String& id)
+{
+    for (int i = 0; i < metaleq::kNumSurgicalBands; ++i)
+        if (id == ParameterIDs::resFreq[i] || id == ParameterIDs::resGain[i]
+            || id == ParameterIDs::resQ[i] || id == ParameterIDs::resOn[i])
+            return true;
+
+    return false;
+}
+
+juce::ValueTree MetalEQAudioProcessor::migrateSoundParameterState (const juce::ValueTree& state,
+                                                                   bool includeTrim) const
+{
+    if (! state.isValid() || ! state.hasType ("PARAMS"))
+        return state;
+
+    auto expectedIds = ParameterIDs::allEqParameterIds();
+    if (! includeTrim)
+        expectedIds.removeString (ParameterIDs::trim);
+
+    auto migrated = state.createCopy();
+
+    for (const auto& id : expectedIds)
+    {
+        bool found = false;
+        for (int i = 0; i < migrated.getNumChildren(); ++i)
+            if (migrated.getChild (i).getProperty ("id").toString() == id)
+            {
+                found = true;
+                break;
+            }
+
+        if (found)
+            continue;
+
+        // Never invent values for the original schema. Only the V3 surgical
+        // parameters may be missing from a state written by an older build;
+        // anything else is damaged or unsupported and must fail validation.
+        if (! isV3SurgicalParameterId (id))
+            return state;
+
+        const auto* parameter = apvts->getParameter (id);
+        if (parameter == nullptr)
+            return state;
+
+        const auto defaultValue = parameter->convertFrom0to1 (parameter->getDefaultValue());
+        juce::ValueTree node ("PARAM");
+        node.setProperty ("id", id, nullptr);
+        node.setProperty ("value", juce::String (static_cast<double> (defaultValue), 9), nullptr);
+        migrated.appendChild (node, nullptr);
+    }
+
+    return migrated;
+}
+
+void MetalEQAudioProcessor::markCurrentToneAsCustom()
+{
+    applyingPreset.store (true, std::memory_order_relaxed);
+    setChoiceParameter (ParameterIDs::preset, 0);
+    lastPresetName = "Custom";
+    lastPresetId.clear();
+    loadedPresetIsUser = false;
+    rememberCurrentAsLoadedPreset (lastPresetName, false);
+    applyingPreset.store (false, std::memory_order_release);
+}
+
 bool MetalEQAudioProcessor::applySoundParameterState (const juce::ValueTree& state, juce::String& error,
                                                        bool includeTrim)
 {
@@ -1400,17 +1663,19 @@ bool MetalEQAudioProcessor::applySoundParameterState (const juce::ValueTree& sta
     if (! includeTrim)
         expectedIds.removeString (ParameterIDs::trim);
 
+    auto migratedState = migrateSoundParameterState (state, includeTrim);
+
     juce::StringArray seenIds;
-    if (state.getNumChildren() != expectedIds.size())
+    if (migratedState.getNumChildren() != expectedIds.size())
     {
         error = "Preset is incomplete or uses an unsupported parameter schema.";
         return false;
     }
     int lowPassSlope = -1;
     int lowPassEnabledChild = -1;
-    for (int i = 0; i < state.getNumChildren(); ++i)
+    for (int i = 0; i < migratedState.getNumChildren(); ++i)
     {
-        const auto child = state.getChild (i);
+        const auto child = migratedState.getChild (i);
         const auto id = child.getProperty ("id").toString();
         const auto rawValue = child.getProperty ("value").toString();
         if (id == ParameterIDs::lpSlope)
@@ -1423,7 +1688,7 @@ bool MetalEQAudioProcessor::applySoundParameterState (const juce::ValueTree& sta
     // blank lpOn value if APVTS had not materialized that default node yet.
     // Derive only this known legacy field from the stored slope; all other
     // missing or malformed values remain errors.
-    auto validatedState = state.createCopy();
+    auto validatedState = migratedState.createCopy();
     if (lowPassSlope >= 0 && lowPassEnabledChild >= 0
         && validatedState.getChild (lowPassEnabledChild).getProperty ("value").toString().trim().isEmpty())
     {
@@ -1524,7 +1789,7 @@ bool MetalEQAudioProcessor::loadUserPreset (const juce::String& name, juce::Stri
         return false;
     }
     const auto root = juce::ValueTree::fromXml (*xml);
-    if (! root.hasType ("MetalEQUserPreset") || root.getProperty ("schemaVersion").toString() != "1"
+    if (! root.hasType ("MetalEQUserPreset") || ! isSupportedUserPresetSchema (root.getProperty ("schemaVersion"))
         || ! root.getProperty ("name").toString().equalsIgnoreCase (name))
     {
         error = "This preset was created by an incompatible version or has invalid metadata.";
@@ -1572,7 +1837,7 @@ bool MetalEQAudioProcessor::renameUserPreset (const juce::String& oldRaw, const 
         return false;
     }
     auto tree = juce::ValueTree::fromXml (*xml);
-    if (! tree.hasType ("MetalEQUserPreset") || tree.getProperty ("schemaVersion").toString() != "1")
+    if (! tree.hasType ("MetalEQUserPreset") || ! isSupportedUserPresetSchema (tree.getProperty ("schemaVersion")))
     {
         error = "The selected file is not a compatible user preset.";
         return false;
@@ -1633,11 +1898,11 @@ void MetalEQAudioProcessor::revertToLoadedPreset()
 void MetalEQAudioProcessor::startAnalyzerCapture (int targetProfile)
 {
     startAnalyzerCaptureWithGeneration (
-        targetProfile, analyzerCancelGeneration.load (std::memory_order_acquire));
+        targetProfile, 0, analyzerCancelGeneration.load (std::memory_order_acquire));
 }
 
 void MetalEQAudioProcessor::startAnalyzerCaptureWithGeneration (
-    int targetProfile, unsigned long long cancelGeneration)
+    int targetProfile, int mode, unsigned long long cancelGeneration)
 {
     bool expectedStart = false;
     if (! analyzerCaptureStartInProgress.compare_exchange_strong (expectedStart, true,
@@ -1657,6 +1922,7 @@ void MetalEQAudioProcessor::startAnalyzerCaptureWithGeneration (
         && analyzerCaptureWriterActive.load (std::memory_order_acquire))
     {
         analyzerDeferredStartProfile.store (juce::jlimit (0, metaleq::getNumAnalyzerTargets() - 1, targetProfile), std::memory_order_relaxed);
+        analyzerDeferredStartMode.store (mode, std::memory_order_relaxed);
         analyzerDeferredStartRequested.store (true, std::memory_order_release);
         if (analyzerCaptureWriterActive.load (std::memory_order_acquire))
         {
@@ -1720,6 +1986,7 @@ void MetalEQAudioProcessor::startAnalyzerCaptureWithGeneration (
     analyzerDeferredStartRequested.store (false, std::memory_order_release);
     analyzerCaptureGeneration.fetch_add (1, std::memory_order_acq_rel);
     analyzerTargetProfile.store (juce::jlimit (0, metaleq::getNumAnalyzerTargets() - 1, targetProfile), std::memory_order_relaxed);
+    analyzerMode.store (mode == 1 ? 1 : 0, std::memory_order_release);
     auto arming = AnalyzerCaptureState::arming;
     analyzerCaptureState.compare_exchange_strong (arming, AnalyzerCaptureState::requested,
         std::memory_order_release, std::memory_order_acquire);
@@ -1752,7 +2019,7 @@ void MetalEQAudioProcessor::cancelAnalyzerCapture() noexcept
     }
 }
 
-MetalEQAudioProcessor::AnalyzerStatus MetalEQAudioProcessor::getAnalyzerStatus() const noexcept
+MetalEQAudioProcessor::AnalyzerStatus MetalEQAudioProcessor::captureStatus() const noexcept
 {
     const auto state = analyzerCaptureState.load (std::memory_order_acquire);
     if (analyzerDeferredStartRequested.load (std::memory_order_acquire))
@@ -1782,8 +2049,35 @@ MetalEQAudioProcessor::AnalyzerStatus MetalEQAudioProcessor::getAnalyzerStatus()
     }
 }
 
+MetalEQAudioProcessor::AnalyzerStatus MetalEQAudioProcessor::getAnalyzerStatus() const noexcept
+{
+    return analyzerMode.load (std::memory_order_acquire) == 0
+        ? captureStatus() : AnalyzerStatus::idle;
+}
+
 float MetalEQAudioProcessor::getAnalyzerProgress() const noexcept
 {
+    if (analyzerMode.load (std::memory_order_acquire) != 0)
+        return 0.0f;
+
+    if (analyzerDeferredStartRequested.load (std::memory_order_acquire))
+        return 0.0f;
+    const int limit = analyzerCaptureLimit.load (std::memory_order_relaxed);
+    return limit > 0 ? juce::jlimit (0.0f, 1.0f,
+        static_cast<float> (analyzerSampleCount.load (std::memory_order_relaxed)) / limit) : 0.0f;
+}
+
+MetalEQAudioProcessor::AnalyzerStatus MetalEQAudioProcessor::getResonanceStatus() const noexcept
+{
+    return analyzerMode.load (std::memory_order_acquire) == 1
+        ? captureStatus() : AnalyzerStatus::idle;
+}
+
+float MetalEQAudioProcessor::getResonanceProgress() const noexcept
+{
+    if (analyzerMode.load (std::memory_order_acquire) != 1)
+        return 0.0f;
+
     if (analyzerDeferredStartRequested.load (std::memory_order_acquire))
         return 0.0f;
     const int limit = analyzerCaptureLimit.load (std::memory_order_relaxed);
@@ -1838,6 +2132,133 @@ void MetalEQAudioProcessor::applyAnalyzerSuggestion (float amount)
     applyingPreset.store (false, std::memory_order_release);
 }
 
+void MetalEQAudioProcessor::startResonanceScan()
+{
+    const auto state = analyzerCaptureState.load (std::memory_order_acquire);
+    if (state != AnalyzerCaptureState::idle && state != AnalyzerCaptureState::complete
+        && state != AnalyzerCaptureState::failed)
+        return;
+    if (analyzerDeferredStartRequested.load (std::memory_order_acquire)
+        || analyzerCaptureWriterActive.load (std::memory_order_acquire))
+        return;
+
+    clearResonanceCandidates();
+    startAnalyzerCaptureWithGeneration (
+        0, 1, analyzerCancelGeneration.load (std::memory_order_acquire));
+}
+
+void MetalEQAudioProcessor::cancelResonanceScan() noexcept
+{
+    cancelAnalyzerCapture();
+}
+
+bool MetalEQAudioProcessor::getResonanceEnoughVariation() const noexcept
+{
+    return resonanceEnoughVariation.load (std::memory_order_acquire);
+}
+
+int MetalEQAudioProcessor::getResonanceCandidateCount() const noexcept
+{
+    return juce::jlimit (0, metaleq::kMaxResonanceCandidates,
+        resonanceCandidateCount.load (std::memory_order_acquire));
+}
+
+bool MetalEQAudioProcessor::getResonanceCandidate (
+    int index, metaleq::ResonanceCandidate& candidate) const noexcept
+{
+    if (index < 0 || index >= getResonanceCandidateCount())
+        return false;
+
+    const auto slot = static_cast<size_t> (index);
+    candidate.freq         = resonanceFreq[slot].load (std::memory_order_acquire);
+    candidate.q            = resonanceQ[slot].load (std::memory_order_acquire);
+    candidate.prominenceDb = resonanceProminence[slot].load (std::memory_order_acquire);
+    candidate.residualDb   = resonanceResidual[slot].load (std::memory_order_acquire);
+    candidate.confidence   = resonanceConfidence[slot].load (std::memory_order_acquire);
+    candidate.suggestedCutDb = resonanceCut[slot].load (std::memory_order_acquire);
+    return true;
+}
+
+unsigned long long MetalEQAudioProcessor::getResonanceRevision() const noexcept
+{
+    return resonanceRevision.load (std::memory_order_acquire);
+}
+
+void MetalEQAudioProcessor::clearResonanceCandidates() noexcept
+{
+    resonanceCandidateCount.store (0, std::memory_order_release);
+    resonanceEnoughVariation.store (false, std::memory_order_relaxed);
+    resonanceRevision.fetch_add (1, std::memory_order_acq_rel);
+}
+
+void MetalEQAudioProcessor::applyResonanceSelection (const std::vector<int>& candidateIndices)
+{
+    if (getResonanceStatus() != AnalyzerStatus::ready)
+        return;
+
+    const int candidateCount = getResonanceCandidateCount();
+    std::vector<int> selected;
+    selected.reserve (metaleq::kNumSurgicalBands);
+
+    for (const int index : candidateIndices)
+    {
+        if (index < 0 || index >= candidateCount)
+            continue;
+        if (std::find (selected.begin(), selected.end(), index) != selected.end())
+            continue;
+        selected.push_back (index);
+        if (static_cast<int> (selected.size()) >= metaleq::kNumSurgicalBands)
+            break;
+    }
+
+    applyingPreset.store (true, std::memory_order_relaxed);
+
+    for (int band = 0; band < metaleq::kNumSurgicalBands; ++band)
+    {
+        const bool hasCandidate = band < static_cast<int> (selected.size());
+
+        if (hasCandidate)
+        {
+            metaleq::ResonanceCandidate candidate;
+            getResonanceCandidate (selected[static_cast<size_t> (band)], candidate);
+
+            setFloatParameter (ParameterIDs::resFreq[band], candidate.freq);
+            setFloatParameter (ParameterIDs::resGain[band], candidate.suggestedCutDb);
+            setFloatParameter (ParameterIDs::resQ[band], candidate.q);
+            setFloatParameter (ParameterIDs::resOn[band], 1.0);
+        }
+        else
+        {
+            setFloatParameter (ParameterIDs::resGain[band], 0.0);
+            setFloatParameter (ParameterIDs::resOn[band], 0.0);
+        }
+    }
+
+    applyingPreset.store (false, std::memory_order_release);
+    markCurrentToneAsCustom();
+}
+
+void MetalEQAudioProcessor::clearSurgicalBands()
+{
+    bool changed = false;
+    for (int band = 0; band < metaleq::kNumSurgicalBands; ++band)
+        if (apvts->getRawParameterValue (ParameterIDs::resOn[band])->load() >= 0.5f
+            || std::abs (apvts->getRawParameterValue (ParameterIDs::resGain[band])->load()) > 1.0e-3f)
+            changed = true;
+
+    if (! changed)
+        return;
+
+    applyingPreset.store (true, std::memory_order_relaxed);
+    for (int band = 0; band < metaleq::kNumSurgicalBands; ++band)
+    {
+        setFloatParameter (ParameterIDs::resGain[band], 0.0);
+        setFloatParameter (ParameterIDs::resOn[band], 0.0);
+    }
+    applyingPreset.store (false, std::memory_order_release);
+    markCurrentToneAsCustom();
+}
+
 void MetalEQAudioProcessor::analyzerWorkerLoop()
 {
     while (! stopAnalyzerWorker.load (std::memory_order_acquire))
@@ -1847,7 +2268,12 @@ void MetalEQAudioProcessor::analyzerWorkerLoop()
                 std::memory_order_acq_rel, std::memory_order_acquire))
         {
             const int samples = analyzerSampleCount.load (std::memory_order_acquire);
-            analyzeCapture (samples, static_cast<double> (analyzerSampleRate.load (std::memory_order_relaxed)));
+            const double sampleRate = static_cast<double> (analyzerSampleRate.load (std::memory_order_relaxed));
+
+            if (analyzerMode.load (std::memory_order_acquire) == 1)
+                analyzeResonanceCapture (samples, sampleRate);
+            else
+                analyzeCapture (samples, sampleRate);
         }
         else
         {
@@ -1926,7 +2352,39 @@ void MetalEQAudioProcessor::analyzeCapture (int sampleCount, double sampleRate)
     analyzerCaptureState.store (AnalyzerCaptureState::complete, std::memory_order_release);
 }
 
-//==============================================================================
+void MetalEQAudioProcessor::analyzeResonanceCapture (int sampleCount, double sampleRate)
+{
+    metaleq::ResonanceAnalysisResult result;
+    metaleq::analyseResonances (analyzerCapture.get(), sampleCount, sampleRate, result);
+
+    if (result.framesAnalysed <= 0)
+    {
+        clearResonanceCandidates();
+        analyzerCaptureState.store (AnalyzerCaptureState::failed, std::memory_order_release);
+        return;
+    }
+
+    const int count = juce::jlimit (0, metaleq::kMaxResonanceCandidates, result.numCandidates);
+
+    for (int i = 0; i < count; ++i)
+    {
+        const auto& candidate = result.candidates[static_cast<size_t> (i)];
+        const auto slot = static_cast<size_t> (i);
+        resonanceFreq[slot].store (static_cast<float> (candidate.freq), std::memory_order_relaxed);
+        resonanceQ[slot].store (static_cast<float> (candidate.q), std::memory_order_relaxed);
+        resonanceProminence[slot].store (static_cast<float> (candidate.prominenceDb), std::memory_order_relaxed);
+        resonanceResidual[slot].store (static_cast<float> (candidate.residualDb), std::memory_order_relaxed);
+        resonanceConfidence[slot].store (static_cast<float> (candidate.confidence), std::memory_order_relaxed);
+        resonanceCut[slot].store (static_cast<float> (candidate.suggestedCutDb), std::memory_order_relaxed);
+    }
+
+    resonanceEnoughVariation.store (result.enoughVariation, std::memory_order_relaxed);
+    resonanceCandidateCount.store (count, std::memory_order_release);
+    resonanceRevision.fetch_add (1, std::memory_order_acq_rel);
+
+    analyzerCaptureState.store (AnalyzerCaptureState::complete, std::memory_order_release);
+}
+
 //==============================================================================
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {

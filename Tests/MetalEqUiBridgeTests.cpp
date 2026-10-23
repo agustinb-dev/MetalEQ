@@ -296,15 +296,44 @@ static void testCurveRangeIsFixed (MetalEQAudioProcessor& processor)
 }
 
 //==============================================================================
-static void testSnapshotV2 (MetalEQAudioProcessor& processor)
+static void testSnapshotV3 (MetalEQAudioProcessor& processor)
 {
     metaleq::ui::UiBridge bridge (processor);
     juce::var snapshot;
     check (callNative (bridge, "uiReady", juce::Array<juce::var> {}, snapshot),
            "uiReady is registered with the bridge");
 
-    check (static_cast<int> (getProperty (snapshot, "protocolVersion")) == 2,
-           "snapshot advertises protocol version 2");
+    check (static_cast<int> (getProperty (snapshot, "protocolVersion")) == 3,
+           "snapshot advertises protocol version 3");
+
+    const auto resonance = getProperty (snapshot, "resonance");
+    check (resonance.isObject(), "snapshot contains the V3 resonance state");
+    check (getProperty (resonance, "status").isInt(), "resonance state carries a status");
+    check (getProperty (resonance, "candidates").isArray(), "resonance state carries a candidate list");
+    check (getProperty (resonance, "enoughVariation").isBool(),
+           "resonance state reports whether the capture varied enough");
+
+    const auto params = getProperty (snapshot, "params");
+    check (params.isObject(), "snapshot contains parameter values");
+    check (getProperty (params, "res1Freq").isDouble(), "snapshot exposes surgical frequency parameters");
+    check (getProperty (params, "res6On").isDouble(), "snapshot exposes surgical enable parameters");
+
+    juce::var result;
+    check (callNative (bridge, "startResonanceScan", juce::Array<juce::var> {}, result),
+           "startResonanceScan is registered");
+    check (resultOk (result), "startResonanceScan accepts the request");
+    check (callNative (bridge, "cancelResonanceScan", juce::Array<juce::var> {}, result),
+           "cancelResonanceScan is registered");
+    check (resultOk (result), "cancelResonanceScan returns to idle");
+    check (processor.getResonanceStatus() == MetalEQAudioProcessor::AnalyzerStatus::idle,
+           "cancelling the scan clears its status");
+
+    check (callNative (bridge, "applyResonanceSelection", makeArgs (juce::Array<juce::var> {}), result),
+           "applyResonanceSelection is registered");
+    check (resultOk (result), "applying an empty selection is a no-op success");
+    check (callNative (bridge, "clearSurgicalBands", juce::Array<juce::var> {}, result),
+           "clearSurgicalBands is registered");
+    check (resultOk (result), "clearing flat surgical bands succeeds");
 
     const auto presets = getProperty (snapshot, "factoryPresets");
     check (presets.isArray() && presets.size() == metaleq::getNumPresets(),
@@ -329,7 +358,6 @@ static void testSnapshotV2 (MetalEQAudioProcessor& processor)
     check (getProperty (preset, "abSlot").isInt(), "preset snapshot carries the active A/B slot");
     check (getProperty (preset, "presetId").isString(), "preset snapshot carries the stable id field");
 
-    juce::var result;
     check (callNative (bridge, "setAbSlot", makeArgs (1.0), result), "setAbSlot is registered");
     check (resultOk (result), "setAbSlot succeeds");
     check (processor.getActiveAbSlot() == 1, "setAbSlot switches to B");
@@ -370,7 +398,7 @@ int main()
 
     {
         MetalEQAudioProcessor processor;
-        testSnapshotV2 (processor);
+        testSnapshotV3 (processor);
     }
 
     if (failures == 0)

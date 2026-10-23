@@ -10,6 +10,7 @@
 import type { ParamSpec } from './types';
 
 export const NUM_BANDS = 5;
+export const NUM_SURGICAL_BANDS = 6;
 
 const choice = (
   id: string,
@@ -66,6 +67,17 @@ export const PARAMS: ParamSpec[] = [
     ];
   }),
 
+  //--- V3 surgical resonance bands ------------------------------------------
+  ...[250, 620, 1200, 2400, 4000, 6200].flatMap((def, i) => {
+    const n = i + 1;
+    return [
+      { id: `res${n}Freq`, label: `Resonance ${n} Freq`, kind: 'float' as const, min: 80, max: 14000, skew: 0.4, step: 0.01, def },
+      { id: `res${n}Gain`, label: `Resonance ${n} Gain`, kind: 'float' as const, min: -12, max: 6, skew: 1, step: 0.01, def: 0 },
+      { id: `res${n}Q`, label: `Resonance ${n} Q`, kind: 'float' as const, min: 2, max: 20, skew: 1, step: 0.01, def: 7 },
+      flag(`res${n}On`, `Resonance ${n} On`, 0),
+    ];
+  }),
+
   //--- output trim -----------------------------------------------------------
   { id: 'trim', label: 'Output Trim', kind: 'float', min: -12, max: 6, skew: 1, step: 0.01, def: 0 },
 
@@ -87,6 +99,7 @@ export const PARAMS: ParamSpec[] = [
   //--- bypass / A-B (part of the same diff stream, not in allEqParameterIds) ---
   flag('bypass', 'Bypass', 0),
   flag('abCompare', 'A/B Compare', 0),
+  flag('resAudition', 'Resonance Delta Monitor', 0),
 ];
 
 const byId = new Map<string, ParamSpec>(PARAMS.map((p) => [p.id, p]));

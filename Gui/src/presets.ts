@@ -52,6 +52,14 @@ export function neutralEq(): EqSettings {
       { freq: 3500, gainDb: 0, q: 1, on: true },
       { freq: 8000, gainDb: 0, q: 1, on: true },
     ],
+    surgical: [
+      { freq: 250, gainDb: 0, q: 7, on: false },
+      { freq: 620, gainDb: 0, q: 7, on: false },
+      { freq: 1200, gainDb: 0, q: 7, on: false },
+      { freq: 2400, gainDb: 0, q: 7, on: false },
+      { freq: 4000, gainDb: 0, q: 7, on: false },
+      { freq: 6200, gainDb: 0, q: 7, on: false },
+    ],
     shapes: [false, false, false, false, false, false],
     trimDb: 0,
   };

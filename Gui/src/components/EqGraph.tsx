@@ -25,7 +25,7 @@ import {
   unitToFrequency,
   visibleLabelIndices,
 } from '../graphAxis';
-import type { CurveInfo, ParamSpec } from '../types';
+import type { CurveInfo, ParamSpec, ResonanceCandidateInfo } from '../types';
 
 // Plot margins mirror the native EQGraph paint().
 const PLOT_MARGIN = { left: 42, right: 42, top: 26, bottom: 43 };
@@ -36,6 +36,12 @@ interface EqGraphProps {
   curve: CurveInfo | null;
   params: Record<string, number>;
   suggestionCurve: number[] | null;
+  /** V3 scan candidates, drawn as vertical markers. */
+  resonanceCandidates?: ResonanceCandidateInfo[];
+  selectedCandidates?: number[];
+  hoveredCandidate?: number | null;
+  onToggleCandidate?: (index: number) => void;
+  onHoverCandidate?: (index: number | null) => void;
   /** Enables the draggable band and crossover handles. */
   editable?: boolean;
   selectedBand?: number | null;
@@ -64,6 +70,11 @@ export function EqGraph({
   curve,
   params,
   suggestionCurve,
+  resonanceCandidates = [],
+  selectedCandidates = [],
+  hoveredCandidate = null,
+  onToggleCandidate,
+  onHoverCandidate,
   editable = false,
   selectedBand = null,
   onSelectBand,
@@ -337,6 +348,46 @@ export function EqGraph({
 
       {/* suggested correction */}
       {suggestionPath && <path d={suggestionPath} className="graph-suggestion" />}
+
+      {/* V3 resonance candidates: selectable vertical markers */}
+      {resonanceCandidates.map((candidate, index) => {
+        const x = freqToX(candidate.freq);
+        const selected = selectedCandidates.includes(index);
+        const hovered = hoveredCandidate === index;
+        const markerY = dbToY(0);
+        return (
+          <g
+            key={`resonance-${index}`}
+            className={`resonance-marker${selected ? ' selected' : ''}${hovered ? ' hovered' : ''}`}
+            role="button"
+            tabIndex={0}
+            aria-pressed={selected}
+            aria-label={`Resonance candidate ${index + 1}: ${Math.round(candidate.freq)} Hz`}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggleCandidate?.(index);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                onToggleCandidate?.(index);
+              }
+            }}
+            onPointerEnter={() => onHoverCandidate?.(index)}
+            onPointerLeave={() => onHoverCandidate?.(null)}
+            onFocus={() => onHoverCandidate?.(index)}
+            onBlur={() => onHoverCandidate?.(null)}
+          >
+            <line x1={x} x2={x} y1={plot.y} y2={plot.y + plot.h} className="resonance-marker-line" />
+            <circle cx={x} cy={markerY} r={selected || hovered ? 6 : 4.5} className="resonance-marker-dot" />
+            <text x={x} y={markerY - 11} textAnchor="middle" className="resonance-marker-label">
+              {Math.round(candidate.freq)}
+            </text>
+            <title>{`${Math.round(candidate.freq)} Hz · Q ${candidate.q.toFixed(1)} · ${candidate.cutDb.toFixed(1)} dB · ${Math.round(candidate.confidence * 100)}% confidence`}</title>
+          </g>
+        );
+      })}
 
       {/* legends */}
       <text x={48} y={14} className="graph-legend accent">

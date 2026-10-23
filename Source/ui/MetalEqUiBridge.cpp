@@ -90,6 +90,8 @@ UiBridge::UiBridge (MetalEQAudioProcessor& p)
                                  std::numeric_limits<double>::quiet_NaN());
     lastSentValues.emplace_back (MetalEQAudioProcessor::ParameterIDs::abCompare,
                                  std::numeric_limits<double>::quiet_NaN());
+    lastSentValues.emplace_back (MetalEQAudioProcessor::ParameterIDs::resAudition,
+                                 std::numeric_limits<double>::quiet_NaN());
 
     for (auto& g : lastSuggestion)
         g = 0.0f;
@@ -201,6 +203,26 @@ juce::WebBrowserComponent::Options UiBridge::addOptions (juce::WebBrowserCompone
             [self] (const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion complete)
             {
                 complete (self->handleGetSuggestionCurve (args));
+            })
+        .withNativeFunction ("startResonanceScan",
+            [self] (const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion complete)
+            {
+                complete (self->handleStartResonanceScan());
+            })
+        .withNativeFunction ("cancelResonanceScan",
+            [self] (const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion complete)
+            {
+                complete (self->handleCancelResonanceScan());
+            })
+        .withNativeFunction ("applyResonanceSelection",
+            [self] (const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion complete)
+            {
+                complete (self->handleApplyResonanceSelection (args));
+            })
+        .withNativeFunction ("clearSurgicalBands",
+            [self] (const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion complete)
+            {
+                complete (self->handleClearSurgicalBands());
             })
         .withNativeFunction ("setEditorExpanded",
             [self] (const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion complete)
@@ -454,6 +476,56 @@ juce::var UiBridge::handleGetSuggestionCurve (const juce::Array<juce::var>& args
     return juce::var (obj);
 }
 
+juce::var UiBridge::handleStartResonanceScan()
+{
+    processor.startResonanceScan();
+    return okResult();
+}
+
+juce::var UiBridge::handleCancelResonanceScan()
+{
+    processor.cancelResonanceScan();
+    return okResult();
+}
+
+juce::var UiBridge::handleApplyResonanceSelection (const juce::Array<juce::var>& args)
+{
+    std::vector<int> indices;
+
+    if (! args.isEmpty())
+    {
+        if (! args[0].isArray())
+            return errorResult ("applyResonanceSelection expects an array of candidate indices.");
+
+        const auto* array = args[0].getArray();
+        if (array == nullptr)
+            return errorResult ("applyResonanceSelection expects an array of candidate indices.");
+
+        for (const auto& value : *array)
+        {
+            if (! (value.isInt() || value.isInt64() || value.isDouble()))
+                return errorResult ("Candidate indices must be integers.");
+
+            const double plain = static_cast<double> (value);
+            if (! metaleq::isFiniteValue (plain) || plain < 0.0)
+                return errorResult ("Candidate indices must be non-negative integers.");
+
+            indices.push_back (static_cast<int> (plain));
+        }
+    }
+
+    processor.applyResonanceSelection (indices);
+    markCurveDirty();
+    return okResult();
+}
+
+juce::var UiBridge::handleClearSurgicalBands()
+{
+    processor.clearSurgicalBands();
+    markCurveDirty();
+    return okResult();
+}
+
 juce::var UiBridge::handleSetEditorExpanded (const juce::Array<juce::var>& args)
 {
     const auto expanded = numberOrNull (args, 0);
@@ -534,6 +606,50 @@ juce::var UiBridge::buildAnalyzerObject()
 
     if (! changed && ! fullSyncRequired)
         return {};
+
+    return juce::var (obj);
+}
+
+juce::var UiBridge::buildResonanceObject()
+{
+    const auto status = processor.getResonanceStatus();
+    const auto progress = processor.getResonanceProgress();
+    const auto revision = processor.getResonanceRevision();
+    const int count = processor.getResonanceCandidateCount();
+
+    const bool changed = static_cast<int> (status) != lastResonanceStatus
+                      || ! nearlyEqual (progress, lastResonanceProgress)
+                      || revision != lastResonanceRevision;
+
+    lastResonanceStatus = static_cast<int> (status);
+    lastResonanceProgress = progress;
+    lastResonanceRevision = revision;
+
+    if (! changed && ! fullSyncRequired)
+        return {};
+
+    auto* obj = new juce::DynamicObject();
+    obj->setProperty ("status", static_cast<int> (status));
+    obj->setProperty ("progress", progress);
+    obj->setProperty ("enoughVariation", processor.getResonanceEnoughVariation());
+
+    juce::Array<juce::var> candidates;
+    for (int i = 0; i < count; ++i)
+    {
+        metaleq::ResonanceCandidate candidate;
+        if (! processor.getResonanceCandidate (i, candidate))
+            continue;
+
+        auto* item = new juce::DynamicObject();
+        item->setProperty ("freq", candidate.freq);
+        item->setProperty ("q", candidate.q);
+        item->setProperty ("prominence", candidate.prominenceDb);
+        item->setProperty ("residual", candidate.residualDb);
+        item->setProperty ("confidence", candidate.confidence);
+        item->setProperty ("cutDb", candidate.suggestedCutDb);
+        candidates.add (juce::var (item));
+    }
+    obj->setProperty ("candidates", candidates);
 
     return juce::var (obj);
 }
@@ -627,6 +743,11 @@ juce::var UiBridge::buildFullSnapshot()
     else
         obj->setProperty ("analyzer", buildAnalyzerObject());
 
+    if (const auto resonance = buildResonanceObject())
+        obj->setProperty ("resonance", resonance);
+    else
+        obj->setProperty ("resonance", buildResonanceObject());
+
     if (const auto curve = buildCurveArray())
         obj->setProperty ("curve", curve);
 
@@ -673,6 +794,9 @@ void UiBridge::tick()
 
     if (const auto analyzer = buildAnalyzerObject())
         obj->setProperty ("analyzer", analyzer);
+
+    if (const auto resonance = buildResonanceObject())
+        obj->setProperty ("resonance", resonance);
 
     const double sampleRate = processor.getDisplaySampleRate();
     if (sampleRate != lastSampleRate)

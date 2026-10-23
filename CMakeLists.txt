@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(MetalEQ VERSION 0.0.1)
+project(MetalEQ VERSION 3.0.0)
 
 include(CTest)
 
@@ -313,6 +313,14 @@ if(BUILD_TESTING)
     target_compile_options(MetalEQ_DspTests PRIVATE /W4 /permissive-)
   endif()
   add_test(NAME MetalEQ_DspTests COMMAND MetalEQ_DspTests)
+
+  add_executable(MetalEQ_ResonanceTests Tests/MetalEqResonanceTests.cpp)
+  target_compile_features(MetalEQ_ResonanceTests PRIVATE cxx_std_17)
+  target_include_directories(MetalEQ_ResonanceTests PRIVATE Source)
+  if(MSVC)
+    target_compile_options(MetalEQ_ResonanceTests PRIVATE /W4 /permissive-)
+  endif()
+  add_test(NAME MetalEQ_ResonanceTests COMMAND MetalEQ_ResonanceTests)
 
   add_executable(MetalEQ_StateTests Tests/MetalEqStateTests.cpp)
   target_compile_features(MetalEQ_StateTests PRIVATE cxx_std_17)

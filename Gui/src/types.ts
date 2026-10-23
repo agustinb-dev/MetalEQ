@@ -1,11 +1,11 @@
 /*
-    Wire types for the MetalEQ bridge protocol (version 2).
+    Wire types for the MetalEQ bridge protocol (version 3).
 
     These mirror Source/ui/MetalEqUiBridge.cpp exactly: the native side is the
     single source of truth, JS only renders what it receives and sends requests.
 */
 
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 export type ParamKind = 'float' | 'choice' | 'bool';
 
@@ -75,6 +75,29 @@ export interface AnalyzerInfo {
   changed?: boolean;
 }
 
+/** One stationary resonance suggested by the V3 detector. */
+export interface ResonanceCandidateInfo {
+  freq: number;
+  q: number;
+  /** LTAS peak height above the local 1/2-octave envelope. */
+  prominence: number;
+  /** Harmonic-residual evidence at this frequency. */
+  residual: number;
+  /** 0..1; the UI uses this for ordering and for a confidence label. */
+  confidence: number;
+  /** Proposed surgical cut in dB (always <= 0). */
+  cutDb: number;
+}
+
+export interface ResonanceInfo {
+  status: number;
+  progress: number;
+  /** False when the capture was too static to separate harmonics from resonances. */
+  enoughVariation: boolean;
+  candidates: ResonanceCandidateInfo[];
+  changed?: boolean;
+}
+
 export interface CurveInfo {
   points: number[]; // 240 dB values, evenly spaced in log-frequency
   minDb: number; // fixed -15 dB graph floor (values below it are clipped)
@@ -95,6 +118,7 @@ export interface TickMessage {
   userPresets?: string[];
   meters?: MetersInfo;
   analyzer?: AnalyzerInfo;
+  resonance?: ResonanceInfo;
   curve?: CurveInfo;
 }
 
@@ -107,6 +131,7 @@ export interface Snapshot {
   analyzerTargets: AnalyzerTargetInfo[];
   userPresets: string[];
   analyzer?: AnalyzerInfo;
+  resonance?: ResonanceInfo;
   curve?: CurveInfo;
 }
 
@@ -146,6 +171,12 @@ export interface MetalEqBridge {
   cancelAnalyzerCapture(): Promise<OpResult>;
   applyAnalyzerSuggestion(amount: number): Promise<OpResult>;
   getSuggestionCurve(amount: number): Promise<SuggestionCurveResult>;
+  /** V3: capture 8 s and look for stationary resonances. */
+  startResonanceScan(): Promise<OpResult>;
+  cancelResonanceScan(): Promise<OpResult>;
+  /** Selected candidate indices, in order; up to six are copied to surgical bands. */
+  applyResonanceSelection(indices: number[]): Promise<OpResult>;
+  clearSurgicalBands(): Promise<OpResult>;
   /** Advanced view asks the native editor to grow for the numeric band panel. */
   setEditorExpanded(expanded: boolean): Promise<OpResult>;
 }

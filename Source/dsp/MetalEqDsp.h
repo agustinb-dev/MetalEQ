@@ -26,7 +26,13 @@ namespace metaleq
 {
 
 inline constexpr int    kNumBands     = 5;
-// Worst case: 24 base/macro filters plus up to 18 filters from six shapes.
+/** Narrow, surgical bands dedicated to resonance control (V3). They are kept
+    separate from the five musical bands so a scan can never overwrite the
+    player's tone moves.
+*/
+inline constexpr int    kNumSurgicalBands = 6;
+// Worst case: 24 base/macro filters plus up to 18 filters from six shapes
+// plus six surgical resonance cuts.
 inline constexpr int    kMaxChainSize = 48;
 inline constexpr int    kMaxChannels  = 8;   // we only ever advertise mono/stereo buses
 inline constexpr double kPi           = 3.14159265358979323846;
@@ -241,6 +247,17 @@ struct BandSettings
     bool   on     = true;
 };
 
+/** One narrow surgical band. Off by default, cuts only in normal use, and
+    parameterised independently from the five musical bands.
+*/
+struct SurgicalBandSettings
+{
+    double freq   = 1000.0;
+    double gainDb = 0.0;
+    double q      = 7.0;
+    bool   on     = false;
+};
+
 /** All user-facing EQ parameters (no macros). */
 struct EqSettings
 {
@@ -256,6 +273,8 @@ struct EqSettings
     double hsFreq   = 7000.0;
     double hsGainDb = 0.0;
     std::array<BandSettings, kNumBands> bands {};
+    /** V3 narrow resonance cuts, applied after the musical bands. */
+    std::array<SurgicalBandSettings, kNumSurgicalBands> surgical {};
     // TIGHTEN, SCOOP, MID PUNCH, PICK ATTACK, FIZZ TAMER, BRIGHTEN.
     // Separate layers preserve the user's EQ and macro edits when toggled.
     std::array<bool, 6> shapes {};
@@ -281,6 +300,16 @@ inline bool operator== (const BandSettings& a, const BandSettings& b) noexcept
 
 inline bool operator!= (const BandSettings& a, const BandSettings& b) noexcept { return ! (a == b); }
 
+inline bool operator== (const SurgicalBandSettings& a, const SurgicalBandSettings& b) noexcept
+{
+    return a.freq == b.freq && a.gainDb == b.gainDb && a.q == b.q && a.on == b.on;
+}
+
+inline bool operator!= (const SurgicalBandSettings& a, const SurgicalBandSettings& b) noexcept
+{
+    return ! (a == b);
+}
+
 inline bool operator== (const EqSettings& a, const EqSettings& b) noexcept
 {
     return a.hpFreq == b.hpFreq && a.lpFreq == b.lpFreq
@@ -288,7 +317,8 @@ inline bool operator== (const EqSettings& a, const EqSettings& b) noexcept
         && a.lpEnabled == b.lpEnabled
         && a.lsFreq == b.lsFreq && a.lsGainDb == b.lsGainDb
         && a.hsFreq == b.hsFreq && a.hsGainDb == b.hsGainDb
-        && a.bands == b.bands && a.shapes == b.shapes
+        && a.bands == b.bands && a.surgical == b.surgical
+        && a.shapes == b.shapes
         && a.trimDb == b.trimDb;
 }
 
@@ -449,6 +479,15 @@ inline void buildChain (ChainSpec& chain,
             chain.add (FilterType::peak, b.freq, b.q, b.gainDb);
     }
 
+    //--- surgical resonance cuts (V3) ---------------------------------------
+    for (int i = 0; i < kNumSurgicalBands; ++i)
+    {
+        const auto& b = eq.surgical[static_cast<size_t> (i)];
+
+        if (b.on && std::abs (b.gainDb) > 1.0e-3)
+            chain.add (FilterType::peak, b.freq, b.q, b.gainDb);
+    }
+
     //--- SCOOP / BITE --------------------------------------------------------
     if (scoop > 1.0e-3)
         chain.add (FilterType::peak, 520.0, 0.50, -7.5 * scoop);
@@ -486,6 +525,26 @@ inline void buildChain (ChainSpec& chain,
         addCrossover (chain, FilterType::lowPass, eq.lpFreq, eq.lpSlope, sampleRate);
 
     chain.trimDb = eq.trimDb;
+}
+
+/** Build only the surgical resonance section. The delta-monitor path uses this
+    so the player hears exactly what the resonance cuts remove, without the
+    rest of the tone.
+*/
+inline void buildSurgicalChain (ChainSpec& chain, const EqSettings& eq, double sampleRate) noexcept
+{
+    (void) sampleRate;
+    chain.clear();
+
+    for (int i = 0; i < kNumSurgicalBands; ++i)
+    {
+        const auto& b = eq.surgical[static_cast<size_t> (i)];
+
+        if (b.on && std::abs (b.gainDb) > 1.0e-3)
+            chain.add (FilterType::peak, b.freq, b.q, b.gainDb);
+    }
+
+    chain.trimDb = 0.0;
 }
 
 /** Response of a whole chain at one frequency. Pure function, used by the GUI

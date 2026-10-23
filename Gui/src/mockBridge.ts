@@ -21,6 +21,7 @@ import type {
   MetalEqBridge,
   OpResult,
   PresetInfo,
+  ResonanceInfo,
   SetParamResult,
   SuggestionCurveResult,
   Snapshot,
@@ -28,7 +29,14 @@ import type {
 } from './types';
 import { PROTOCOL_VERSION } from './types';
 import { PARAMS, clampPlain, getSpec, snapPlain, defaultParams } from './params';
-import { buildChain, chainResponseDb, NUM_BANDS, type EqSettings, type MacroSettings } from './dspMirror';
+import {
+  buildChain,
+  chainResponseDb,
+  NUM_BANDS,
+  NUM_SURGICAL_BANDS,
+  type EqSettings,
+  type MacroSettings,
+} from './dspMirror';
 import { GRAPH_MAX_DB, GRAPH_MIN_DB } from './graphAxis';
 import { ANALYZER_TARGETS, FACTORY_PRESETS, factoryPresetInfos, neutralEq } from './presets';
 
@@ -53,6 +61,13 @@ const PROFILE_SUGGESTIONS: number[][] = [
   [-1.2, -1.6, 0.8, 1.4, -1.8],  // Thrash · Technical Clarity
   [-0.8, -1.1, 2.1, 0.9, -1.4],  // Classic Thrash · Midrange Punch
   [-2.2, -3.0, 0.6, -1.5, -3.4], // Post-Amp · Mix Cleanup
+];
+
+// Canned V3 scan results for browser development.
+const MOCK_RESONANCES = [
+  { freq: 733, q: 7.2, prominence: 3.4, residual: 7.2, confidence: 0.72, cutDb: -3.6 },
+  { freq: 2450, q: 9.8, prominence: 2.6, residual: 2.9, confidence: 0.49, cutDb: -2.3 },
+  { freq: 4170, q: 11.2, prominence: 2.8, residual: 2.1, confidence: 0.41, cutDb: -2.2 },
 ];
 
 interface UserPresetFile {
@@ -98,6 +113,14 @@ function paramsToEq(p: Record<string, number>): EqSettings {
       gainDb: p[`band${i + 1}Gain`],
       q: p[`band${i + 1}Q`],
       on: p[`band${i + 1}On`] >= 0.5,
+    };
+  }
+  for (let i = 0; i < NUM_SURGICAL_BANDS; i++) {
+    eq.surgical[i] = {
+      freq: p[`res${i + 1}Freq`],
+      gainDb: p[`res${i + 1}Gain`],
+      q: p[`res${i + 1}Q`],
+      on: p[`res${i + 1}On`] >= 0.5,
     };
   }
   eq.shapes = [0, 1, 2, 3, 4, 5].map((i) => p[`shape${['Tighten', 'Scoop', 'MidPunch', 'PickAttack', 'FizzTamer', 'Brighten'][i]}On`] >= 0.5);
@@ -151,8 +174,10 @@ export class MockBridge implements MetalEqBridge {
   private activeAb = 0;
   private abSlots: Array<AbSlotSnapshot | null> = [null, null];
   private analyzer: AnalyzerInfo = { status: 0, progress: 0, suggestion: [0, 0, 0, 0, 0] };
+  private resonance: ResonanceInfo = { status: 0, progress: 0, enoughVariation: false, candidates: [] };
   private curveDirty = true;
   private analyzerDirty = false;
+  private resonanceDirty = false;
   private userPresetsDirty = false;
   private fullSync = true;
   private seq = 0;
@@ -161,6 +186,8 @@ export class MockBridge implements MetalEqBridge {
   private emit: ((t: TickMessage) => void) | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private captureTimer: ReturnType<typeof setInterval> | null = null;
+  private resonanceTimer: ReturnType<typeof setInterval> | null = null;
+  private resonanceAnalyzeTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Tracks the "loaded" preset snapshot for the dirty flag (like the native
   // loadedPresetState comparison).
@@ -191,6 +218,7 @@ export class MockBridge implements MetalEqBridge {
       analyzerTargets: ANALYZER_TARGETS.map((t) => ({ ...t })),
       userPresets: this.userPresets.map((f) => f.name),
       analyzer: { ...this.analyzer },
+      resonance: { ...this.resonance, candidates: [...this.resonance.candidates] },
       curve: this.buildCurve(),
     };
     this.curveDirty = false;
@@ -236,6 +264,11 @@ export class MockBridge implements MetalEqBridge {
       this.analyzerDirty = false;
     }
 
+    if (this.resonanceDirty) {
+      msg.resonance = { ...this.resonance, candidates: [...this.resonance.candidates], changed: true };
+      this.resonanceDirty = false;
+    }
+
     if (this.curveDirty) {
       msg.curve = this.buildCurve();
       this.curveDirty = false;
@@ -253,7 +286,9 @@ export class MockBridge implements MetalEqBridge {
       let dirty = false;
       for (const spec of PARAMS) {
         // Trim is the global level-match control; it never dirties a preset.
-        if (spec.id === 'trim' || spec.id === 'bypass' || spec.id === 'abCompare') continue;
+        // The delta monitor is a listening aid, not part of the tone.
+        if (spec.id === 'trim' || spec.id === 'bypass' || spec.id === 'abCompare'
+          || spec.id === 'resAudition') continue;
         if (!nearlyEqual(this.params[spec.id], this.loadedSnapshot[spec.id] ?? 0)) {
           dirty = true;
           break;
@@ -270,7 +305,7 @@ export class MockBridge implements MetalEqBridge {
   private allSoundParams(): Record<string, number> {
     const out: Record<string, number> = {};
     for (const spec of PARAMS) {
-      if (spec.id === 'bypass' || spec.id === 'abCompare') continue;
+      if (spec.id === 'bypass' || spec.id === 'abCompare' || spec.id === 'resAudition') continue;
       out[spec.id] = this.params[spec.id];
     }
     return out;
@@ -296,7 +331,9 @@ export class MockBridge implements MetalEqBridge {
       this.params.lpSlope = 2;
     }
 
+    const curveWasDirty = this.curveDirty;
     this.markDirty();
+    if (id === 'resAudition') this.curveDirty = curveWasDirty;
     return Promise.resolve({ ok: true, value: this.params[id] });
   }
 
@@ -328,6 +365,12 @@ export class MockBridge implements MetalEqBridge {
       this.params[`band${i + 1}Gain`] = eq.bands[i].gainDb;
       this.params[`band${i + 1}Q`] = eq.bands[i].q;
       this.params[`band${i + 1}On`] = eq.bands[i].on ? 1 : 0;
+    }
+    for (let i = 0; i < NUM_SURGICAL_BANDS; i++) {
+      this.params[`res${i + 1}Freq`] = eq.surgical[i].freq;
+      this.params[`res${i + 1}Gain`] = eq.surgical[i].gainDb;
+      this.params[`res${i + 1}Q`] = eq.surgical[i].q;
+      this.params[`res${i + 1}On`] = eq.surgical[i].on ? 1 : 0;
     }
     this.params.trim = eq.trimDb;
     for (const id of ['shapeTightenOn', 'shapeScoopOn', 'shapeMidPunchOn',
@@ -369,6 +412,12 @@ export class MockBridge implements MetalEqBridge {
       this.params[`band${i + 1}Q`] = neutral.bands[i].q;
       this.params[`band${i + 1}On`] = 1;
     }
+    for (let i = 0; i < NUM_SURGICAL_BANDS; i++) {
+      this.params[`res${i + 1}Freq`] = neutral.surgical[i].freq;
+      this.params[`res${i + 1}Gain`] = 0;
+      this.params[`res${i + 1}Q`] = neutral.surgical[i].q;
+      this.params[`res${i + 1}On`] = 0;
+    }
     this.params.trim = 0;
     this.params.tight = 0;
     this.params.body = 0.5;
@@ -402,6 +451,15 @@ export class MockBridge implements MetalEqBridge {
     const file = this.userPresets.find((f) => f.name === name);
     if (!file) {
       return Promise.resolve({ ok: false, error: `User preset '${name}' does not exist.` });
+    }
+    // Presets written before V3 have no surgical values: start those bands
+    // flat and off, then overlay whatever the file provides.
+    const neutral = neutralEq();
+    for (let i = 0; i < NUM_SURGICAL_BANDS; i++) {
+      this.params[`res${i + 1}Freq`] = neutral.surgical[i].freq;
+      this.params[`res${i + 1}Gain`] = 0;
+      this.params[`res${i + 1}Q`] = neutral.surgical[i].q;
+      this.params[`res${i + 1}On`] = 0;
     }
     for (const [key, value] of Object.entries(file.params)) {
       const spec = getSpec(key);
@@ -600,10 +658,114 @@ export class MockBridge implements MetalEqBridge {
     }
   }
 
+  private cancelResonanceTimer(): void {
+    if (this.resonanceTimer) {
+      clearInterval(this.resonanceTimer);
+      this.resonanceTimer = null;
+    }
+    if (this.resonanceAnalyzeTimer) {
+      clearTimeout(this.resonanceAnalyzeTimer);
+      this.resonanceAnalyzeTimer = null;
+    }
+  }
+
   cancelAnalyzerCapture(): Promise<OpResult> {
     this.cancelCaptureTimer();
     this.analyzer = { status: 0, progress: 0, suggestion: [0, 0, 0, 0, 0] };
     this.analyzerDirty = true;
+    return Promise.resolve({ ok: true });
+  }
+
+  private markCurrentAsCustom(): void {
+    this.preset = { index: 0, presetId: '', name: 'Custom', kind: 'custom', dirty: false, abSlot: this.activeAb };
+    this.loadedSnapshot = { ...this.params };
+    this.curveDirty = true;
+  }
+
+  startResonanceScan(): Promise<OpResult> {
+    this.cancelResonanceTimer();
+    this.cancelCaptureTimer();
+    this.resonance = { status: 1, progress: 0, enoughVariation: false, candidates: [] };
+    this.resonanceDirty = true;
+
+    const started = Date.now();
+    this.resonanceTimer = setInterval(() => {
+      const elapsed = (Date.now() - started) / 1000;
+      const progress = Math.min(1, elapsed / CAPTURE_SECONDS);
+      if (progress >= 1) {
+        this.cancelResonanceTimer();
+        this.resonance = { status: 3, progress: 1, enoughVariation: false, candidates: [] };
+        this.resonanceDirty = true;
+        this.resonanceAnalyzeTimer = setTimeout(() => {
+          this.resonanceAnalyzeTimer = null;
+          this.resonance = {
+            status: 4,
+            progress: 1,
+            enoughVariation: true,
+            candidates: MOCK_RESONANCES.map((c) => ({ ...c })),
+          };
+          this.resonanceDirty = true;
+        }, 700);
+      } else {
+        this.resonance = { ...this.resonance, status: 1, progress };
+        this.resonanceDirty = true;
+      }
+    }, 100);
+
+    return Promise.resolve({ ok: true });
+  }
+
+  cancelResonanceScan(): Promise<OpResult> {
+    this.cancelResonanceTimer();
+    this.resonance = { status: 0, progress: 0, enoughVariation: false, candidates: [] };
+    this.resonanceDirty = true;
+    return Promise.resolve({ ok: true });
+  }
+
+  applyResonanceSelection(indices: number[]): Promise<OpResult> {
+    if (this.resonance.status !== 4) return Promise.resolve({ ok: true });
+
+    const selected: number[] = [];
+    for (const index of indices) {
+      if (!Number.isInteger(index) || index < 0 || index >= this.resonance.candidates.length) continue;
+      if (selected.includes(index)) continue;
+      selected.push(index);
+      if (selected.length >= NUM_SURGICAL_BANDS) break;
+    }
+
+    for (let i = 0; i < NUM_SURGICAL_BANDS; i++) {
+      const n = i + 1;
+      const candidate = selected[i] != null ? this.resonance.candidates[selected[i]] : null;
+      if (candidate) {
+        this.params[`res${n}Freq`] = candidate.freq;
+        this.params[`res${n}Gain`] = candidate.cutDb;
+        this.params[`res${n}Q`] = candidate.q;
+        this.params[`res${n}On`] = 1;
+      } else {
+        this.params[`res${n}Gain`] = 0;
+        this.params[`res${n}On`] = 0;
+      }
+    }
+
+    this.markCurrentAsCustom();
+    return Promise.resolve({ ok: true });
+  }
+
+  clearSurgicalBands(): Promise<OpResult> {
+    let changed = false;
+    for (let i = 0; i < NUM_SURGICAL_BANDS; i++) {
+      const n = i + 1;
+      if ((this.params[`res${n}On`] ?? 0) >= 0.5 || Math.abs(this.params[`res${n}Gain`] ?? 0) > 1e-3) {
+        changed = true;
+      }
+    }
+    if (!changed) return Promise.resolve({ ok: true });
+
+    for (let i = 0; i < NUM_SURGICAL_BANDS; i++) {
+      this.params[`res${i + 1}Gain`] = 0;
+      this.params[`res${i + 1}On`] = 0;
+    }
+    this.markCurrentAsCustom();
     return Promise.resolve({ ok: true });
   }
 

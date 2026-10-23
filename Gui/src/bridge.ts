@@ -169,6 +169,22 @@ export class JuceBridge implements MetalEqBridge {
     return this.call<SuggestionCurveResult>('getSuggestionCurve', [amount]);
   }
 
+  startResonanceScan(): Promise<OpResult> {
+    return this.call<OpResult>('startResonanceScan', []);
+  }
+
+  cancelResonanceScan(): Promise<OpResult> {
+    return this.call<OpResult>('cancelResonanceScan', []);
+  }
+
+  applyResonanceSelection(indices: number[]): Promise<OpResult> {
+    return this.call<OpResult>('applyResonanceSelection', [indices]);
+  }
+
+  clearSurgicalBands(): Promise<OpResult> {
+    return this.call<OpResult>('clearSurgicalBands', []);
+  }
+
   setEditorExpanded(expanded: boolean): Promise<OpResult> {
     return this.call<OpResult>('setEditorExpanded', [expanded]);
   }

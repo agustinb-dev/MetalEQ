@@ -26,9 +26,11 @@ import type {
   MetalEqBridge,
   ParamSpec,
   PresetInfo,
+  ResonanceInfo,
 } from './types';
 import {
   NUM_BANDS,
+  NUM_SURGICAL_BANDS,
   formatFreqPlain,
   formatGain,
   formatPercent,
@@ -134,6 +136,233 @@ function analyzerStatusText(status: number, progress: number, suggestion: number
 
 //----------------------------------------------------------------------------
 // Small presentational pieces
+
+function confidenceLabel(value: number): string {
+  if (value >= 0.6) return 'HIGH';
+  if (value >= 0.4) return 'MEDIUM';
+  return 'LOW';
+}
+
+/** Plain-language scan status. The detector is advisory, so the copy never
+    promises that a candidate is definitely a problem.
+*/
+function resonanceStatusText(info: ResonanceInfo): string {
+  switch (info.status) {
+    case AnalyzerStatus.capturing:
+      return `Listening: ${Math.round(info.progress * 100)}% · play varied riffs and let notes ring.`;
+    case AnalyzerStatus.analyzing:
+      return 'Separating stationary peaks from moving harmonics…';
+    case AnalyzerStatus.ready:
+      return info.candidates.length === 0
+        ? 'No narrow stationary peaks stood out. Nothing will be changed.'
+        : `${info.candidates.length} candidate${info.candidates.length === 1 ? '' : 's'} found. Audition before applying.`;
+    case AnalyzerStatus.failed:
+      return 'No usable audio was captured. Play audio and scan again.';
+    default:
+      return 'Finds narrow, stationary peaks that make a tone harsh or stuck. Capture is temporary.';
+  }
+}
+
+function ResonancePanel({
+  info,
+  selected,
+  hovered,
+  surgicalActive,
+  audition,
+  onScan,
+  onCancel,
+  onToggleCandidate,
+  onHoverCandidate,
+  onApply,
+  onClear,
+  onAudition,
+}: {
+  info: ResonanceInfo;
+  selected: number[];
+  hovered: number | null;
+  surgicalActive: boolean;
+  audition: boolean;
+  onScan: () => void;
+  onCancel: () => void;
+  onToggleCandidate: (index: number) => void;
+  onHoverCandidate: (index: number | null) => void;
+  onApply: () => void;
+  onClear: () => void;
+  onAudition: (enabled: boolean) => void;
+}) {
+  const capturing = info.status === AnalyzerStatus.capturing;
+  const analyzing = info.status === AnalyzerStatus.analyzing;
+  const ready = info.status === AnalyzerStatus.ready;
+  const canSelect = ready || info.status === AnalyzerStatus.idle || info.status === AnalyzerStatus.failed;
+
+  return (
+    <section className="resonance-section">
+      <div className="section-heading">
+        <span className="section-title">Resonance scan</span>
+        <span className="section-hint">find narrow stationary peaks, audition, then cut surgically</span>
+      </div>
+
+      <div className="resonance-toolbar">
+        <button
+          type="button"
+          className="btn capture-btn"
+          onClick={capturing ? onCancel : onScan}
+          disabled={analyzing}
+          title="Capture 8 seconds of playing. The scan looks for peaks that stay at the same frequency across notes."
+        >
+          {capturing ? 'Stop scan' : analyzing ? 'Analyzing…' : 'Scan 8 seconds'}
+        </button>
+        <span className={`resonance-status${ready && info.candidates.length > 0 ? ' ready' : ''}`}>
+          {resonanceStatusText(info)}
+        </span>
+        <div className="resonance-toolbar-spacer" />
+        <Toggle
+          label="HEAR REMOVED"
+          checked={audition}
+          disabled={!surgicalActive}
+          variant="accent"
+          onChange={onAudition}
+          tip="Monitor the surgical cuts in isolation. This listening aid is never saved with the preset."
+        />
+        <button
+          type="button"
+          className="btn primary"
+          disabled={!ready || selected.length === 0}
+          onClick={onApply}
+          title="Copy the selected candidates into the six surgical bands."
+        >
+          Apply selected
+        </button>
+        <button
+          type="button"
+          className="btn"
+          disabled={!surgicalActive}
+          onClick={onClear}
+          title="Switch off and zero every surgical resonance band."
+        >
+          Clear cuts
+        </button>
+      </div>
+
+      {ready && !info.enoughVariation && (
+        <div className="resonance-warning">
+          The capture was too static to separate harmonics from resonances. Play across several
+          notes, with bends or vibrato, for a more reliable scan.
+        </div>
+      )}
+
+      {info.status === AnalyzerStatus.ready && info.candidates.length > 0 && (
+        <div className="resonance-list" role="list" aria-label="Resonance candidates">
+          {info.candidates.map((candidate, index) => {
+            const isSelected = selected.includes(index);
+            const isHovered = hovered === index;
+            return (
+              <label
+                key={`${candidate.freq}-${index}`}
+                className={`resonance-candidate${isSelected ? ' selected' : ''}${isHovered ? ' hovered' : ''}`}
+                onPointerEnter={() => onHoverCandidate(index)}
+                onPointerLeave={() => onHoverCandidate(null)}
+              >
+                <input
+                  type="checkbox"
+                  checked={isSelected}
+                  disabled={!canSelect}
+                  onChange={() => onToggleCandidate(index)}
+                  aria-label={`Select ${Math.round(candidate.freq)} Hz resonance`}
+                />
+                <span className="resonance-rank">{index + 1}</span>
+                <span className="resonance-frequency">{formatFreqPlain(candidate.freq)}</span>
+                <span className={`resonance-confidence ${confidenceLabel(candidate.confidence).toLowerCase()}`}>
+                  {confidenceLabel(candidate.confidence)}
+                </span>
+                <span className="resonance-cut">{candidate.cutDb.toFixed(1)} dB cut</span>
+                <span className="resonance-detail">
+                  Q {candidate.q.toFixed(1)} · peak +{candidate.prominence.toFixed(1)} dB · residual +{candidate.residual.toFixed(1)} dB
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="resonance-disclaimer">
+        Suggestions, not automatic fixes. Compare bypass on/off and keep only the cuts that improve
+        the tone. Surgical bands are separate from the five musical bands.
+      </div>
+    </section>
+  );
+}
+
+function SurgicalPanel({
+  params,
+  onParam,
+  onDrag,
+}: {
+  params: Record<string, number>;
+  onParam: (id: string, value: number) => void;
+  onDrag: (id: string, dragging: boolean) => void;
+}) {
+  return (
+    <div className="surgical-panel" role="group" aria-label="Surgical resonance bands">
+      {Array.from({ length: NUM_SURGICAL_BANDS }, (_, i) => {
+        const n = i + 1;
+        const freqId = `res${n}Freq`;
+        const gainId = `res${n}Gain`;
+        const qId = `res${n}Q`;
+        const onId = `res${n}On`;
+        const freqSpec = specOf(freqId);
+        const gainSpec = specOf(gainId);
+        const qSpec = specOf(qId);
+        const enabled = (params[onId] ?? 0) >= 0.5;
+        return (
+          <div className={`surgical-card${enabled ? ' enabled' : ''}`} key={n}>
+            <div className="surgical-card-head">
+              <span className="surgical-index">{n}</span>
+              <div className="surgical-title">SURGICAL {n}</div>
+              <Toggle
+                label="ON"
+                checked={enabled}
+                onChange={(value) => onParam(onId, value ? 1 : 0)}
+                tip="Enable this narrow resonance cut."
+              />
+            </div>
+            <Slider
+              label="FREQ"
+              value={params[freqId] ?? freqSpec.def}
+              min={freqSpec.min}
+              max={freqSpec.max}
+              skew={freqSpec.skew}
+              format={formatFreqPlain}
+              tip="Narrow cut centre. Scan candidates fill this automatically."
+              onDragStateChange={(dragging) => onDrag(freqId, dragging)}
+              onChange={(value) => onParam(freqId, snapPlain(freqSpec, value))}
+            />
+            <Slider
+              label="CUT"
+              value={params[gainId] ?? gainSpec.def}
+              min={gainSpec.min}
+              max={gainSpec.max}
+              format={formatGain}
+              tip="Cut depth. Deeper is not better: remove only the harsh peak."
+              onDragStateChange={(dragging) => onDrag(gainId, dragging)}
+              onChange={(value) => onParam(gainId, snapPlain(gainSpec, value))}
+            />
+            <Slider
+              label="Q"
+              value={params[qId] ?? qSpec.def}
+              min={qSpec.min}
+              max={qSpec.max}
+              format={formatQ}
+              tip="High Q is extremely narrow; lower Q removes more around the centre."
+              onDragStateChange={(dragging) => onDrag(qId, dragging)}
+              onChange={(value) => onParam(qId, snapPlain(qSpec, value))}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 function ViewToggle({ view, onChange }: { view: ViewMode; onChange: (view: ViewMode) => void }) {
   return (
@@ -702,12 +931,37 @@ export function App(): React.JSX.Element {
   const [amount, setAmount] = useState(0.75);
   const [profile, setProfile] = useState(0);
   const [selectedBand, setSelectedBand] = useState(0);
+  const [selectedCandidates, setSelectedCandidates] = useState<number[]>([]);
+  const [hoveredCandidate, setHoveredCandidate] = useState<number | null>(null);
   const manageRootRef = useRef<HTMLDivElement>(null);
   const graphSlotRef = useRef<HTMLDivElement>(null);
   const [graphSize, setGraphSize] = useState({ width: 924, height: 292 });
 
   const analyzerReady = state.analyzer.status === AnalyzerStatus.ready;
   const capturing = state.analyzer.status === AnalyzerStatus.capturing;
+  const resonance = state.resonance;
+  const surgicalActive = useMemo(() => {
+    for (let i = 0; i < NUM_SURGICAL_BANDS; i++) {
+      const n = i + 1;
+      if ((state.params[`res${n}On`] ?? 0) >= 0.5 && Math.abs(state.params[`res${n}Gain`] ?? 0) > 1e-3) {
+        return true;
+      }
+    }
+    return false;
+  }, [state.params]);
+
+  // A new scan invalidates the previous selection. Keep indices in range if a
+  // tick ever arrives with a shorter candidate list.
+  useEffect(() => {
+    if (resonance.status !== AnalyzerStatus.ready) {
+      setSelectedCandidates([]);
+      setHoveredCandidate(null);
+    }
+  }, [resonance.status]);
+
+  useEffect(() => {
+    setSelectedCandidates((previous) => previous.filter((index) => index < resonance.candidates.length));
+  }, [resonance.candidates.length]);
 
   const analyzerTargets = state.analyzerTargets;
   const targetOptions = useMemo<SelectOption[]>(
@@ -1001,6 +1255,53 @@ export function App(): React.JSX.Element {
     });
   }, [bridge, amount, showError]);
 
+  const onResonanceScan = useCallback(() => {
+    void bridge.startResonanceScan().then((result) => {
+      if (!result.ok) showError(result.error ?? 'Could not start the resonance scan.');
+    });
+  }, [bridge, showError]);
+
+  const onResonanceCancel = useCallback(() => {
+    void bridge.cancelResonanceScan().then((result) => {
+      if (!result.ok) showError(result.error ?? 'Could not stop the resonance scan.');
+    });
+  }, [bridge, showError]);
+
+  const onToggleCandidate = useCallback(
+    (index: number) => {
+      const alreadySelected = selectedCandidates.includes(index);
+      if (!alreadySelected && selectedCandidates.length >= NUM_SURGICAL_BANDS) {
+        showError(`The scan can apply at most ${NUM_SURGICAL_BANDS} candidates. Deselect one first.`);
+        return;
+      }
+      setSelectedCandidates((previous) => {
+        if (previous.includes(index)) return previous.filter((value) => value !== index);
+        return [...previous, index].sort((a, b) => a - b);
+      });
+      setHoveredCandidate(index);
+    },
+    [selectedCandidates, showError],
+  );
+
+  const onApplyResonance = useCallback(() => {
+    if (selectedCandidates.length === 0) return;
+    void bridge.applyResonanceSelection(selectedCandidates).then((result) => {
+      if (!result.ok) showError(result.error ?? 'Applying the resonance selection failed.');
+    });
+  }, [bridge, selectedCandidates, showError]);
+
+  const onClearSurgical = useCallback(() => {
+    setParam('resAudition', 0);
+    void bridge.clearSurgicalBands().then((result) => {
+      if (!result.ok) showError(result.error ?? 'Could not clear the surgical bands.');
+    });
+  }, [bridge, setParam, showError]);
+
+  const onAuditionCuts = useCallback(
+    (enabled: boolean) => setParam('resAudition', enabled ? 1 : 0),
+    [setParam],
+  );
+
   const activeFactory = useMemo(() => {
     if (state.preset.presetId.length > 0) {
       return state.factoryPresets.find((preset) => preset.id === state.preset.presetId);
@@ -1247,6 +1548,11 @@ export function App(): React.JSX.Element {
           curve={state.curve}
           params={state.params}
           suggestionCurve={analyzerReady ? state.suggestionCurve : null}
+          resonanceCandidates={resonance.status === AnalyzerStatus.ready ? resonance.candidates : []}
+          selectedCandidates={selectedCandidates}
+          hoveredCandidate={hoveredCandidate}
+          onToggleCandidate={onToggleCandidate}
+          onHoverCandidate={setHoveredCandidate}
           editable
           selectedBand={selectedBand}
           onSelectBand={setSelectedBand}
@@ -1292,6 +1598,31 @@ export function App(): React.JSX.Element {
             </div>
             <FilterPanel params={state.params} onParam={setParam} onDrag={knobDrag} />
             <ShelfPanel params={state.params} onParam={setParam} onDrag={knobDrag} />
+          </section>
+
+          <ResonancePanel
+            info={resonance}
+            selected={selectedCandidates}
+            hovered={hoveredCandidate}
+            surgicalActive={surgicalActive}
+            audition={(state.params.resAudition ?? 0) >= 0.5}
+            onScan={onResonanceScan}
+            onCancel={onResonanceCancel}
+            onToggleCandidate={onToggleCandidate}
+            onHoverCandidate={setHoveredCandidate}
+            onApply={onApplyResonance}
+            onClear={onClearSurgical}
+            onAudition={onAuditionCuts}
+          />
+
+          <section className="parameter-section">
+            <div className="section-heading">
+              <span className="section-title">Surgical resonance cuts</span>
+              <span className="section-hint">
+                six narrow, independent bands · scan suggestions never overwrite the five musical bands
+              </span>
+            </div>
+            <SurgicalPanel params={state.params} onParam={setParam} onDrag={knobDrag} />
           </section>
 
           {analyzerPanel}

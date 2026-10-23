@@ -14,7 +14,7 @@
     * The audio thread never touches the bridge, the WebView, or any state
       owned here. Parameters travel exclusively through APVTS atomics.
 
-    Protocol (version 2)
+    Protocol (version 3)
     --------------------
     JS -> C++ via registered native functions (promise based):
         uiReady()                              -> full initial snapshot
@@ -34,6 +34,10 @@
         cancelAnalyzerCapture()
         applyAnalyzerSuggestion (amount)
         getSuggestionCurve (amount)            -> { ok, curve, error? }
+        startResonanceScan()
+        cancelResonanceScan()
+        applyResonanceSelection ([indices])    // up to six candidates
+        clearSurgicalBands()
         setEditorExpanded (expanded)           -> { ok } (Advanced view window grow)
 
     C++ -> JS via one event ("metaleq.tick") carrying a JSON object:
@@ -47,6 +51,9 @@
           analyzerTargets,// stable target ids/labels on the uiReady snapshot only
           meters,         // { in, out } every tick (cheap atomics)
           analyzer,       // { status, progress, suggestion[5] } when changed
+          resonance,      // { status, progress, enoughVariation,
+                          //   candidates: [{freq,q,prominence,residual,
+                          //                 confidence,cutDb}] } when changed
           curve           // { points: [dB x 240], minDb: -15, maxDb: 15 }
                           // when EQ-relevant params changed
         }
@@ -98,7 +105,7 @@ std::optional<double> validateParameterWrite (juce::AudioProcessorValueTreeState
 class UiBridge : public juce::OptionsBuilder<juce::WebBrowserComponent::Options>
 {
 public:
-    static constexpr int protocolVersion = 2;
+    static constexpr int protocolVersion = 3;
     static constexpr int numCurvePoints  = 240;
     static constexpr int tickHz          = 20;
 
@@ -164,6 +171,10 @@ private:
     juce::var handleCancelAnalyzerCapture();
     juce::var handleApplyAnalyzerSuggestion (const juce::Array<juce::var>& args);
     juce::var handleGetSuggestionCurve (const juce::Array<juce::var>& args);
+    juce::var handleStartResonanceScan();
+    juce::var handleCancelResonanceScan();
+    juce::var handleApplyResonanceSelection (const juce::Array<juce::var>& args);
+    juce::var handleClearSurgicalBands();
     juce::var handleSetEditorExpanded (const juce::Array<juce::var>& args);
 
     //==========================================================================
@@ -171,6 +182,7 @@ private:
     juce::var buildParamsObject (bool includeAll);
     juce::var buildPresetObject();
     juce::var buildAnalyzerObject();
+    juce::var buildResonanceObject();
     juce::var buildCurveArray();
     juce::var buildFactoryPresetList();
     juce::var buildAnalyzerTargetList();
@@ -199,6 +211,9 @@ private:
     std::array<float, metaleq::kNumBands> lastSuggestion {};
     int lastAnalyzerStatus = -1;
     float lastAnalyzerProgress = -1.0f;
+    int lastResonanceStatus = -1;
+    float lastResonanceProgress = -1.0f;
+    unsigned long long lastResonanceRevision = 0;
     juce::StringArray lastUserPresets;
     double lastSampleRate = 0.0;
 

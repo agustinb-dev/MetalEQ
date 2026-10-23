@@ -143,7 +143,7 @@ void testStateRoundTrip (MetalEQAudioProcessor& processor)
 
     const auto tree = juce::ValueTree::readFromData (state.getData(), static_cast<size_t> (state.getSize()));
     check (tree.isValid() && tree.hasType ("MetalEQState"), "state has the expected root type");
-    check (static_cast<int> (tree.getProperty ("version")) == 2, "state uses schema version 2");
+    check (static_cast<int> (tree.getProperty ("version")) == 3, "state uses schema version 3");
     check (tree.getChildWithName ("AB").isValid(), "state stores A/B slots");
     check (tree.getChildWithName ("BASELINE").isValid(), "state stores a dirty baseline");
     check (tree.getChildWithName ("AB").getNumChildren() == 2, "state stores both A/B slots");
@@ -163,12 +163,97 @@ void testStateRoundTrip (MetalEQAudioProcessor& processor)
     check (processor.getLastPresetName() == aName, "state restores the inactive A slot sound");
     check (processor.getLastPresetId() == aId, "state restores the inactive A slot id");
 
+    // V3 surgical bands are part of the session and of each A/B slot, while
+    // the delta monitor is a temporary listening aid and must not be saved.
+    processor.setAbSlot (1);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resFreq[0], 733.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resGain[0], -5.5f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resQ[0], 9.5f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resOn[0], 1.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resAudition, 1.0f);
+
+    processor.getStateInformation (state);
+    const auto surgicalTree = juce::ValueTree::readFromData (state.getData(),
+                                                             static_cast<size_t> (state.getSize()));
+    bool surgicalSaved = false;
+    bool auditionSaved = false;
+    const auto savedParams = surgicalTree.getChildWithName ("PARAMS");
+    for (int i = 0; i < savedParams.getNumChildren(); ++i)
+    {
+        const auto id = savedParams.getChild (i).getProperty ("id").toString();
+        if (id == MetalEQAudioProcessor::ParameterIDs::resGain[0])
+            surgicalSaved = true;
+        if (id == MetalEQAudioProcessor::ParameterIDs::resAudition)
+            auditionSaved = true;
+    }
+    check (surgicalSaved, "session state includes the surgical resonance bands");
+    check (! auditionSaved, "session state excludes the temporary delta monitor");
+
+    processor.resetToNeutral();
+    processor.setAbSlot (0);
+    processor.setStateInformation (state.getData(), static_cast<int> (state.getSize()));
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::resGain[0]) + 5.5f) < 0.02f,
+           "state restores a surgical cut");
+    check (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::resOn[0]) > 0.5f,
+           "state restores a surgical band enable");
+
     // Changing a parameter marks the slot dirty; revert restores its baseline.
     processor.setAbSlot (1);
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::bandGain[1], 5.0f);
     check (processor.getDisplayState().presetDirty, "editing a restored slot marks it dirty");
     processor.revertToLoadedPreset();
     check (! processor.getDisplayState().presetDirty, "reverting a restored slot clears dirty");
+
+    // A version-2 session predates the surgical bands. Restoring it must not
+    // inherit whatever happened to be in APVTS: those bands start flat/off.
+    processor.setAbSlot (0);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resFreq[1], 777.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resGain[1], -8.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resQ[1], 12.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resOn[1], 1.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resAudition, 1.0f);
+
+    juce::MemoryBlock v3State;
+    processor.getStateInformation (v3State);
+    auto v2Tree = juce::ValueTree::readFromData (v3State.getData(),
+                                                static_cast<size_t> (v3State.getSize()));
+    v2Tree.setProperty ("version", 2, nullptr);
+
+    const auto stripSurgical = [] (juce::ValueTree params)
+    {
+        if (! params.isValid())
+            return;
+        for (int i = params.getNumChildren(); --i >= 0;)
+            if (params.getChild (i).getProperty ("id").toString().startsWith ("res"))
+                params.removeChild (i, nullptr);
+    };
+
+    stripSurgical (v2Tree.getChildWithName ("PARAMS"));
+    stripSurgical (v2Tree.getChildWithName ("BASELINE").getChildWithName ("PARAMS"));
+    auto v2Ab = v2Tree.getChildWithName ("AB");
+    for (int i = 0; i < v2Ab.getNumChildren(); ++i)
+    {
+        stripSurgical (v2Ab.getChild (i).getChildWithName ("PARAMS"));
+        stripSurgical (v2Ab.getChild (i).getChildWithName ("BASELINE").getChildWithName ("PARAMS"));
+    }
+
+    juce::MemoryBlock v2Block;
+    {
+        juce::MemoryOutputStream stream (v2Block, false);
+        v2Tree.writeToStream (stream);
+    }
+    processor.setStateInformation (v2Block.getData(), static_cast<int> (v2Block.getSize()));
+
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::resFreq[1]) - 620.0f) < 0.1f,
+           "old session resets surgical frequency to its default");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::resGain[1])) < 0.01f,
+           "old session resets surgical gain flat");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::resQ[1]) - 7.0f) < 0.01f,
+           "old session resets surgical Q to its default");
+    check (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::resOn[1]) < 0.5f,
+           "old session disables surgical bands");
+    check (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::resAudition) < 0.5f,
+           "old session disables the delta monitor");
 }
 } // namespace
 
@@ -209,13 +294,46 @@ int main()
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::lpSlope, 2.0f);
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::lpOn, 1.0f);
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::shapeOn[3], 1.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resFreq[0], 733.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resGain[0], -5.5f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resQ[0], 9.5f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resOn[0], 1.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resAudition, 1.0f);
     check (processor.saveUserPreset (presetA, false, error), "user preset saves");
     check (error.isEmpty(), "successful save has no error");
+
+    // V3 user presets carry the surgical bands. The delta monitor is a
+    // listening aid, not tone, and must never be serialized.
+    const auto presetAFile = presetDirectory.getChildFile (
+        juce::File::createLegalFileName (presetA) + ".metaleq");
+    const auto presetAXml = juce::XmlDocument::parse (presetAFile);
+    bool schemaIsTwo = false;
+    bool surgicalInPreset = false;
+    bool auditionInPreset = false;
+    if (presetAXml != nullptr)
+    {
+        const auto root = juce::ValueTree::fromXml (*presetAXml);
+        schemaIsTwo = root.getProperty ("schemaVersion").toString() == "2";
+        const auto params = root.getChildWithName ("PARAMS");
+        for (int i = 0; i < params.getNumChildren(); ++i)
+        {
+            const auto id = params.getChild (i).getProperty ("id").toString();
+            if (id == MetalEQAudioProcessor::ParameterIDs::resGain[0])
+                surgicalInPreset = true;
+            if (id == MetalEQAudioProcessor::ParameterIDs::resAudition)
+                auditionInPreset = true;
+        }
+    }
+    check (schemaIsTwo, "V3 user presets use schema version 2");
+    check (surgicalInPreset, "user presets include the surgical resonance bands");
+    check (! auditionInPreset, "user presets exclude the temporary delta monitor");
 
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::bandFreq[2], 500.0f);
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::bandGain[2], 2.0f);
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::lpOn, 0.0f);
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::shapeOn[3], 0.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resGain[0], -1.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resOn[0], 0.0f);
     const bool loadedPreset = processor.loadUserPreset (presetA, error);
     if (! loadedPreset)
         std::cerr << "User preset load error: " << error << '\n';
@@ -228,6 +346,12 @@ int main()
            "preset round trip restores low-pass enable");
     check (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::lpSlope) > 1.5f,
            "preset round trip restores low-pass slope");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::resFreq[0]) - 733.0f) < 0.1f,
+           "preset round trip restores a surgical frequency");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::resGain[0]) + 5.5f) < 0.02f,
+           "preset round trip restores a surgical cut");
+    check (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::resOn[0]) > 0.5f,
+           "preset round trip restores a surgical band enable");
 
     check (! processor.saveUserPreset (presetA, false, error), "duplicate save is rejected without overwrite");
     check (processor.saveUserPreset (presetA, true, error), "explicit overwrite succeeds");
@@ -288,6 +412,46 @@ int main()
     check (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::lpOn) > 0.5f,
            "legacy blank lpOn migrates to enabled when slope is active");
     legacyFile.deleteFile();
+
+    // A version-1 user preset predates surgical bands. Loading it appends the
+    // V3 defaults instead of leaving whatever happened to be in APVTS.
+    const auto oldSchemaName = "EQ V1 " + token;
+    const auto oldSchemaFile = presetDirectory.getChildFile (
+        juce::File::createLegalFileName (oldSchemaName) + ".metaleq");
+    check (processor.saveUserPreset (oldSchemaName, false, error), "old-schema fixture base preset saves");
+    const auto oldSchemaXml = juce::XmlDocument::parse (oldSchemaFile);
+    if (oldSchemaXml != nullptr)
+    {
+        auto root = juce::ValueTree::fromXml (*oldSchemaXml);
+        root.setProperty ("schemaVersion", 1, nullptr);
+        auto params = root.getChildWithName ("PARAMS");
+        for (int i = params.getNumChildren(); --i >= 0;)
+            if (params.getChild (i).getProperty ("id").toString().startsWith ("res"))
+                params.removeChild (i, nullptr);
+        const auto updatedXml = root.createXml();
+        check (updatedXml != nullptr && oldSchemaFile.replaceWithText (updatedXml->toString()),
+               "version-1 user preset fixture is written");
+    }
+    else
+    {
+        check (false, "old-schema fixture XML is readable");
+    }
+
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resFreq[2], 3900.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resGain[2], -10.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resQ[2], 18.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resOn[2], 1.0f);
+    check (processor.loadUserPreset (oldSchemaName, error), "version-1 user preset loads");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::resFreq[2]) - 1200.0f) < 0.1f,
+           "old user preset fills the default surgical frequency");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::resGain[2])) < 0.01f,
+           "old user preset leaves the new surgical band flat");
+    check (std::abs (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::resQ[2]) - 7.0f) < 0.01f,
+           "old user preset fills the default surgical Q");
+    check (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::resOn[2]) < 0.5f,
+           "old user preset leaves the new surgical band disabled");
+    oldSchemaFile.deleteFile();
+
     check (! processor.loadUserPreset ("../outside", error), "path traversal preset name is rejected");
     check (! processor.saveUserPreset ("bad/name", false, error), "unsafe preset name is rejected");
 

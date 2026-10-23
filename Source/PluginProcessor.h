@@ -16,10 +16,12 @@
 #include <array>
 #include <memory>
 #include <thread>
+#include <vector>
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_events/juce_events.h>
 
+#include "dsp/MetalEqAnalysis.h"
 #include "dsp/MetalEqDsp.h"
 #include "dsp/MetalEqParams.h"
 #include "dsp/MetalEqPresets.h"
@@ -101,6 +103,10 @@ public:
         static const char* bandGain[metaleq::kNumBands];
         static const char* bandQ[metaleq::kNumBands];
         static const char* bandOn[metaleq::kNumBands];
+        static const char* resFreq[metaleq::kNumSurgicalBands];
+        static const char* resGain[metaleq::kNumSurgicalBands];
+        static const char* resQ[metaleq::kNumSurgicalBands];
+        static const char* resOn[metaleq::kNumSurgicalBands];
         static const char* shapeOn[6];
         static const char* trim;
         static const char* tight;
@@ -111,6 +117,7 @@ public:
         static const char* preset;
         static const char* abCompare;
         static const char* bypass;
+        static const char* resAudition;
 
         static juce::StringArray allEqParameterIds();
     };
@@ -210,6 +217,24 @@ public:
     double getAnalyzerResponseDb (double freq, float amount) const;
     void applyAnalyzerSuggestion (float amount);
 
+    //--- V3 resonance scan ---------------------------------------------------
+    /** Starts an 8-second capture whose analysis looks for stationary,
+        narrow resonances instead of matching a target curve.
+    */
+    void startResonanceScan();
+    void cancelResonanceScan() noexcept;
+    AnalyzerStatus getResonanceStatus() const noexcept;
+    float getResonanceProgress() const noexcept;
+    bool getResonanceEnoughVariation() const noexcept;
+    int getResonanceCandidateCount() const noexcept;
+    bool getResonanceCandidate (int index, metaleq::ResonanceCandidate& candidate) const noexcept;
+    unsigned long long getResonanceRevision() const noexcept;
+    /** Copies the selected candidates into the six surgical bands, strongest
+        selection first. Bands not covered by the selection are switched off.
+    */
+    void applyResonanceSelection (const std::vector<int>& candidateIndices);
+    void clearSurgicalBands();
+
     //==============================================================================
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
@@ -220,9 +245,12 @@ private:
 
     void analyzerWorkerLoop();
     void analyzeCapture (int sampleCount, double sampleRate);
+    void analyzeResonanceCapture (int sampleCount, double sampleRate);
     void captureAnalyzerInput (const juce::AudioBuffer<float>& buffer) noexcept;
     void serviceDeferredAnalyzerStart() noexcept;
-    void startAnalyzerCaptureWithGeneration (int targetProfile, unsigned long long cancelGeneration);
+    void startAnalyzerCaptureWithGeneration (int targetProfile, int mode, unsigned long long cancelGeneration);
+    AnalyzerStatus captureStatus() const noexcept;
+    void clearResonanceCandidates() noexcept;
 
     metaleq::EqSettings     readEqSettings() const;
     metaleq::MacroSettings  readMacroSettings() const;
@@ -237,6 +265,14 @@ private:
     juce::ValueTree getSoundParameterState (bool includeTrim = true) const;
     bool applySoundParameterState (const juce::ValueTree& state, juce::String& error,
                                    bool includeTrim = true);
+    /** Appends defaults for V3 surgical parameters that did not exist when an
+        older user preset or project state was written. Missing legacy fields
+        are still rejected.
+    */
+    juce::ValueTree migrateSoundParameterState (const juce::ValueTree& state,
+                                                bool includeTrim = true) const;
+    static bool isV3SurgicalParameterId (const juce::String& id);
+    void markCurrentToneAsCustom();
     void rememberCurrentAsLoadedPreset (const juce::String& name, bool isUser);
     juce::File getUserPresetFile (const juce::String& name) const;
     static bool isSafePresetName (const juce::String& name);
@@ -306,11 +342,36 @@ private:
     std::atomic<int> analyzerCaptureLimit { maxCaptureSamples };
     std::atomic<int> analyzerTargetProfile { 0 };
     std::atomic<int> analyzerSampleRate { 48000 };
+    /** 0 = target-profile analyzer, 1 = V3 resonance scan. */
+    std::atomic<int> analyzerMode { 0 };
+    std::atomic<int> analyzerDeferredStartMode { 0 };
     std::array<std::atomic<float>, metaleq::kNumBands> analyzerSuggestion {};
     std::atomic<bool> stopAnalyzerWorker { false };
     std::thread analyzerWorker;
 
+    //--- V3 resonance scan results ------------------------------------------
+    std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> resonanceFreq {};
+    std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> resonanceQ {};
+    std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> resonanceProminence {};
+    std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> resonanceResidual {};
+    std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> resonanceConfidence {};
+    std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> resonanceCut {};
+    std::atomic<int> resonanceCandidateCount { 0 };
+    std::atomic<bool> resonanceEnoughVariation { false };
+    std::atomic<unsigned long long> resonanceRevision { 0 };
+
     metaleq::EqEngine engine;
+
+    // Delta monitor ("hear what the surgical cuts remove"). Both engines and
+    // all scratch buffers are prepared on the message thread; the audio thread
+    // only copies and multiplies in preallocated memory.
+    metaleq::EqEngine auditionEngine;
+    metaleq::EqSettings cachedAuditionEq {};
+    double cachedAuditionSampleRate = 0.0;
+    bool auditionChainCacheValid = false;
+    bool wasAuditioning = false;
+    juce::AudioBuffer<float> auditionDryBuffer;
+    juce::AudioBuffer<float> auditionWetBuffer;
 
     std::array<std::atomic<float>, metaleq::kMaxChannels> peakLevels {};
     std::array<std::atomic<float>, metaleq::kMaxChannels> inputPeakLevels {};

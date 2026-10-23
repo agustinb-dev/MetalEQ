@@ -13,6 +13,7 @@
 export const GRAPH_MIN_FREQ = 20;
 export const GRAPH_MAX_FREQ = 20000;
 export const NUM_BANDS = 5;
+export const NUM_SURGICAL_BANDS = 6;
 
 const K_PI = 3.14159265358979323846;
 const BUTTERWORTH_Q = 0.7071067811865475244;
@@ -49,6 +50,8 @@ export interface EqSettings {
   hsFreq: number;
   hsGainDb: number;
   bands: BandSettings[];
+  /** Narrow V3 resonance cuts, applied after the five musical bands. */
+  surgical: BandSettings[];
   shapes: boolean[]; // TIGHTEN, SCOOP, MID PUNCH, PICK ATTACK, FIZZ TAMER, BRIGHTEN
   trimDb: number;
 }
@@ -221,6 +224,13 @@ export function buildChain(eq: EqSettings, macros: MacroSettings, sampleRate: nu
 
   for (let i = 0; i < NUM_BANDS; ++i) {
     const b = eq.bands[i];
+    if (b && b.on && Math.abs(b.gainDb) > 1e-3) {
+      chain.filters.push({ type: 'peak', freq: b.freq, q: b.q, gainDb: b.gainDb });
+    }
+  }
+
+  for (let i = 0; i < NUM_SURGICAL_BANDS; ++i) {
+    const b = eq.surgical[i];
     if (b && b.on && Math.abs(b.gainDb) > 1e-3) {
       chain.filters.push({ type: 'peak', freq: b.freq, q: b.q, gainDb: b.gainDb });
     }

@@ -18,6 +18,7 @@ import type {
   FactoryPresetInfo,
   MetersInfo,
   PresetInfo,
+  ResonanceInfo,
   Snapshot,
   TickMessage,
 } from './types';
@@ -33,6 +34,7 @@ export interface UiState {
   userPresets: string[];
   meters: MetersInfo;
   analyzer: AnalyzerInfo;
+  resonance: ResonanceInfo;
   curve: CurveInfo | null;
   /** Curve of the suggested correction (240 dB points), fetched on demand. */
   suggestionCurve: number[] | null;
@@ -60,6 +62,7 @@ const initialState: UiState = {
   userPresets: [],
   meters: { in: 0, out: 0 },
   analyzer: { status: 0, progress: 0, suggestion: [0, 0, 0, 0, 0] },
+  resonance: { status: 0, progress: 0, enoughVariation: false, candidates: [] },
   curve: null,
   suggestionCurve: null,
   dragging: new Set(),
@@ -94,6 +97,7 @@ class Store {
       analyzerTargets: s.analyzerTargets ?? [],
       userPresets: s.userPresets ?? [],
       analyzer: s.analyzer ?? this.state.analyzer,
+      resonance: s.resonance ?? this.state.resonance,
       curve: s.curve ?? this.state.curve,
       suggestionCurve: null,
     });
@@ -119,6 +123,15 @@ class Store {
       if (t.analyzer.status !== 4) patch.suggestionCurve = null;
     }
     if (t.curve) patch.curve = t.curve;
+    if (t.resonance) {
+      patch.resonance = {
+        status: t.resonance.status,
+        progress: t.resonance.progress,
+        enoughVariation: t.resonance.enoughVariation,
+        candidates: t.resonance.candidates ?? [],
+        changed: t.resonance.changed,
+      };
+    }
 
     if (Object.keys(patch).length > 0) this.set(patch);
   }

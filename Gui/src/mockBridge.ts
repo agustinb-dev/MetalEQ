@@ -105,9 +105,9 @@ function buildMockAnalyzer(targetIndex: number): AnalyzerInfo {
       if (distance < best) { best = distance; nearest = f; }
     }
     const delta = targetShape[nearest] - MOCK_INPUT_SHAPE[nearest];
-    const deadbanded = Math.abs(delta) <= 0.75 ? 0 : delta - Math.sign(delta) * 0.75;
-    const scale = 0.55 + 0.45 * Math.min(0.9, meta.confidence);
-    suggestion.push(clampMock(deadbanded * scale * 0.65, -6, 6));
+    const deadbanded = Math.abs(delta) <= 0.5 ? 0 : delta - Math.sign(delta) * 0.5;
+    const scale = 0.8 + 0.2 * Math.min(0.9, meta.confidence);
+    suggestion.push(clampMock(deadbanded * scale * 0.65, -12, 12));
   }
 
   const predicted = MOCK_INPUT_SHAPE.map((value, i) => value + (targetShape[i] - value) * 0.55);

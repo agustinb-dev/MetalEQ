@@ -108,13 +108,15 @@ Translation rules, fixed before the numeric targets were written:
    - no support: **0 dB**, with an explicit unknown.
 3. Round to **0.5 dB**. Values are relative *shape objectives*, not absolute
    measured levels.
-4. Set a tolerance per band (0.75–1.5 dB). Inside the tolerance, no correction
-   is justified. This is why an input that already matches a target is left
-   alone.
+4. Set a tolerance per band. The key differentiators (90, 175, 350, 1400 and
+   5600 Hz) use 0.5 dB; the remaining bands use 0.75–1.5 dB. Inside the
+   tolerance, no correction is justified. This is why an input that already
+   matches a target is left alone.
 5. Set an importance weight (0.4–1.0). A band with weak evidence or a narrow
    effect gets a lower weight, so it cannot dominate the five-band fit.
-6. Set a per-band correction cap (1.5–3.5 dB). Even if the input is far away, no
-   single feature may demand more than a musical amount.
+6. Set a per-band correction cap (2.0–3.5 dB). Even if the input is far away, no
+   single feature may demand more than a musical amount; the overall fitted
+   gain is separately clamped to ±12 dB.
 7. Set overall confidence (0.40–0.72) from the source mix: direct interviews and
    repeated claims raise it; credit-only or single-inference targets stay low.
 8. Reject the temptation to make every target maximally different. Where the
@@ -751,7 +753,7 @@ relative to the 500–2000 Hz region; EST.
   on the same input (the actual model difference is much larger in the low end
   and low-mids).
 - Lead vs rhythm metalcore, and modern vs 2000s metalcore, likewise differ.
-- All fitted gains are finite, within ±6 dB, and produce a valid five-band EQ.
+- All fitted gains are finite, within ±12 dB, and produce a valid five-band EQ.
 - All sixteen target shapes are distinct; all have three to five source records.
 
 ---
@@ -767,12 +769,13 @@ relative to the 500–2000 Hz region; EST.
    weights, per-feature caps, confidence, sources).
 4. **Desired change** per feature: `target − input`; if inside the target's
    tolerance, zero; otherwise remove the tolerance (soft deadband); scale by
-   measurement/target confidence; clamp to the feature's cap.
+   the 0.8–1.0 confidence factor; clamp to the feature's cap. Key
+   differentiators use a 0.5 dB deadband.
 5. **Fit**: solve a weighted, ridge-regularized least-squares problem that
    approximates those eight desired changes with five peaking sections at
    120, 350, 1000, 2800 and 7000 Hz (Q = 0.8). This avoids treating five
    overlapping filters as independent bands.
-6. **Limit**: clamp every fitted gain to ±6 dB; report `alreadyClose` when the
+6. **Limit**: clamp every fitted gain to ±12 dB; report `alreadyClose` when the
    fit is below 0.25 dB.
 7. **Apply**: write the five correction gains (scaled by the Amount control) into
    MetalEQ's existing five musical band parameters. The target model is never

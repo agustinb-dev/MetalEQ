@@ -105,6 +105,7 @@ void testTargetTable()
     using namespace metaleq::tone;
 
     check (getNumToneTargets() == 16, "there are 16 target profiles");
+    check (kGlobalMaxGainDb == 12.0, "the global correction cap is 12 dB");
     check (getNumSources() >= 30, "the research record has a substantial source list");
 
     std::set<std::string> ids;
@@ -159,6 +160,13 @@ void testTargetTable()
     check (categoryCounts[0] == 6, "there are six genre targets");
     check (categoryCounts[1] == 4, "there are four artist targets");
     check (categoryCounts[2] == 6, "there are six producer targets");
+
+    // The key differentiators share a 0.5 dB deadband across all profiles.
+    for (const int feature : { 0, 1, 2, 4, 6 })
+        for (int t = 0; t < getNumToneTargets(); ++t)
+            checkNear (getToneTarget (t).features[static_cast<size_t> (feature)].toleranceDb,
+                       0.5, 1.0e-9, "key-differentiator deadband is 0.5 dB");
+
 
     check (findToneTargetById ("genre-thrash-ajfa") >= 0, "AJFA target is addressable by stable id");
     check (findToneTargetById ("producer-andy-sneap") >= 0, "Sneap target is addressable by stable id");
@@ -283,6 +291,70 @@ void testAlreadySuitableInput()
         const auto mismatchResult = computeCorrection (makeInput (mismatched, 0.95), target, sampleRate);
         check (mismatchResult.maxAbsGainDb > result.maxAbsGainDb + 0.2,
                "a real mismatch produces a larger correction than a match");
+    }
+}
+
+void testDeadbandAndConfidenceTuning()
+{
+    using namespace metaleq::tone;
+
+    // The key differentiators now use a 0.5 dB deadband. A 0.75 dB mismatch
+    // that used to be ignored must produce a small but real correction.
+    {
+        const auto& target = getToneTarget (0);
+        auto shape = targetShape (target);
+        shape[2] += 0.75; // 350 Hz
+        const auto result = computeCorrection (makeInput (shape, 1.0), target, sampleRate);
+        check (result.maxAbsGainDb > 0.05,
+               "a 0.75 dB mismatch on a key band is no longer swallowed by the deadband");
+
+        // A 0.25 dB mismatch remains inside the deadband and should be
+        // essentially ignored.
+        auto tiny = targetShape (target);
+        tiny[2] += 0.25;
+        const auto tinyResult = computeCorrection (makeInput (tiny, 1.0), target, sampleRate);
+        check (tinyResult.maxAbsGainDb < 0.10,
+               "a 0.25 dB mismatch remains inside the deadband");
+    }
+
+    // High-confidence targets should use more of the available correction
+    // than low-confidence targets for the same mismatch.
+    {
+        ToneTarget high = getToneTarget (0);
+        ToneTarget low = high;
+        high.confidence = 0.90;
+        low.confidence = 0.40;
+
+        auto shape = targetShape (high);
+        shape[2] += 2.0;
+        const auto highResult = computeCorrection (makeInput (shape, 1.0), high, sampleRate);
+        const auto lowResult = computeCorrection (makeInput (shape, 1.0), low, sampleRate);
+        check (highResult.maxAbsGainDb > lowResult.maxAbsGainDb + 0.05,
+               "higher-confidence targets receive a larger (but still limited) correction");
+    }
+
+    // The global cap is now 12 dB. An extreme synthetic destination must be
+    // allowed past the old 6 dB ceiling while remaining finite and capped.
+    {
+        ToneTarget extreme = getToneTarget (0);
+        extreme.confidence = 1.0;
+        for (auto& feature : extreme.features)
+        {
+            feature.relativeDb = 12.0;
+            feature.toleranceDb = 0.0;
+            feature.weight = 1.0;
+            feature.maxCorrectionDb = 12.0;
+        }
+
+        const auto result = computeCorrection (makeInput ({ 0, 0, 0, 0, 0, 0, 0, 0 }, 1.0),
+                                               extreme, sampleRate);
+        check (result.maxAbsGainDb > 6.0,
+               "the raised 12 dB ceiling is reachable for an extreme mismatch");
+        check (result.maxAbsGainDb <= kGlobalMaxGainDb + 1.0e-9,
+               "even an extreme mismatch stops at the 12 dB safety cap");
+        for (const double gain : result.gainsDb)
+            check (std::isfinite (gain) && std::abs (gain) <= kGlobalMaxGainDb + 1.0e-9,
+                   "the 12 dB cap applies per band");
     }
 }
 
@@ -454,6 +526,7 @@ int main()
     testInputAnalysis();
     testCorrectionSafety();
     testAlreadySuitableInput();
+    testDeadbandAndConfidenceTuning();
     testInputAdaptation();
     testTargetDistinctness();
     testEvidenceTraceability();

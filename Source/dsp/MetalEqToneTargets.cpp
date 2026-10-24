@@ -189,13 +189,13 @@ constexpr std::array<ToneTarget, 16> kTargets {{
         "engineering estimates. Captures of a DI, a full mix, or a very different cabinet will not map exactly.",
         0.72,
         {{
-            f (-3.0, 1.00, 0.7, 3.0, Evidence::documented, kRumble),
-            f (-1.0, 0.75, 0.8, 3.0, Evidence::documented, kTightLow),
-            f (-2.5, 1.00, 1.0, 3.5, Evidence::documented, kMidScoop),
+            f (-3.0, 0.50, 0.7, 3.0, Evidence::documented, kRumble),
+            f (-1.0, 0.50, 0.8, 3.0, Evidence::documented, kTightLow),
+            f (-2.5, 0.50, 1.0, 3.5, Evidence::documented, kMidScoop),
             f (+1.0, 0.75, 0.7, 2.5, Evidence::secondary, kMidBody),
-            f (+3.0, 1.00, 1.0, 3.0, Evidence::documented, kUpperMid),
+            f (+3.0, 0.50, 1.0, 3.0, Evidence::documented, kUpperMid),
             f (+2.0, 1.00, 1.0, 2.5, Evidence::documented, kPresence),
-            f (-2.0, 1.00, 0.7, 2.5, Evidence::secondary, kSmoothTop),
+            f (-2.0, 0.50, 0.7, 2.5, Evidence::secondary, kSmoothTop),
             f (-5.0, 1.50, 0.4, 2.0, Evidence::secondary, kBrightTop)
         }},
         {{
@@ -221,13 +221,13 @@ constexpr std::array<ToneTarget, 16> kTargets {{
         "documented approaches, not a claim that all modern metalcore sounds alike.",
         0.65,
         {{
-            f (-3.0, 1.00, 0.8, 3.0, Evidence::documented, kRumble),
-            f (-1.5, 0.75, 0.8, 3.0, Evidence::documented, kTightLow),
-            f (-0.5, 1.00, 0.9, 3.5, Evidence::secondary, kMidScoop),
+            f (-3.0, 0.50, 0.8, 3.0, Evidence::documented, kRumble),
+            f (-1.5, 0.50, 0.8, 3.0, Evidence::documented, kTightLow),
+            f (-0.5, 0.50, 0.9, 3.5, Evidence::secondary, kMidScoop),
             f (+1.0, 0.75, 0.7, 2.5, Evidence::interpretation, kMidBody),
-            f (+1.0, 1.00, 0.8, 3.0, Evidence::documented, kUpperMid),
+            f (+1.0, 0.50, 0.8, 3.0, Evidence::documented, kUpperMid),
             f (+0.5, 1.00, 0.8, 2.5, Evidence::documented, kPresence),
-            f (-4.0, 1.00, 0.9, 2.5, Evidence::secondary, kSmoothTop),
+            f (-4.0, 0.50, 0.9, 2.5, Evidence::secondary, kSmoothTop),
             f (-8.0, 1.50, 0.7, 2.0, Evidence::secondary, kBrightTop)
         }},
         {{
@@ -252,13 +252,13 @@ constexpr std::array<ToneTarget, 16> kTargets {{
         "space and documented mix practices, not a measured lead tone. Treat it as a starting point.",
         0.45,
         {{
-            f (-2.5, 1.00, 0.5, 3.0, Evidence::interpretation, kRumble),
-            f (-0.5, 0.75, 0.5, 3.0, Evidence::interpretation, kTightLow),
-            f (+1.5, 1.00, 0.8, 3.5, Evidence::interpretation, kMidScoop),
+            f (-2.5, 0.50, 0.5, 3.0, Evidence::interpretation, kRumble),
+            f (-0.5, 0.50, 0.5, 3.0, Evidence::interpretation, kTightLow),
+            f (+1.5, 0.50, 0.8, 3.5, Evidence::interpretation, kMidScoop),
             f (+2.0, 0.75, 1.0, 2.5, Evidence::interpretation, kMidBody),
-            f (+3.5, 1.00, 1.0, 3.0, Evidence::documented, kUpperMid),
+            f (+3.5, 0.50, 1.0, 3.0, Evidence::documented, kUpperMid),
             f (+2.0, 1.00, 1.0, 2.5, Evidence::documented, kPresence),
-            f (-2.0, 1.00, 0.6, 2.5, Evidence::secondary, kSmoothTop),
+            f (-2.0, 0.50, 0.6, 2.5, Evidence::secondary, kSmoothTop),
             f (-7.0, 1.50, 0.4, 2.0, Evidence::interpretation, kBrightTop)
         }},
         {{
@@ -284,13 +284,13 @@ constexpr std::array<ToneTarget, 16> kTargets {{
         "documented setup, not a precise measurement. Values are estimates; the room and layering matter as much as EQ.",
         0.70,
         {{
-            f (+0.0, 1.00, 1.0, 3.0, Evidence::documented, kRumble),
-            f (+2.0, 0.75, 1.0, 3.0, Evidence::documented, kTightLow),
-            f (+0.5, 1.00, 0.9, 3.5, Evidence::documented, kMidScoop),
+            f (+0.0, 0.50, 1.0, 3.0, Evidence::documented, kRumble),
+            f (+2.0, 0.50, 1.0, 3.0, Evidence::documented, kTightLow),
+            f (+0.5, 0.50, 0.9, 3.5, Evidence::documented, kMidScoop),
             f (+1.0, 0.75, 0.9, 2.5, Evidence::documented, kMidBody),
-            f (+0.5, 1.00, 0.8, 3.0, Evidence::secondary, kUpperMid),
+            f (+0.5, 0.50, 0.8, 3.0, Evidence::secondary, kUpperMid),
             f (+0.0, 1.00, 0.7, 2.5, Evidence::interpretation, kPresence),
-            f (-3.5, 1.00, 0.8, 2.5, Evidence::documented, kSmoothTop),
+            f (-3.5, 0.50, 0.8, 2.5, Evidence::documented, kSmoothTop),
             f (-8.0, 1.50, 0.5, 2.0, Evidence::documented, kBrightTop)
         }},
         {{
@@ -315,13 +315,13 @@ constexpr std::array<ToneTarget, 16> kTargets {{
         "technical-thrash context, with a deliberately conservative correction. No claim of the record's exact EQ.",
         0.40,
         {{
-            f (-3.5, 1.00, 0.8, 3.0, Evidence::interpretation, kRumble),
-            f (-1.0, 0.75, 0.8, 3.0, Evidence::interpretation, kTightLow),
-            f (-2.0, 1.00, 0.9, 3.5, Evidence::interpretation, kMidScoop),
+            f (-3.5, 0.50, 0.8, 3.0, Evidence::interpretation, kRumble),
+            f (-1.0, 0.50, 0.8, 3.0, Evidence::interpretation, kTightLow),
+            f (-2.0, 0.50, 0.9, 3.5, Evidence::interpretation, kMidScoop),
             f (+1.0, 0.75, 0.8, 2.5, Evidence::interpretation, kMidBody),
-            f (+2.5, 1.00, 1.0, 3.0, Evidence::interpretation, kUpperMid),
+            f (+2.5, 0.50, 1.0, 3.0, Evidence::interpretation, kUpperMid),
             f (+1.5, 1.00, 0.9, 2.5, Evidence::interpretation, kPresence),
-            f (-1.0, 1.00, 0.7, 2.5, Evidence::interpretation, kSmoothTop),
+            f (-1.0, 0.50, 0.7, 2.5, Evidence::interpretation, kSmoothTop),
             f (-6.0, 1.50, 0.4, 2.0, Evidence::interpretation, kBrightTop)
         }},
         {{
@@ -345,13 +345,13 @@ constexpr std::array<ToneTarget, 16> kTargets {{
         "specific frequencies are not. The bass was deliberately buried, so full-mix captures are a poor reference.",
         0.60,
         {{
-            f (-4.0, 1.00, 0.8, 3.0, Evidence::documented, kRumble),
-            f (-2.0, 0.75, 0.9, 3.0, Evidence::documented, kTightLow),
-            f (-3.0, 1.00, 1.0, 3.5, Evidence::documented, kMidScoop),
+            f (-4.0, 0.50, 0.8, 3.0, Evidence::documented, kRumble),
+            f (-2.0, 0.50, 0.9, 3.0, Evidence::documented, kTightLow),
+            f (-3.0, 0.50, 1.0, 3.5, Evidence::documented, kMidScoop),
             f (+0.0, 0.75, 0.8, 2.5, Evidence::interpretation, kMidBody),
-            f (+3.0, 1.00, 1.0, 3.0, Evidence::documented, kUpperMid),
+            f (+3.0, 0.50, 1.0, 3.0, Evidence::documented, kUpperMid),
             f (+2.0, 1.00, 0.9, 2.5, Evidence::documented, kPresence),
-            f (+0.0, 1.00, 0.8, 2.5, Evidence::documented, kSmoothTop),
+            f (+0.0, 0.50, 0.8, 2.5, Evidence::documented, kSmoothTop),
             f (-6.0, 1.50, 0.4, 2.0, Evidence::interpretation, kBrightTop)
         }},
         {{
@@ -376,13 +376,13 @@ constexpr std::array<ToneTarget, 16> kTargets {{
         "lead-specific and later-record tones are outside its scope.",
         0.55,
         {{
-            f (-3.0, 1.00, 0.7, 3.0, Evidence::secondary, kRumble),
-            f (-1.0, 0.75, 0.7, 3.0, Evidence::secondary, kTightLow),
-            f (-2.0, 1.00, 0.9, 3.5, Evidence::secondary, kMidScoop),
+            f (-3.0, 0.50, 0.7, 3.0, Evidence::secondary, kRumble),
+            f (-1.0, 0.50, 0.7, 3.0, Evidence::secondary, kTightLow),
+            f (-2.0, 0.50, 0.9, 3.5, Evidence::secondary, kMidScoop),
             f (+1.0, 0.75, 0.7, 2.5, Evidence::interpretation, kMidBody),
-            f (+2.5, 1.00, 1.0, 3.0, Evidence::documented, kUpperMid),
+            f (+2.5, 0.50, 1.0, 3.0, Evidence::documented, kUpperMid),
             f (+2.5, 1.00, 1.0, 2.5, Evidence::documented, kPresence),
-            f (-1.5, 1.00, 0.7, 2.5, Evidence::secondary, kSmoothTop),
+            f (-1.5, 0.50, 0.7, 2.5, Evidence::secondary, kSmoothTop),
             f (-6.0, 1.50, 0.4, 2.0, Evidence::interpretation, kBrightTop)
         }},
         {{
@@ -406,13 +406,13 @@ constexpr std::array<ToneTarget, 16> kTargets {{
         "Andy Sneap's documented mix approach and the album's thrash/metalcore context.",
         0.45,
         {{
-            f (-3.0, 1.00, 0.7, 3.0, Evidence::interpretation, kRumble),
-            f (-1.0, 0.75, 0.7, 3.0, Evidence::interpretation, kTightLow),
-            f (-1.5, 1.00, 0.9, 3.5, Evidence::secondary, kMidScoop),
+            f (-3.0, 0.50, 0.7, 3.0, Evidence::interpretation, kRumble),
+            f (-1.0, 0.50, 0.7, 3.0, Evidence::interpretation, kTightLow),
+            f (-1.5, 0.50, 0.9, 3.5, Evidence::secondary, kMidScoop),
             f (+1.0, 0.75, 0.8, 2.5, Evidence::interpretation, kMidBody),
-            f (+3.0, 1.00, 1.0, 3.0, Evidence::documented, kUpperMid),
+            f (+3.0, 0.50, 1.0, 3.0, Evidence::documented, kUpperMid),
             f (+2.0, 1.00, 0.9, 2.5, Evidence::secondary, kPresence),
-            f (-1.5, 1.00, 0.7, 2.5, Evidence::secondary, kSmoothTop),
+            f (-1.5, 0.50, 0.7, 2.5, Evidence::secondary, kSmoothTop),
             f (-7.0, 1.50, 0.4, 2.0, Evidence::interpretation, kBrightTop)
         }},
         {{
@@ -436,13 +436,13 @@ constexpr std::array<ToneTarget, 16> kTargets {{
         "so its sound is a collaboration. The profile describes the record, not one producer's signature.",
         0.50,
         {{
-            f (-3.0, 1.00, 0.7, 3.0, Evidence::interpretation, kRumble),
-            f (-1.0, 0.75, 0.7, 3.0, Evidence::interpretation, kTightLow),
-            f (-1.5, 1.00, 1.0, 3.5, Evidence::secondary, kMidScoop),
+            f (-3.0, 0.50, 0.7, 3.0, Evidence::interpretation, kRumble),
+            f (-1.0, 0.50, 0.7, 3.0, Evidence::interpretation, kTightLow),
+            f (-1.5, 0.50, 1.0, 3.5, Evidence::secondary, kMidScoop),
             f (+1.0, 0.75, 0.8, 2.5, Evidence::interpretation, kMidBody),
-            f (+2.5, 1.00, 1.0, 3.0, Evidence::documented, kUpperMid),
+            f (+2.5, 0.50, 1.0, 3.0, Evidence::documented, kUpperMid),
             f (+2.0, 1.00, 0.9, 2.5, Evidence::documented, kPresence),
-            f (-3.5, 1.00, 0.8, 2.5, Evidence::secondary, kSmoothTop),
+            f (-3.5, 0.50, 0.8, 2.5, Evidence::secondary, kSmoothTop),
             f (-6.0, 1.50, 0.4, 2.0, Evidence::interpretation, kBrightTop)
         }},
         {{
@@ -467,13 +467,13 @@ constexpr std::array<ToneTarget, 16> kTargets {{
         "No direct tonal interview from Sturgis about this album was found; gear reports and his general production philosophy inform it.",
         0.50,
         {{
-            f (-3.0, 1.00, 0.8, 3.0, Evidence::documented, kRumble),
-            f (-1.5, 0.75, 0.8, 3.0, Evidence::documented, kTightLow),
-            f (-2.5, 1.00, 1.0, 3.5, Evidence::documented, kMidScoop),
+            f (-3.0, 0.50, 0.8, 3.0, Evidence::documented, kRumble),
+            f (-1.5, 0.50, 0.8, 3.0, Evidence::documented, kTightLow),
+            f (-2.5, 0.50, 1.0, 3.5, Evidence::documented, kMidScoop),
             f (+1.0, 0.75, 0.7, 2.5, Evidence::secondary, kMidBody),
-            f (+2.0, 1.00, 0.9, 3.0, Evidence::documented, kUpperMid),
+            f (+2.0, 0.50, 0.9, 3.0, Evidence::documented, kUpperMid),
             f (+2.5, 1.00, 1.0, 2.5, Evidence::documented, kPresence),
-            f (-1.0, 1.00, 0.8, 2.5, Evidence::documented, kSmoothTop),
+            f (-1.0, 0.50, 0.8, 2.5, Evidence::documented, kSmoothTop),
             f (-6.0, 1.50, 0.4, 2.0, Evidence::secondary, kBrightTop)
         }},
         {{
@@ -497,13 +497,13 @@ constexpr std::array<ToneTarget, 16> kTargets {{
         "secondary production analysis; no verified isolated guitar measurement was made.",
         0.60,
         {{
-            f (-3.5, 1.00, 0.8, 3.0, Evidence::documented, kRumble),
-            f (-1.5, 0.75, 0.8, 3.0, Evidence::documented, kTightLow),
-            f (-2.5, 1.00, 1.0, 3.5, Evidence::secondary, kMidScoop),
+            f (-3.5, 0.50, 0.8, 3.0, Evidence::documented, kRumble),
+            f (-1.5, 0.50, 0.8, 3.0, Evidence::documented, kTightLow),
+            f (-2.5, 0.50, 1.0, 3.5, Evidence::secondary, kMidScoop),
             f (+1.0, 0.75, 0.8, 2.5, Evidence::secondary, kMidBody),
-            f (+2.5, 1.00, 1.0, 3.0, Evidence::documented, kUpperMid),
+            f (+2.5, 0.50, 1.0, 3.0, Evidence::documented, kUpperMid),
             f (+1.5, 1.00, 0.9, 2.5, Evidence::documented, kPresence),
-            f (-2.0, 1.00, 0.8, 2.5, Evidence::secondary, kSmoothTop),
+            f (-2.0, 0.50, 0.8, 2.5, Evidence::secondary, kSmoothTop),
             f (-7.0, 1.50, 0.4, 2.0, Evidence::secondary, kBrightTop)
         }},
         {{
@@ -528,13 +528,13 @@ constexpr std::array<ToneTarget, 16> kTargets {{
         "It does not claim that he used the same EQ on every album.",
         0.55,
         {{
-            f (-3.0, 1.00, 0.8, 3.0, Evidence::documented, kRumble),
-            f (-1.0, 0.75, 0.8, 3.0, Evidence::documented, kTightLow),
-            f (-1.5, 1.00, 0.9, 3.5, Evidence::secondary, kMidScoop),
+            f (-3.0, 0.50, 0.8, 3.0, Evidence::documented, kRumble),
+            f (-1.0, 0.50, 0.8, 3.0, Evidence::documented, kTightLow),
+            f (-1.5, 0.50, 0.9, 3.5, Evidence::secondary, kMidScoop),
             f (+2.0, 0.75, 1.0, 2.5, Evidence::documented, kMidBody),
-            f (+3.0, 1.00, 1.0, 3.0, Evidence::documented, kUpperMid),
+            f (+3.0, 0.50, 1.0, 3.0, Evidence::documented, kUpperMid),
             f (+2.5, 1.00, 1.0, 2.5, Evidence::documented, kPresence),
-            f (-1.5, 1.00, 0.7, 2.5, Evidence::secondary, kSmoothTop),
+            f (-1.5, 0.50, 0.7, 2.5, Evidence::secondary, kSmoothTop),
             f (-7.0, 1.50, 0.4, 2.0, Evidence::secondary, kBrightTop)
         }},
         {{
@@ -559,13 +559,13 @@ constexpr std::array<ToneTarget, 16> kTargets {{
         "deliberately broader and includes Dr. Feelgood only as documented low-end context, not as a measured guitar curve.",
         0.65,
         {{
-            f (+1.0, 1.00, 1.0, 3.0, Evidence::documented, kRumble),
-            f (+3.0, 0.75, 1.0, 3.0, Evidence::documented, kTightLow),
-            f (+2.0, 1.00, 0.9, 3.5, Evidence::documented, kMidScoop),
+            f (+1.0, 0.50, 1.0, 3.0, Evidence::documented, kRumble),
+            f (+3.0, 0.50, 1.0, 3.0, Evidence::documented, kTightLow),
+            f (+2.0, 0.50, 0.9, 3.5, Evidence::documented, kMidScoop),
             f (+1.5, 0.75, 0.9, 2.5, Evidence::documented, kMidBody),
-            f (-0.5, 1.00, 0.6, 3.0, Evidence::secondary, kUpperMid),
+            f (-0.5, 0.50, 0.6, 3.0, Evidence::secondary, kUpperMid),
             f (-1.0, 1.00, 0.5, 2.5, Evidence::interpretation, kPresence),
-            f (-4.5, 1.00, 0.8, 2.5, Evidence::documented, kSmoothTop),
+            f (-4.5, 0.50, 0.8, 2.5, Evidence::documented, kSmoothTop),
             f (-9.0, 1.50, 0.5, 2.0, Evidence::documented, kBrightTop)
         }},
         {{
@@ -590,13 +590,13 @@ constexpr std::array<ToneTarget, 16> kTargets {{
         "AJFA is used only as context; the model is for Master of Puppets.",
         0.60,
         {{
-            f (-3.0, 1.00, 0.8, 3.0, Evidence::documented, kRumble),
-            f (-1.0, 0.75, 0.8, 3.0, Evidence::documented, kTightLow),
-            f (+1.0, 1.00, 0.8, 3.5, Evidence::documented, kMidScoop),
+            f (-3.0, 0.50, 0.8, 3.0, Evidence::documented, kRumble),
+            f (-1.0, 0.50, 0.8, 3.0, Evidence::documented, kTightLow),
+            f (+1.0, 0.50, 0.8, 3.5, Evidence::documented, kMidScoop),
             f (+2.0, 0.75, 1.0, 2.5, Evidence::documented, kMidBody),
-            f (+2.5, 1.00, 1.0, 3.0, Evidence::documented, kUpperMid),
+            f (+2.5, 0.50, 1.0, 3.0, Evidence::documented, kUpperMid),
             f (+1.0, 1.00, 0.8, 2.5, Evidence::secondary, kPresence),
-            f (-2.0, 1.00, 0.8, 2.5, Evidence::documented, kSmoothTop),
+            f (-2.0, 0.50, 0.8, 2.5, Evidence::documented, kSmoothTop),
             f (-7.5, 1.50, 0.4, 2.0, Evidence::interpretation, kBrightTop)
         }},
         {{
@@ -620,13 +620,13 @@ constexpr std::array<ToneTarget, 16> kTargets {{
         "the model is based on the documented guitar/amp choices and the record's raw production context.",
         0.45,
         {{
-            f (-3.5, 1.00, 0.8, 3.0, Evidence::documented, kRumble),
-            f (-1.5, 0.75, 0.8, 3.0, Evidence::documented, kTightLow),
-            f (+1.0, 1.00, 0.9, 3.5, Evidence::documented, kMidScoop),
+            f (-3.5, 0.50, 0.8, 3.0, Evidence::documented, kRumble),
+            f (-1.5, 0.50, 0.8, 3.0, Evidence::documented, kTightLow),
+            f (+1.0, 0.50, 0.9, 3.5, Evidence::documented, kMidScoop),
             f (+2.0, 0.75, 1.0, 2.5, Evidence::documented, kMidBody),
-            f (+2.0, 1.00, 0.9, 3.0, Evidence::documented, kUpperMid),
+            f (+2.0, 0.50, 0.9, 3.0, Evidence::documented, kUpperMid),
             f (+1.0, 1.00, 0.8, 2.5, Evidence::documented, kPresence),
-            f (-1.5, 1.00, 0.7, 2.5, Evidence::secondary, kSmoothTop),
+            f (-1.5, 0.50, 0.7, 2.5, Evidence::secondary, kSmoothTop),
             f (-8.0, 1.50, 0.4, 2.0, Evidence::documented, kBrightTop)
         }},
         {{
@@ -650,13 +650,13 @@ constexpr std::array<ToneTarget, 16> kTargets {{
         "documented credits and working methods, not a measured Countdown to Extinction guitar curve.",
         0.40,
         {{
-            f (-2.5, 1.00, 0.8, 3.0, Evidence::documented, kRumble),
-            f (+1.0, 0.75, 0.9, 3.0, Evidence::documented, kTightLow),
-            f (+1.0, 1.00, 0.8, 3.5, Evidence::documented, kMidScoop),
+            f (-2.5, 0.50, 0.8, 3.0, Evidence::documented, kRumble),
+            f (+1.0, 0.50, 0.9, 3.0, Evidence::documented, kTightLow),
+            f (+1.0, 0.50, 0.8, 3.5, Evidence::documented, kMidScoop),
             f (+1.5, 0.75, 0.9, 2.5, Evidence::documented, kMidBody),
-            f (+2.0, 1.00, 0.9, 3.0, Evidence::documented, kUpperMid),
+            f (+2.0, 0.50, 0.9, 3.0, Evidence::documented, kUpperMid),
             f (+1.0, 1.00, 0.8, 2.5, Evidence::secondary, kPresence),
-            f (-2.5, 1.00, 0.8, 2.5, Evidence::documented, kSmoothTop),
+            f (-2.5, 0.50, 0.8, 2.5, Evidence::documented, kSmoothTop),
             f (-7.5, 1.50, 0.4, 2.0, Evidence::interpretation, kBrightTop)
         }},
         {{
@@ -935,7 +935,7 @@ CorrectionResult computeCorrection (const InputProfile& input,
 
     const double measurement = clampDouble (input.confidence, 0.0, 1.0);
     const double targetConfidence = clampDouble (target.confidence, 0.0, 1.0);
-    const double confidenceScale = 0.55 + 0.45 * std::min (measurement, targetConfidence);
+    const double confidenceScale = 0.80 + 0.20 * std::min (measurement, targetConfidence);
 
     // Desired per-feature change: target minus input, with a deadband so an
     // already-suitable region is not "corrected" for no reason.

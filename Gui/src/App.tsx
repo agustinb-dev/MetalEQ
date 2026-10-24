@@ -325,7 +325,7 @@ function AnalyzerResultPanel({
         <div className="analyzer-correction-bars">
           {correctionFreqs.map((freq, index) => {
             const gain = info.suggestion[index] ?? 0;
-            const width = Math.min(50, (Math.abs(gain) / 6) * 50);
+            const width = Math.min(50, (Math.abs(gain) / 12) * 50);
             return (
               <div className="analyzer-correction-row" key={`corr-${freq}`}>
                 <span className="analyzer-correction-freq">{formatFreqPlain(freq)}</span>

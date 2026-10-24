@@ -59,8 +59,11 @@ inline constexpr std::array<double, kNumCorrectionBands> kCorrectionFrequencies
     { 120.0, 350.0, 1000.0, 2800.0, 7000.0 };
 inline constexpr double kCorrectionQ = 0.8;
 
-/** Absolute correction limits for the fitted five-band EQ. */
-inline constexpr double kGlobalMaxGainDb = 6.0;
+/** Absolute correction limits for the fitted five-band EQ. The musical band
+    parameters accept +/-12 dB, so the analyzer may now use up to that safety
+    ceiling. Per-feature caps in the target models remain tighter.
+*/
+inline constexpr double kGlobalMaxGainDb = 12.0;
 /** Broad-band gain caps used by applyAnalyzerSuggestion's validation. */
 inline constexpr double kMinBandGainDb = -12.0;
 inline constexpr double kMaxBandGainDb = 12.0;

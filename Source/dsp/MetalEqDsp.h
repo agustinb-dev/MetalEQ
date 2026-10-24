@@ -594,13 +594,16 @@ inline void buildChain (ChainSpec& chain,
     chain.trimDb = eq.trimDb;
 }
 
-/** Build only the surgical resonance section. The delta-monitor path uses this
-    so the player hears exactly what the resonance cuts remove, without the
-    rest of the tone.
+/** Build the surgical resonance section with a chosen gain sign.
+
+    A peaking filter's response is exactly inverted by negating its gain, so
+    the monitor can recover the pre-surgical signal by running the inverse
+    chain over the post-static signal. This helper is internal to the two
+    public builders below.
 */
-inline void buildSurgicalChain (ChainSpec& chain, const EqSettings& eq, double sampleRate) noexcept
+inline void buildSurgicalChainWithSign (ChainSpec& chain, const EqSettings& eq,
+                                        double gainSign) noexcept
 {
-    (void) sampleRate;
     chain.clear();
 
     for (int i = 0; i < kNumSurgicalBands; ++i)
@@ -608,10 +611,27 @@ inline void buildSurgicalChain (ChainSpec& chain, const EqSettings& eq, double s
         const auto& b = eq.surgical[static_cast<size_t> (i)];
 
         if (b.on && std::abs (b.gainDb) > 1.0e-3)
-            chain.add (FilterType::peak, b.freq, b.q, b.gainDb);
+            chain.add (FilterType::peak, b.freq, b.q, gainSign * b.gainDb);
     }
 
     chain.trimDb = 0.0;
+}
+
+/** Build only the surgical resonance section. */
+inline void buildSurgicalChain (ChainSpec& chain, const EqSettings& eq, double sampleRate) noexcept
+{
+    (void) sampleRate;
+    buildSurgicalChainWithSign (chain, eq, 1.0);
+}
+
+/** Build the inverse of the surgical resonance section. The surgical delta
+    monitor applies this to the post-static signal to recover the signal as it
+    was before the surgical cuts, then subtracts the two.
+*/
+inline void buildInverseSurgicalChain (ChainSpec& chain, const EqSettings& eq, double sampleRate) noexcept
+{
+    (void) sampleRate;
+    buildSurgicalChainWithSign (chain, eq, -1.0);
 }
 
 /** True when at least one static surgical band will actually cut. */

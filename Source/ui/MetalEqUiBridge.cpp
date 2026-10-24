@@ -134,6 +134,8 @@ UiBridge::UiBridge (MetalEQAudioProcessor& p)
                                  std::numeric_limits<double>::quiet_NaN());
     lastSentValues.emplace_back (MetalEQAudioProcessor::ParameterIDs::resAudition,
                                  std::numeric_limits<double>::quiet_NaN());
+    lastSentValues.emplace_back (MetalEQAudioProcessor::ParameterIDs::dynAudition,
+                                 std::numeric_limits<double>::quiet_NaN());
 
     for (auto& g : lastSuggestion)
         g = 0.0f;
@@ -330,7 +332,28 @@ juce::var UiBridge::handleSetParameter (const juce::Array<juce::var>& args)
         }
     }
 
-    markCurveDirty();
+    // The two section monitors are mutually exclusive: enabling one clears the
+    // other, so the player always hears exactly one removed signal.
+    if (*validated >= 0.5)
+    {
+        const char* otherId = nullptr;
+        if (id == MetalEQAudioProcessor::ParameterIDs::resAudition)
+            otherId = MetalEQAudioProcessor::ParameterIDs::dynAudition;
+        else if (id == MetalEQAudioProcessor::ParameterIDs::dynAudition)
+            otherId = MetalEQAudioProcessor::ParameterIDs::resAudition;
+
+        if (otherId != nullptr)
+        {
+            if (auto* other = apvts.getParameter (otherId))
+                other->setValueNotifyingHost (other->getNormalisableRange().convertTo0to1 (0.0f));
+        }
+    }
+
+    // The section monitors do not change the EQ response, so they do not
+    // invalidate the graph curve.
+    if (id != MetalEQAudioProcessor::ParameterIDs::resAudition
+        && id != MetalEQAudioProcessor::ParameterIDs::dynAudition)
+        markCurveDirty();
 
     // Side effect of MetalEQAudioProcessor::setLowPassEnabled: enabling the
     // low-pass while the slope is Off jumps it to 24 dB/oct, so the filter is

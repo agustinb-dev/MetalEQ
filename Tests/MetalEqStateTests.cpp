@@ -29,6 +29,67 @@ float readPlain (MetalEQAudioProcessor& processor, const char* id)
     return parameter != nullptr ? parameter->convertFrom0to1 (parameter->getValue()) : -999.0f;
 }
 
+void testSectionMonitorAudio (MetalEQAudioProcessor& processor)
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int blockSize = 512;
+    constexpr double testFreq = 733.0;
+    constexpr double cutDb = -6.0;
+
+    processor.prepareToPlay (sampleRate, blockSize);
+    processor.resetToNeutral();
+
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resFreq[0],
+              static_cast<float> (testFreq));
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resQ[0], 9.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resGain[0],
+              static_cast<float> (cutDb));
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resOn[0], 1.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resAudition, 1.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynAudition, 0.0f);
+
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::MidiBuffer midi;
+    double phase = 0.0;
+    const double phaseIncrement = 2.0 * juce::MathConstants<double>::pi * testFreq / sampleRate;
+
+    double sumSquares = 0.0;
+    int measuredSamples = 0;
+    const int totalBlocks = static_cast<int> (sampleRate * 2.0 / blockSize);
+
+    for (int block = 0; block < totalBlocks; ++block)
+    {
+        for (int i = 0; i < blockSize; ++i)
+        {
+            const auto sample = static_cast<float> (std::sin (phase));
+            buffer.setSample (0, i, sample);
+            buffer.setSample (1, i, sample);
+            phase += phaseIncrement;
+            if (phase >= 2.0 * juce::MathConstants<double>::pi)
+                phase -= 2.0 * juce::MathConstants<double>::pi;
+        }
+
+        processor.processBlock (buffer, midi);
+
+        if (block >= totalBlocks / 2)
+        {
+            for (int i = 0; i < blockSize; ++i)
+            {
+                const auto sample = buffer.getSample (0, i);
+                sumSquares += static_cast<double> (sample) * static_cast<double> (sample);
+            }
+            measuredSamples += blockSize;
+        }
+    }
+
+    const double outputRms = std::sqrt (sumSquares / static_cast<double> (measuredSamples));
+    const double inputRms = 1.0 / std::sqrt (2.0);
+    const double expectedRatio = 2.0 * (1.0 - std::pow (10.0, cutDb / 20.0));
+
+    check (std::abs (outputRms / inputRms - expectedRatio) < 0.05,
+           "surgical monitor outputs the removed signal without double-applying the cut");
+}
+
 void testFactoryRecall (MetalEQAudioProcessor& processor)
 {
     check (processor.applyPresetById (metaleq::getPreset (5).id), "factory preset recalls by stable id");
@@ -176,12 +237,14 @@ void testStateRoundTrip (MetalEQAudioProcessor& processor)
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resQ[0], 9.5f);
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resOn[0], 1.0f);
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resAudition, 1.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynAudition, 1.0f);
 
     processor.getStateInformation (state);
     const auto surgicalTree = juce::ValueTree::readFromData (state.getData(),
                                                              static_cast<size_t> (state.getSize()));
     bool surgicalSaved = false;
-    bool auditionSaved = false;
+    bool surgicalAuditionSaved = false;
+    bool dynamicAuditionSaved = false;
     const auto savedParams = surgicalTree.getChildWithName ("PARAMS");
     for (int i = 0; i < savedParams.getNumChildren(); ++i)
     {
@@ -189,10 +252,13 @@ void testStateRoundTrip (MetalEQAudioProcessor& processor)
         if (id == MetalEQAudioProcessor::ParameterIDs::resGain[0])
             surgicalSaved = true;
         if (id == MetalEQAudioProcessor::ParameterIDs::resAudition)
-            auditionSaved = true;
+            surgicalAuditionSaved = true;
+        if (id == MetalEQAudioProcessor::ParameterIDs::dynAudition)
+            dynamicAuditionSaved = true;
     }
     check (surgicalSaved, "session state includes the surgical resonance bands");
-    check (! auditionSaved, "session state excludes the temporary delta monitor");
+    check (! surgicalAuditionSaved, "session state excludes the surgical delta monitor");
+    check (! dynamicAuditionSaved, "session state excludes the dynamic delta monitor");
 
     processor.resetToNeutral();
     processor.setAbSlot (0);
@@ -260,6 +326,7 @@ void testStateRoundTrip (MetalEQAudioProcessor& processor)
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resQ[1], 12.0f);
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resOn[1], 1.0f);
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resAudition, 1.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynAudition, 1.0f);
 
     juce::MemoryBlock v3State;
     processor.getStateInformation (v3State);
@@ -301,7 +368,9 @@ void testStateRoundTrip (MetalEQAudioProcessor& processor)
     check (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::resOn[1]) < 0.5f,
            "old session disables surgical bands");
     check (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::resAudition) < 0.5f,
-           "old session disables the delta monitor");
+           "old session disables the surgical delta monitor");
+    check (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynAudition) < 0.5f,
+           "old session disables the dynamic delta monitor");
 
     // A version-3 session predates the dynamic bands. Those bands must start
     // at their neutral, all-off defaults rather than inheriting APVTS values.
@@ -407,6 +476,7 @@ int main()
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resQ[0], 9.5f);
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resOn[0], 1.0f);
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::resAudition, 1.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynAudition, 1.0f);
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynFreq[0], 733.0f);
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynQ[0], 2.5f);
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynThreshold[0], 9.0f);
@@ -426,7 +496,8 @@ int main()
     bool schemaIsThree = false;
     bool surgicalInPreset = false;
     bool dynamicInPreset = false;
-    bool auditionInPreset = false;
+    bool surgicalAuditionInPreset = false;
+    bool dynamicAuditionInPreset = false;
     if (presetAXml != nullptr)
     {
         const auto root = juce::ValueTree::fromXml (*presetAXml);
@@ -440,13 +511,16 @@ int main()
             if (id == MetalEQAudioProcessor::ParameterIDs::dynRange[0])
                 dynamicInPreset = true;
             if (id == MetalEQAudioProcessor::ParameterIDs::resAudition)
-                auditionInPreset = true;
+                surgicalAuditionInPreset = true;
+            if (id == MetalEQAudioProcessor::ParameterIDs::dynAudition)
+                dynamicAuditionInPreset = true;
         }
     }
     check (schemaIsThree, "V3.1 user presets use schema version 3");
     check (surgicalInPreset, "user presets include the surgical resonance bands");
     check (dynamicInPreset, "user presets include the dynamic resonance bands");
-    check (! auditionInPreset, "user presets exclude the temporary delta monitor");
+    check (! surgicalAuditionInPreset, "user presets exclude the surgical delta monitor");
+    check (! dynamicAuditionInPreset, "user presets exclude the dynamic delta monitor");
 
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::bandFreq[2], 500.0f);
     setPlain (processor, MetalEQAudioProcessor::ParameterIDs::bandGain[2], 2.0f);
@@ -629,9 +703,10 @@ int main()
     testFactoryRecall (processor);
     testAbSlots (processor);
     testStateRoundTrip (processor);
+    testSectionMonitorAudio (processor);
 
     if (failures != 0)
         return EXIT_FAILURE;
-    std::cout << "MetalEQ state and user-preset tests passed.\n";
+    std::cout << "MetalEQ state, user-preset and section-monitor tests passed.\n";
     return EXIT_SUCCESS;
 }

@@ -193,7 +193,6 @@ function ResonancePanel({
   selected,
   hovered,
   surgicalActive,
-  dynamicActive,
   audition,
   onScan,
   onCancel,
@@ -207,7 +206,6 @@ function ResonancePanel({
   selected: number[];
   hovered: number | null;
   surgicalActive: boolean;
-  dynamicActive: boolean;
   audition: boolean;
   onScan: () => void;
   onCancel: () => void;
@@ -246,10 +244,10 @@ function ResonancePanel({
         <Toggle
           label="HEAR REMOVED"
           checked={audition}
-          disabled={!surgicalActive && !dynamicActive}
+          disabled={!surgicalActive}
           variant="accent"
           onChange={onAudition}
-          tip="Monitor the static and dynamic resonance cuts in isolation. This listening aid is never saved with the preset."
+          tip="Monitor only the six surgical resonance cuts in isolation. Enabling this turns off the dynamic monitor. This listening aid is never saved with the preset."
         />
         <button
           type="button"
@@ -323,7 +321,6 @@ function ResonancePanel({
 function DynamicSuggestionPanel({
   info,
   selected,
-  surgicalActive,
   dynamicActive,
   audition,
   onScan,
@@ -336,7 +333,6 @@ function DynamicSuggestionPanel({
 }: {
   info: ResonanceInfo;
   selected: number[];
-  surgicalActive: boolean;
   dynamicActive: boolean;
   audition: boolean;
   onScan: () => void;
@@ -378,10 +374,10 @@ function DynamicSuggestionPanel({
         <Toggle
           label="HEAR REMOVED"
           checked={audition}
-          disabled={!surgicalActive && !dynamicActive}
+          disabled={!dynamicActive}
           variant="accent"
           onChange={onAudition}
-          tip="Monitor the static and dynamic resonance cuts in isolation. This listening aid is never saved with the preset."
+          tip="Monitor only the four dynamic resonance cuts in isolation. Enabling this turns off the surgical monitor. This listening aid is never saved with the preset."
         />
         <button
           type="button"
@@ -1633,14 +1629,25 @@ export function App(): React.JSX.Element {
   }, [bridge, selectedDynamicCandidates, showError]);
 
   const onClearDynamic = useCallback(() => {
-    setParam('resAudition', 0);
+    setParam('dynAudition', 0);
     void bridge.clearDynamicBands().then((result) => {
       if (!result.ok) showError(result.error ?? 'Could not clear the dynamic bands.');
     });
   }, [bridge, setParam, showError]);
 
-  const onAuditionCuts = useCallback(
-    (enabled: boolean) => setParam('resAudition', enabled ? 1 : 0),
+  const onAuditionSurgical = useCallback(
+    (enabled: boolean) => {
+      if (enabled) setParam('dynAudition', 0);
+      setParam('resAudition', enabled ? 1 : 0);
+    },
+    [setParam],
+  );
+
+  const onAuditionDynamic = useCallback(
+    (enabled: boolean) => {
+      if (enabled) setParam('resAudition', 0);
+      setParam('dynAudition', enabled ? 1 : 0);
+    },
     [setParam],
   );
 
@@ -1947,7 +1954,6 @@ export function App(): React.JSX.Element {
             selected={selectedCandidates}
             hovered={hoveredCandidate}
             surgicalActive={surgicalActive}
-            dynamicActive={dynamicActive}
             audition={(state.params.resAudition ?? 0) >= 0.5}
             onScan={onResonanceScan}
             onCancel={onResonanceCancel}
@@ -1955,7 +1961,7 @@ export function App(): React.JSX.Element {
             onHoverCandidate={setHoveredCandidate}
             onApply={onApplyResonance}
             onClear={onClearSurgical}
-            onAudition={onAuditionCuts}
+            onAudition={onAuditionSurgical}
           />
 
           <section className="parameter-section">
@@ -1978,16 +1984,15 @@ export function App(): React.JSX.Element {
             <DynamicSuggestionPanel
               info={resonance}
               selected={selectedDynamicCandidates}
-              surgicalActive={surgicalActive}
               dynamicActive={dynamicActive}
-              audition={(state.params.resAudition ?? 0) >= 0.5}
+              audition={(state.params.dynAudition ?? 0) >= 0.5}
               onScan={onResonanceScan}
               onCancel={onResonanceCancel}
               onToggleCandidate={onToggleDynamicCandidate}
               onHoverCandidate={setHoveredCandidate}
               onApply={onApplyDynamicResonance}
               onClear={onClearDynamic}
-              onAudition={onAuditionCuts}
+              onAudition={onAuditionDynamic}
             />
             <DynamicPanel
               params={state.params}

@@ -334,9 +334,9 @@ export class MockBridge implements MetalEqBridge {
       let dirty = false;
       for (const spec of PARAMS) {
         // Trim is the global level-match control; it never dirties a preset.
-        // The delta monitor is a listening aid, not part of the tone.
+        // The section monitors are listening aids, not part of the tone.
         if (spec.id === 'trim' || spec.id === 'bypass' || spec.id === 'abCompare'
-          || spec.id === 'resAudition') continue;
+          || spec.id === 'resAudition' || spec.id === 'dynAudition') continue;
         if (!nearlyEqual(this.params[spec.id], this.loadedSnapshot[spec.id] ?? 0)) {
           dirty = true;
           break;
@@ -353,7 +353,8 @@ export class MockBridge implements MetalEqBridge {
   private allSoundParams(): Record<string, number> {
     const out: Record<string, number> = {};
     for (const spec of PARAMS) {
-      if (spec.id === 'bypass' || spec.id === 'abCompare' || spec.id === 'resAudition') continue;
+      if (spec.id === 'bypass' || spec.id === 'abCompare'
+        || spec.id === 'resAudition' || spec.id === 'dynAudition') continue;
       out[spec.id] = this.params[spec.id];
     }
     return out;
@@ -379,9 +380,15 @@ export class MockBridge implements MetalEqBridge {
       this.params.lpSlope = 2;
     }
 
+    // The two section monitors are mutually exclusive.
+    if (plain >= 0.5) {
+      if (id === 'resAudition') this.params.dynAudition = 0;
+      else if (id === 'dynAudition') this.params.resAudition = 0;
+    }
+
     const curveWasDirty = this.curveDirty;
     this.markDirty();
-    if (id === 'resAudition') this.curveDirty = curveWasDirty;
+    if (id === 'resAudition' || id === 'dynAudition') this.curveDirty = curveWasDirty;
     return Promise.resolve({ ok: true, value: this.params[id] });
   }
 

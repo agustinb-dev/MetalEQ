@@ -121,6 +121,7 @@ const char* MetalEQAudioProcessor::ParameterIDs::preset   = "preset";
 const char* MetalEQAudioProcessor::ParameterIDs::abCompare = "abCompare";
 const char* MetalEQAudioProcessor::ParameterIDs::bypass   = kBypassId;
 const char* MetalEQAudioProcessor::ParameterIDs::resAudition = "resAudition";
+const char* MetalEQAudioProcessor::ParameterIDs::dynAudition = "dynAudition";
 
 juce::StringArray MetalEQAudioProcessor::ParameterIDs::allEqParameterIds()
 {
@@ -416,9 +417,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout MetalEQAudioProcessor::creat
     //--- bypass --------------------------------------------------------------
     layout.add (std::make_unique<juce::AudioParameterBool> (ParameterIDs::bypass, "Bypass", false));
 
-    //--- resonance delta monitor (not saved with the tone) ------------------
+    //--- section-specific resonance delta monitors (not saved with the tone) --
     layout.add (std::make_unique<juce::AudioParameterBool> (ParameterIDs::resAudition,
-                                                           "Resonance Delta Monitor", false));
+                                                           "Surgical Resonance Delta Monitor", false));
+    layout.add (std::make_unique<juce::AudioParameterBool> (ParameterIDs::dynAudition,
+                                                           "Dynamic Resonance Delta Monitor", false));
 
     return layout;
 }
@@ -445,19 +448,20 @@ void MetalEQAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
     dynamicEngine.prepare (cachedSampleRate);
     dynamicEngine.setSettings (cachedEq.dynamic, 1);
 
-    // The delta monitor runs a second, resonance-only path. Prepare it with
-    // the same sample rate and give both scratch buffers enough room for the
-    // host's block size; no allocation happens in processBlock().
+    // The section delta monitors run second, resonance-only paths. Prepare
+    // them with the same sample rate and give both scratch buffers enough room
+    // for the host's block size; no allocation happens in processBlock().
     auditionEngine.prepare (sampleRate > 0.0 ? sampleRate : 48000.0);
     metaleq::ChainSpec auditionChain;
-    metaleq::buildSurgicalChain (auditionChain, cachedEq, cachedSampleRate);
+    metaleq::buildInverseSurgicalChain (auditionChain, cachedEq, cachedSampleRate);
     auditionEngine.setChain (auditionChain, 1);
     auditionDynamicEngine.prepare (cachedSampleRate);
     auditionDynamicEngine.setSettings (cachedEq.dynamic, 1);
     cachedAuditionEq = cachedEq;
     cachedAuditionSampleRate = cachedSampleRate;
     auditionChainCacheValid = true;
-    wasAuditioning = false;
+    wasAuditionSurgical = false;
+    wasAuditionDynamic = false;
 
     const int scratchSamples = juce::jmax (1024, samplesPerBlock);
     auditionDryBuffer.setSize (metaleq::kMaxChannels, scratchSamples, false, true, false);
@@ -479,7 +483,8 @@ void MetalEQAudioProcessor::releaseResources()
     auditionDynamicEngine.reset();
     chainCacheValid = false;
     auditionChainCacheValid = false;
-    wasAuditioning = false;
+    wasAuditionSurgical = false;
+    wasAuditionDynamic = false;
 
     for (auto& reduction : dynamicReductionDb)
         reduction.store (0.0f, std::memory_order_relaxed);
@@ -493,7 +498,8 @@ void MetalEQAudioProcessor::reset()
     auditionDynamicEngine.reset();
     chainCacheValid = false;
     auditionChainCacheValid = false;
-    wasAuditioning = false;
+    wasAuditionSurgical = false;
+    wasAuditionDynamic = false;
 
     for (auto& reduction : dynamicReductionDb)
         reduction.store (0.0f, std::memory_order_relaxed);
@@ -699,7 +705,8 @@ void MetalEQAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
         chainCacheValid = false;
         auditionChainCacheValid = false;
 
-        wasAuditioning = false;
+        wasAuditionSurgical = false;
+        wasAuditionDynamic = false;
         return;
     }
 
@@ -729,23 +736,33 @@ void MetalEQAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
         chainCacheValid = true;
     }
 
-    //--- optional delta monitor ---------------------------------------------
-    // The monitor plays the post-static signal minus the same signal after the
-    // static surgical and dynamic resonance stages. That is exactly what the
-    // resonance section removes, and it includes both cut types. It is a
-    // monitoring aid, never saved with the tone.
+    //--- section-specific delta monitors -------------------------------------
+    // The surgical monitor recovers the pre-surgical signal with the inverse
+    // surgical chain. The dynamic monitor runs a second dynamic engine on the
+    // post-static signal. Each outputs only its own removed signal. Both are
+    // listening aids, never saved with the tone.
     const bool hasSurgicalCut = metaleq::hasActiveSurgicalCuts (eq);
     const bool hasDynamicCut  = metaleq::hasActiveDynamicCuts (eq);
-
-    const bool auditionRequested =
-        apvts->getRawParameterValue (ParameterIDs::resAudition)->load() >= 0.5f;
-    const bool audition = auditionRequested
-        && (hasSurgicalCut || hasDynamicCut)
-        && numSamples <= auditionDryBuffer.getNumSamples()
+    const bool auditionBuffersReady = numSamples <= auditionDryBuffer.getNumSamples()
         && numSamples <= auditionWetBuffer.getNumSamples()
         && numChannels <= auditionDryBuffer.getNumChannels();
 
-    if (audition && ! wasAuditioning)
+    const bool surgicalAuditionRequested =
+        apvts->getRawParameterValue (ParameterIDs::resAudition)->load() >= 0.5f;
+    const bool dynamicAuditionRequested =
+        apvts->getRawParameterValue (ParameterIDs::dynAudition)->load() >= 0.5f;
+
+    const bool auditionSurgical = surgicalAuditionRequested
+        && hasSurgicalCut && auditionBuffersReady;
+    const bool auditionDynamic = dynamicAuditionRequested
+        && hasDynamicCut && auditionBuffersReady;
+    const bool audition = auditionSurgical || auditionDynamic;
+
+    // Switching monitors (or leaving/entering audition) must start from clean
+    // filter and detector state; otherwise the new section could inherit the
+    // previous one's tail.
+    if (auditionSurgical != wasAuditionSurgical
+        || auditionDynamic != wasAuditionDynamic)
     {
         auditionEngine.reset();
         auditionDynamicEngine.reset();
@@ -780,7 +797,7 @@ void MetalEQAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
             || sampleRate != cachedAuditionSampleRate)
         {
             metaleq::ChainSpec auditionChain;
-            metaleq::buildSurgicalChain (auditionChain, eq, sampleRate);
+            metaleq::buildInverseSurgicalChain (auditionChain, eq, sampleRate);
             auditionEngine.setChain (auditionChain, rampLength);
             auditionDynamicEngine.setSettings (eq.dynamic, rampLength);
             cachedAuditionEq = eq;
@@ -788,27 +805,55 @@ void MetalEQAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
             auditionChainCacheValid = true;
         }
 
+        // The surgical monitor recovers the pre-surgical signal with the
+        // inverse surgical chain, then outputs the difference. The dynamic
+        // monitor does the same with the forward dynamic stage. When both
+        // parameters are on (possible through host automation), the two
+        // removed signals are summed.
         for (int ch = 0; ch < numChannels; ++ch)
-            auditionWetBuffer.copyFrom (ch, 0, auditionDryBuffer, ch, 0, numSamples);
+            buffer.clear (ch, 0, numSamples);
 
-        auditionEngine.process (auditionWetBuffer.getArrayOfWritePointers(),
-                                numChannels, numSamples);
-        auditionDynamicEngine.process (auditionWetBuffer.getArrayOfWritePointers(),
-                                       numChannels, numSamples);
-
-        // 6 dB of monitor gain: the difference signal is naturally quiet.
-        for (int ch = 0; ch < numChannels; ++ch)
+        if (auditionSurgical)
         {
-            auto* output = buffer.getWritePointer (ch);
-            const auto* dry = auditionDryBuffer.getReadPointer (ch);
-            const auto* wet = auditionWetBuffer.getReadPointer (ch);
+            for (int ch = 0; ch < numChannels; ++ch)
+                auditionWetBuffer.copyFrom (ch, 0, auditionDryBuffer, ch, 0, numSamples);
 
-            for (int i = 0; i < numSamples; ++i)
-                output[i] = 2.0f * (dry[i] - wet[i]);
+            auditionEngine.process (auditionWetBuffer.getArrayOfWritePointers(),
+                                    numChannels, numSamples);
+
+            for (int ch = 0; ch < numChannels; ++ch)
+            {
+                auto* output = buffer.getWritePointer (ch);
+                const auto* dry = auditionDryBuffer.getReadPointer (ch);
+                const auto* wet = auditionWetBuffer.getReadPointer (ch);
+
+                for (int i = 0; i < numSamples; ++i)
+                    output[i] += 2.0f * (wet[i] - dry[i]);
+            }
+        }
+
+        if (auditionDynamic)
+        {
+            for (int ch = 0; ch < numChannels; ++ch)
+                auditionWetBuffer.copyFrom (ch, 0, auditionDryBuffer, ch, 0, numSamples);
+
+            auditionDynamicEngine.process (auditionWetBuffer.getArrayOfWritePointers(),
+                                           numChannels, numSamples);
+
+            for (int ch = 0; ch < numChannels; ++ch)
+            {
+                auto* output = buffer.getWritePointer (ch);
+                const auto* dry = auditionDryBuffer.getReadPointer (ch);
+                const auto* wet = auditionWetBuffer.getReadPointer (ch);
+
+                for (int i = 0; i < numSamples; ++i)
+                    output[i] += 2.0f * (dry[i] - wet[i]);
+            }
         }
     }
 
-    wasAuditioning = audition;
+    wasAuditionSurgical = auditionSurgical;
+    wasAuditionDynamic = auditionDynamic;
 
     //--- metering (audio thread: one pass, relaxed atomics only) -------------
     if (meteringEnabled.load (std::memory_order_relaxed))
@@ -836,7 +881,8 @@ void MetalEQAudioProcessor::processBlockBypassed (juce::AudioBuffer<float>& buff
     auditionDynamicEngine.reset();
     chainCacheValid = false;
     auditionChainCacheValid = false;
-    wasAuditioning = false;
+    wasAuditionSurgical = false;
+    wasAuditionDynamic = false;
 
     for (auto& reduction : dynamicReductionDb)
         reduction.store (0.0f, std::memory_order_relaxed);
@@ -1097,6 +1143,11 @@ void MetalEQAudioProcessor::setStateInformation (const void* data, int sizeInByt
     if (child.isValid())
         apvts->replaceState (child.createCopy());
 
+    // The section monitors are temporary listening aids and are never
+    // serialized. Do not carry a live monitor over from a previous project.
+    setFloatParameter (ParameterIDs::resAudition, 0.0);
+    setFloatParameter (ParameterIDs::dynAudition, 0.0);
+
     // V3 added the surgical bands. An older session has no values for them:
     // start them flat and off rather than inheriting whatever was in APVTS.
     if (version < 3)
@@ -1110,7 +1161,6 @@ void MetalEQAudioProcessor::setStateInformation (const void* data, int sizeInByt
             setFloatParameter (ParameterIDs::resQ[i], 7.0);
             setFloatParameter (ParameterIDs::resOn[i], 0.0);
         }
-        setFloatParameter (ParameterIDs::resAudition, 0.0);
     }
 
     // V3.1 added the four dynamic bands. Old sessions must start with them

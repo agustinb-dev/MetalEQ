@@ -126,6 +126,7 @@ public:
         static const char* abCompare;
         static const char* bypass;
         static const char* resAudition;
+        static const char* dynAudition;
 
         static juce::StringArray allEqParameterIds();
     };
@@ -396,20 +397,23 @@ private:
     metaleq::EqEngine engine;
 
     // V3.1 zero-latency dynamic resonance section, applied after the static
-    // chain. The audition engine is a second instance so the delta monitor can
-    // include both static surgical cuts and dynamic cuts without sharing
-    // detector state with the main path.
+    // chain. The audition engine is a second instance so the dynamic delta
+    // monitor can run without sharing detector state with the main path.
     metaleq::DynamicResonanceEngine dynamicEngine;
     metaleq::DynamicResonanceEngine auditionDynamicEngine;
 
-    // Delta monitor ("hear what the resonance section removes"). Both engines
-    // and all scratch buffers are prepared on the message thread; the audio
-    // thread only copies and multiplies in preallocated memory.
+    // Section-specific delta monitors ("hear what this resonance section
+    // removes"). The surgical monitor runs the inverse surgical chain to
+    // recover the pre-surgical signal; the dynamic monitor runs a second
+    // dynamic engine. Both engines and all scratch buffers are prepared on
+    // the message thread; the audio thread only copies and multiplies in
+    // preallocated memory. The two monitors are independent.
     metaleq::EqEngine auditionEngine;
     metaleq::EqSettings cachedAuditionEq {};
     double cachedAuditionSampleRate = 0.0;
     bool auditionChainCacheValid = false;
-    bool wasAuditioning = false;
+    bool wasAuditionSurgical = false;
+    bool wasAuditionDynamic = false;
     juce::AudioBuffer<float> auditionDryBuffer;
     juce::AudioBuffer<float> auditionWetBuffer;
 

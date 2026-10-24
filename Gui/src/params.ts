@@ -115,7 +115,8 @@ export const PARAMS: ParamSpec[] = [
   //--- bypass / A-B (part of the same diff stream, not in allEqParameterIds) ---
   flag('bypass', 'Bypass', 0),
   flag('abCompare', 'A/B Compare', 0),
-  flag('resAudition', 'Resonance Delta Monitor', 0),
+  flag('resAudition', 'Surgical Resonance Delta Monitor', 0),
+  flag('dynAudition', 'Dynamic Resonance Delta Monitor', 0),
 ];
 
 const byId = new Map<string, ParamSpec>(PARAMS.map((p) => [p.id, p]));

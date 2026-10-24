@@ -202,6 +202,39 @@ static void testSetParameterLpSideEffect (MetalEQAudioProcessor& processor)
 }
 
 //==============================================================================
+static void testSectionMonitorExclusivity (MetalEQAudioProcessor& processor)
+{
+    metaleq::ui::UiBridge bridge (processor);
+    setPlain (processor, "resAudition", 0.0f);
+    setPlain (processor, "dynAudition", 0.0f);
+
+    juce::var result;
+    check (callNative (bridge, "setParameter", makeArgs ("resAudition", 1.0), result),
+           "setParameter can enable the surgical delta monitor");
+    check (resultOk (result), "enabling the surgical delta monitor succeeds");
+    check (readPlain (processor, "resAudition") > 0.5f,
+           "the surgical delta monitor is on");
+    check (readPlain (processor, "dynAudition") < 0.5f,
+           "enabling the surgical monitor clears the dynamic monitor");
+
+    check (callNative (bridge, "setParameter", makeArgs ("dynAudition", 1.0), result),
+           "setParameter can enable the dynamic delta monitor");
+    check (resultOk (result), "enabling the dynamic delta monitor succeeds");
+    check (readPlain (processor, "dynAudition") > 0.5f,
+           "the dynamic delta monitor is on");
+    check (readPlain (processor, "resAudition") < 0.5f,
+           "enabling the dynamic monitor clears the surgical monitor");
+
+    check (callNative (bridge, "setParameter", makeArgs ("dynAudition", 0.0), result),
+           "setParameter can disable the dynamic delta monitor");
+    check (resultOk (result), "disabling the dynamic delta monitor succeeds");
+    check (readPlain (processor, "dynAudition") < 0.5f,
+           "the dynamic delta monitor is off");
+    check (readPlain (processor, "resAudition") < 0.5f,
+           "disabling the dynamic monitor leaves the surgical monitor off");
+}
+
+//==============================================================================
 static void testApplyPresetIndexMapping (MetalEQAudioProcessor& processor)
 {
     metaleq::ui::UiBridge bridge (processor);
@@ -322,6 +355,10 @@ static void testSnapshotV5 (MetalEQAudioProcessor& processor)
     check (getProperty (params, "dyn1Freq").isDouble(), "snapshot exposes dynamic frequency parameters");
     check (getProperty (params, "dyn4Range").isDouble(), "snapshot exposes dynamic maximum-cut parameters");
     check (getProperty (params, "dyn4On").isDouble(), "snapshot exposes dynamic enable parameters");
+    check (getProperty (params, "resAudition").isDouble(),
+           "snapshot exposes the surgical delta monitor");
+    check (getProperty (params, "dynAudition").isDouble(),
+           "snapshot exposes the dynamic delta monitor");
 
     const auto dynamicReduction = getProperty (snapshot, "dynamicReduction");
     check (dynamicReduction.isArray() && dynamicReduction.size() == metaleq::kNumDynamicBands,
@@ -408,6 +445,11 @@ int main()
     {
         MetalEQAudioProcessor processor;
         testSetParameterLpSideEffect (processor);
+    }
+
+    {
+        MetalEQAudioProcessor processor;
+        testSectionMonitorExclusivity (processor);
     }
 
     {

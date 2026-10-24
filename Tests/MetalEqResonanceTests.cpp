@@ -550,6 +550,17 @@ void testSurgicalChain()
     const double shoulder = 733.0 * std::pow (2.0, 0.25);
     check (surgicalResponse (narrow, shoulder) > surgicalResponse (wide, shoulder) + 0.5,
            "higher Q removes less of the surrounding tone");
+
+    // The monitor recovers the pre-surgical signal with the exact inverse
+    // chain, so forward plus inverse must be flat.
+    metaleq::ChainSpec forwardChain;
+    metaleq::ChainSpec inverseChain;
+    metaleq::buildSurgicalChain (forwardChain, neutral, sampleRate);
+    metaleq::buildInverseSurgicalChain (inverseChain, neutral, sampleRate);
+    checkNear (metaleq::chainResponseDb (forwardChain, sampleRate, 733.0)
+                   + metaleq::chainResponseDb (inverseChain, sampleRate, 733.0),
+               0.0, 1.0e-6,
+               "inverse surgical chain cancels the forward chain");
 }
 
 } // namespace

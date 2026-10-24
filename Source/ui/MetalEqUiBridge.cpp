@@ -7,6 +7,16 @@
 namespace metaleq::ui
 {
 
+/** Builds a JUCE string from UTF-8 source data. The target prose contains
+    typographic characters (em dashes, ellipses, accented names), so a plain
+    String (const char*) ASCII constructor would assert and mangle it.
+*/
+static juce::String utf8 (const char* text)
+{
+    return text != nullptr ? juce::String::fromUTF8 (text) : juce::String();
+}
+
+
 namespace
 {
     bool isChoiceParameter (const juce::AudioProcessorParameter* p)
@@ -27,6 +37,18 @@ namespace
         if (v.isInt() || v.isInt64() || v.isDouble())
             return v;
         return {};
+    }
+
+    bool boolFlag (const juce::Array<juce::var>& args, size_t index)
+    {
+        if (index >= args.size())
+            return false;
+        const auto& v = args[index];
+        if (v.isBool())
+            return static_cast<bool> (v);
+        if (v.isInt() || v.isInt64() || v.isDouble())
+            return static_cast<double> (v) != 0.0;
+        return false;
     }
 
     bool nearlyEqual (double a, double b) noexcept
@@ -228,6 +250,11 @@ juce::WebBrowserComponent::Options UiBridge::addOptions (juce::WebBrowserCompone
             {
                 complete (self->handleSwapAbSlots());
             })
+        .withNativeFunction ("setAnalyzerTarget",
+            [self] (const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion complete)
+            {
+                complete (self->handleSetAnalyzerTarget (args));
+            })
         .withNativeFunction ("startAnalyzerCapture",
             [self] (const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion complete)
             {
@@ -249,14 +276,14 @@ juce::WebBrowserComponent::Options UiBridge::addOptions (juce::WebBrowserCompone
                 complete (self->handleGetSuggestionCurve (args));
             })
         .withNativeFunction ("startResonanceScan",
-            [self] (const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion complete)
+            [self] (const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion complete)
             {
-                complete (self->handleStartResonanceScan());
+                complete (self->handleStartResonanceScan (args));
             })
         .withNativeFunction ("cancelResonanceScan",
-            [self] (const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion complete)
+            [self] (const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion complete)
             {
-                complete (self->handleCancelResonanceScan());
+                complete (self->handleCancelResonanceScan (args));
             })
         .withNativeFunction ("applyResonanceSelection",
             [self] (const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion complete)
@@ -277,6 +304,11 @@ juce::WebBrowserComponent::Options UiBridge::addOptions (juce::WebBrowserCompone
             [self] (const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion complete)
             {
                 complete (self->handleClearDynamicBands());
+            })
+        .withNativeFunction ("openExternalUrl",
+            [self] (const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion complete)
+            {
+                complete (self->handleOpenExternalUrl (args));
             })
         .withNativeFunction ("setEditorExpanded",
             [self] (const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion complete)
@@ -355,21 +387,13 @@ juce::var UiBridge::handleSetParameter (const juce::Array<juce::var>& args)
         && id != MetalEQAudioProcessor::ParameterIDs::dynAudition)
         markCurveDirty();
 
-    // Side effect of MetalEQAudioProcessor::setLowPassEnabled: enabling the
-    // low-pass while the slope is Off jumps it to 24 dB/oct, so the filter is
-    // audible immediately instead of silently doing nothing. The web UI writes
-    // lpOn through setParameter (it has no direct processor access), so the
-    // bridge must reproduce the same behaviour as the native toggle.
-    if (id == MetalEQAudioProcessor::ParameterIDs::lpOn && *validated >= 0.5)
+    // The low-pass slope is its bypass: Off clears the legacy lpOn mirror so
+    // saved state and host automation remain coherent even though the web UI
+    // no longer exposes a separate enable toggle.
+    if (id == MetalEQAudioProcessor::ParameterIDs::lpSlope)
     {
-        if (auto* slopeParameter = dynamic_cast<juce::AudioParameterChoice*> (
-                apvts.getParameter (MetalEQAudioProcessor::ParameterIDs::lpSlope)))
-        {
-            const auto slopeIndex = static_cast<int> (slopeParameter->getIndex());
-            if (slopeIndex < 1)
-                slopeParameter->setValueNotifyingHost (
-                    2.0 / static_cast<double> (juce::jmax (1, slopeParameter->choices.size() - 1)));
-        }
+        if (auto* onParameter = apvts.getParameter (MetalEQAudioProcessor::ParameterIDs::lpOn))
+            onParameter->setValueNotifyingHost (*validated > 0.5 ? 1.0f : 0.0f);
     }
 
     auto* obj = new juce::DynamicObject();
@@ -500,13 +524,24 @@ juce::var UiBridge::handleSwapAbSlots()
     return okResult();
 }
 
+juce::var UiBridge::handleSetAnalyzerTarget (const juce::Array<juce::var>& args)
+{
+    const auto target = numberOrNull (args, 0);
+    if (target.isVoid())
+        return errorResult ("setAnalyzerTarget expects a target index.");
+
+    processor.setAnalyzerTarget (juce::jlimit (0, metaleq::tone::getNumToneTargets() - 1,
+        static_cast<int> (static_cast<double> (target))));
+    return okResult();
+}
+
 juce::var UiBridge::handleStartAnalyzerCapture (const juce::Array<juce::var>& args)
 {
     const auto profile = numberOrNull (args, 0);
     if (profile.isVoid())
         return errorResult ("startAnalyzerCapture expects a target profile index.");
 
-    processor.startAnalyzerCapture (juce::jlimit (0, metaleq::getNumAnalyzerTargets() - 1,
+    processor.startAnalyzerCapture (juce::jlimit (0, metaleq::tone::getNumToneTargets() - 1,
         static_cast<int> (static_cast<double> (profile))));
     return okResult();
 }
@@ -551,15 +586,23 @@ juce::var UiBridge::handleGetSuggestionCurve (const juce::Array<juce::var>& args
     return juce::var (obj);
 }
 
-juce::var UiBridge::handleStartResonanceScan()
+juce::var UiBridge::handleStartResonanceScan (const juce::Array<juce::var>& args)
 {
-    processor.startResonanceScan();
+    const bool dynamic = boolFlag (args, 0);
+    const auto target = dynamic ? MetalEQAudioProcessor::ResonanceScanTarget::dynamic
+                                : MetalEQAudioProcessor::ResonanceScanTarget::surgical;
+
+    if (! processor.startResonanceScan (target))
+        return errorResult ("A previous scan is still being analysed. Try again in a moment.");
+
     return okResult();
 }
 
-juce::var UiBridge::handleCancelResonanceScan()
+juce::var UiBridge::handleCancelResonanceScan (const juce::Array<juce::var>& args)
 {
-    processor.cancelResonanceScan();
+    const bool dynamic = boolFlag (args, 0);
+    processor.cancelResonanceScan (dynamic ? MetalEQAudioProcessor::ResonanceScanTarget::dynamic
+                                           : MetalEQAudioProcessor::ResonanceScanTarget::surgical);
     return okResult();
 }
 
@@ -600,6 +643,21 @@ juce::var UiBridge::handleClearDynamicBands()
 {
     processor.clearDynamicBands();
     markCurveDirty();
+    return okResult();
+}
+
+juce::var UiBridge::handleOpenExternalUrl (const juce::Array<juce::var>& args)
+{
+    if (args.isEmpty() || ! args[0].isString())
+        return errorResult ("openExternalUrl expects a URL string.");
+
+    const auto url = args[0].toString().trim();
+    if (! url.startsWithIgnoreCase ("https://") && ! url.startsWithIgnoreCase ("http://"))
+        return errorResult ("Only http and https links can be opened.");
+
+    if (! juce::URL (url).launchInDefaultBrowser())
+        return errorResult ("The link could not be opened.");
+
     return okResult();
 }
 
@@ -654,64 +712,116 @@ juce::var UiBridge::buildAnalyzerObject()
     using Status = MetalEQAudioProcessor::AnalyzerStatus;
     const auto status = processor.getAnalyzerStatus();
     const auto progress = processor.getAnalyzerProgress();
+    const int targetIndex = processor.getAnalyzerTargetIndex();
+    const int resultTarget = processor.getAnalyzerResultTarget();
+    const auto revision = processor.getAnalyzerRevision();
 
-    std::array<float, metaleq::kNumBands> suggestion {};
-    processor.getAnalyzerSuggestion (suggestion);
-
-    auto* obj = new juce::DynamicObject();
-    obj->setProperty ("status", static_cast<int> (status));
-    obj->setProperty ("progress", progress);
-
-    juce::Array<juce::var> gains;
-    for (const auto g : suggestion)
-        gains.add (g);
-    obj->setProperty ("suggestion", gains);
-
-    const bool changed = static_cast<int> (status) != lastAnalyzerStatus
+    const bool changed = revision != lastAnalyzerRevision
+                      || targetIndex != lastAnalyzerTarget
+                      || resultTarget != lastAnalyzerResultTarget
+                      || static_cast<int> (status) != lastAnalyzerStatus
                       || ! nearlyEqual (progress, lastAnalyzerProgress);
 
-    for (int i = 0; i < metaleq::kNumBands; ++i)
-        if (! nearlyEqual (suggestion[static_cast<size_t> (i)], lastSuggestion[static_cast<size_t> (i)]))
-        {
-            lastSuggestion[static_cast<size_t> (i)] = suggestion[static_cast<size_t> (i)];
-            obj->setProperty ("changed", true);
-            return juce::var (obj);
-        }
-
+    lastAnalyzerRevision = revision;
+    lastAnalyzerTarget = targetIndex;
+    lastAnalyzerResultTarget = resultTarget;
     lastAnalyzerStatus = static_cast<int> (status);
     lastAnalyzerProgress = progress;
 
     if (! changed && ! fullSyncRequired)
         return {};
 
+    const auto& target = metaleq::tone::getToneTarget (targetIndex);
+    MetalEQAudioProcessor::AnalyzerReport report;
+    const bool hasReport = processor.getAnalyzerReport (report);
+
+    auto* obj = new juce::DynamicObject();
+    obj->setProperty ("status", static_cast<int> (status));
+    obj->setProperty ("progress", progress);
+    obj->setProperty ("targetIndex", targetIndex);
+    obj->setProperty ("targetId", utf8 (target.id));
+    obj->setProperty ("targetLabel", utf8 (target.label));
+    obj->setProperty ("resultTarget", resultTarget);
+    obj->setProperty ("hasReport", hasReport);
+
+    juce::Array<juce::var> gains;
+    for (int i = 0; i < metaleq::kNumBands; ++i)
+    {
+        lastSuggestion[static_cast<size_t> (i)] = hasReport
+            ? report.gains[static_cast<size_t> (i)] : 0.0f;
+        gains.add (lastSuggestion[static_cast<size_t> (i)]);
+    }
+    obj->setProperty ("suggestion", gains);
+
+    if (hasReport)
+    {
+        auto addFeatureArray = [obj] (const char* name,
+                                      const std::array<float, metaleq::tone::kNumFeatures>& values)
+        {
+            juce::Array<juce::var> array;
+            for (const auto value : values)
+                array.add (value);
+            obj->setProperty (name, array);
+        };
+
+        addFeatureArray ("input", report.input);
+        addFeatureArray ("target", report.target);
+        addFeatureArray ("predicted", report.predicted);
+
+        juce::Array<juce::var> featureFreqs;
+        for (const auto& feature : metaleq::tone::kFeatures)
+            featureFreqs.add (feature.centreHz);
+        obj->setProperty ("featureFreqs", featureFreqs);
+
+        juce::Array<juce::var> correctionFreqs;
+        for (const auto freq : metaleq::tone::kCorrectionFrequencies)
+            correctionFreqs.add (freq);
+        obj->setProperty ("correctionFreqs", correctionFreqs);
+
+        obj->setProperty ("inputConfidence", report.inputConfidence);
+        obj->setProperty ("correctionConfidence", report.correctionConfidence);
+        obj->setProperty ("alreadyClose", report.alreadyClose);
+    }
+
+    obj->setProperty ("changed", true);
     return juce::var (obj);
 }
 
 juce::var UiBridge::buildResonanceObject()
 {
-    const auto status = processor.getResonanceStatus();
-    const auto progress = processor.getResonanceProgress();
+    const auto surgicalStatus = processor.getResonanceStatus (
+        MetalEQAudioProcessor::ResonanceScanTarget::surgical);
+    const auto dynamicStatus = processor.getResonanceStatus (
+        MetalEQAudioProcessor::ResonanceScanTarget::dynamic);
+    const auto surgicalProgress = processor.getResonanceProgress (
+        MetalEQAudioProcessor::ResonanceScanTarget::surgical);
+    const auto dynamicProgress = processor.getResonanceProgress (
+        MetalEQAudioProcessor::ResonanceScanTarget::dynamic);
     const auto revision = processor.getResonanceRevision();
-    const int count = processor.getResonanceCandidateCount();
 
-    const bool changed = static_cast<int> (status) != lastResonanceStatus
-                      || ! nearlyEqual (progress, lastResonanceProgress)
+    const bool changed = static_cast<int> (surgicalStatus) != lastResonanceStatus[0]
+                      || static_cast<int> (dynamicStatus) != lastResonanceStatus[1]
+                      || ! nearlyEqual (surgicalProgress, lastResonanceProgress[0])
+                      || ! nearlyEqual (dynamicProgress, lastResonanceProgress[1])
                       || revision != lastResonanceRevision;
 
-    lastResonanceStatus = static_cast<int> (status);
-    lastResonanceProgress = progress;
+    lastResonanceStatus[0] = static_cast<int> (surgicalStatus);
+    lastResonanceStatus[1] = static_cast<int> (dynamicStatus);
+    lastResonanceProgress[0] = surgicalProgress;
+    lastResonanceProgress[1] = dynamicProgress;
     lastResonanceRevision = revision;
 
     if (! changed && ! fullSyncRequired)
         return {};
 
-    auto* obj = new juce::DynamicObject();
-    obj->setProperty ("status", static_cast<int> (status));
-    obj->setProperty ("progress", progress);
-    obj->setProperty ("enoughVariation", processor.getResonanceEnoughVariation());
+    auto* surgical = new juce::DynamicObject();
+    surgical->setProperty ("status", static_cast<int> (surgicalStatus));
+    surgical->setProperty ("progress", surgicalProgress);
+    surgical->setProperty ("enoughVariation", processor.getResonanceEnoughVariation (
+        MetalEQAudioProcessor::ResonanceScanTarget::surgical));
 
     juce::Array<juce::var> candidates;
-    juce::Array<juce::var> dynamicCandidates;
+    const int count = processor.getResonanceCandidateCount();
 
     for (int i = 0; i < count; ++i)
     {
@@ -727,7 +837,21 @@ juce::var UiBridge::buildResonanceObject()
         item->setProperty ("confidence", candidate.confidence);
         item->setProperty ("cutDb", candidate.suggestedCutDb);
         candidates.add (juce::var (item));
+    }
 
+    surgical->setProperty ("candidates", candidates);
+
+    auto* dynamic = new juce::DynamicObject();
+    dynamic->setProperty ("status", static_cast<int> (dynamicStatus));
+    dynamic->setProperty ("progress", dynamicProgress);
+    dynamic->setProperty ("enoughVariation", processor.getResonanceEnoughVariation (
+        MetalEQAudioProcessor::ResonanceScanTarget::dynamic));
+
+    juce::Array<juce::var> dynamicCandidates;
+    const int dynamicCount = processor.getResonanceDynamicSuggestionCount();
+
+    for (int i = 0; i < dynamicCount; ++i)
+    {
         metaleq::DynamicBandSettings band;
         double confidence = 0.0;
         double excessDb = 0.0;
@@ -749,8 +873,11 @@ juce::var UiBridge::buildResonanceObject()
         dynamicCandidates.add (juce::var (dynamicItem));
     }
 
-    obj->setProperty ("candidates", candidates);
-    obj->setProperty ("dynamicCandidates", dynamicCandidates);
+    dynamic->setProperty ("candidates", dynamicCandidates);
+
+    auto* obj = new juce::DynamicObject();
+    obj->setProperty ("surgical", juce::var (surgical));
+    obj->setProperty ("dynamic", juce::var (dynamic));
 
     return juce::var (obj);
 }
@@ -820,13 +947,40 @@ juce::var UiBridge::buildAnalyzerTargetList()
 {
     juce::Array<juce::var> targets;
 
-    for (int i = 0; i < metaleq::getNumAnalyzerTargets(); ++i)
+    for (int i = 0; i < metaleq::tone::getNumToneTargets(); ++i)
     {
-        const auto& target = metaleq::getAnalyzerTarget (i);
+        const auto& target = metaleq::tone::getToneTarget (i);
         auto* obj = new juce::DynamicObject();
         obj->setProperty ("index", i);
-        obj->setProperty ("presetId", target.presetId);
-        obj->setProperty ("label", target.label);
+        obj->setProperty ("id", utf8 (target.id));
+        obj->setProperty ("label", utf8 (target.label));
+        obj->setProperty ("shortLabel", utf8 (target.shortLabel));
+        obj->setProperty ("category", static_cast<int> (target.category));
+        obj->setProperty ("categoryLabel", utf8 (metaleq::tone::categoryLabel (target.category)));
+        obj->setProperty ("albumPeriod", utf8 (target.albumPeriod));
+        obj->setProperty ("objective", utf8 (target.objective));
+        obj->setProperty ("limitations", utf8 (target.limitations));
+        obj->setProperty ("confidence", target.confidence);
+
+        juce::Array<juce::var> sources;
+        for (int s = 0; s < target.numSources; ++s)
+        {
+            const auto& ref = target.sources[static_cast<size_t> (s)];
+            if (ref.sourceIndex < 0 || ref.sourceIndex >= metaleq::tone::getNumSources())
+                continue;
+
+            const auto& source = metaleq::tone::getSource (ref.sourceIndex);
+            auto* entry = new juce::DynamicObject();
+            entry->setProperty ("title", utf8 (source.title));
+            entry->setProperty ("url", utf8 (source.url));
+            entry->setProperty ("date", utf8 (source.date));
+            entry->setProperty ("claim", utf8 (ref.claim));
+            entry->setProperty ("evidence", static_cast<int> (ref.evidence));
+            entry->setProperty ("evidenceLabel", utf8 (metaleq::tone::evidenceLabel (ref.evidence)));
+            sources.add (juce::var (entry));
+        }
+        obj->setProperty ("sources", sources);
+
         targets.add (juce::var (obj));
     }
 

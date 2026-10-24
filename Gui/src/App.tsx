@@ -22,11 +22,14 @@ import { MockBridge } from './mockBridge';
 import { store, useUiState } from './store';
 import { AnalyzerStatus, PROTOCOL_VERSION } from './types';
 import type {
+  AnalyzerInfo,
+  AnalyzerTargetInfo,
+  DynamicResonanceInfo,
   FactoryPresetInfo,
   MetalEqBridge,
   ParamSpec,
   PresetInfo,
-  ResonanceInfo,
+  SurgicalResonanceInfo,
 } from './types';
 import {
   NUM_BANDS,
@@ -123,19 +126,37 @@ function presetStateText(preset: PresetInfo): string {
   return preset.dirty ? `${kind} *` : kind;
 }
 
-/** Mirror of the native updateAnalyzerUi() strings. */
-function analyzerStatusText(status: number, progress: number, suggestion: number[]): string {
-  switch (status) {
+function formatDb(value: number): string {
+  return `${value >= 0 ? '+' : ''}${value.toFixed(1)}`;
+}
+
+/** Plain-language summary of the current input-versus-target result. */
+function analyzerStatusText(info: AnalyzerInfo, targetLabel: string | undefined): string {
+  switch (info.status) {
     case AnalyzerStatus.capturing:
-      return `Capturing input: ${Math.round(progress * 100)}% · play through the host.`;
+      return `Capturing input: ${Math.round(info.progress * 100)}% · play through the host.`;
     case AnalyzerStatus.analyzing:
-      return 'Analyzing captured average spectrum…';
-    case AnalyzerStatus.ready:
-      return `Suggested gains: ${suggestion.map((g) => g.toFixed(1)).join(' / ')} dB`;
+      return 'Measuring the input and comparing it with the selected target…';
+    case AnalyzerStatus.ready: {
+      if (!info.hasReport) return 'The capture did not produce a usable report. Try again.';
+      if (info.alreadyClose) {
+        return `Already close to ${targetLabel ?? 'the target'} — no meaningful correction is suggested.`;
+      }
+      const freqs = info.correctionFreqs ?? [120, 350, 1000, 2800, 7000];
+      const moves = info.suggestion
+        .map((gain, index) => ({ gain, freq: freqs[index] ?? 0 }))
+        .filter((move) => Math.abs(move.gain) >= 0.3)
+        .sort((a, b) => Math.abs(b.gain) - Math.abs(a.gain))
+        .slice(0, 3)
+        .map((move) => `${formatFreqPlain(move.freq)} ${formatDb(move.gain)} dB`);
+      return moves.length > 0
+        ? `${targetLabel ?? 'Target'}: ${moves.join(' · ')}`
+        : 'The input is close to the target in every broad band.';
+    }
     case AnalyzerStatus.failed:
       return 'No usable audio was captured. Play audio and try again.';
     default:
-      return 'Ready · analyzer listens only when you start capture.';
+      return 'Choose a destination, then capture 8 seconds of the guitar.';
   }
 }
 
@@ -151,7 +172,7 @@ function confidenceLabel(value: number): string {
 /** Plain-language scan status. The detector is advisory, so the copy never
     promises that a candidate is definitely a problem.
 */
-function resonanceStatusText(info: ResonanceInfo): string {
+function resonanceStatusText(info: SurgicalResonanceInfo): string {
   switch (info.status) {
     case AnalyzerStatus.capturing:
       return `Listening: ${Math.round(info.progress * 100)}% · play varied riffs and let notes ring.`;
@@ -168,24 +189,178 @@ function resonanceStatusText(info: ResonanceInfo): string {
   }
 }
 
-function dynamicResonanceStatusText(info: ResonanceInfo): string {
+function dynamicResonanceStatusText(info: DynamicResonanceInfo): string {
   switch (info.status) {
     case AnalyzerStatus.capturing:
       return `Listening: ${Math.round(info.progress * 100)}% · play varied riffs and let notes ring.`;
     case AnalyzerStatus.analyzing:
       return 'Measuring each peak against its neighbouring half-octaves…';
     case AnalyzerStatus.ready:
-      if (info.dynamicCandidates.length === 0) {
-        return info.candidates.length === 0
-          ? 'No narrow peaks stood out, so there is nothing to suggest for the dynamic bands.'
-          : 'Peaks were found, but none had enough relative excess to drive a dynamic cut.';
-      }
-      return `${info.dynamicCandidates.length} dynamic suggestion${info.dynamicCandidates.length === 1 ? '' : 's'} · select up to ${NUM_DYNAMIC_BANDS}, audition, then apply.`;
+      return info.candidates.length === 0
+        ? 'No peaks had enough relative excess to drive a dynamic cut.'
+        : `${info.candidates.length} dynamic suggestion${info.candidates.length === 1 ? '' : 's'} · select up to ${NUM_DYNAMIC_BANDS}, audition, then apply.`;
     case AnalyzerStatus.failed:
       return 'No usable audio was captured. Play audio and scan again.';
     default:
       return 'Measures relative excess and suggests threshold, Q and maximum cut for the four dynamic bands.';
   }
+}
+
+function AnalyzerTargetDetails({
+  target,
+  onOpenSource,
+}: {
+  target: AnalyzerTargetInfo | null;
+  onOpenSource: (url: string) => void;
+}) {
+  if (!target) return null;
+
+  return (
+    <div className="analyzer-target-details">
+      <div className="analyzer-target-top">
+        <span className={`analyzer-category category-${target.category}`}>{target.categoryLabel}</span>
+        <span className="analyzer-target-name">{target.label}</span>
+        <span className={`resonance-confidence ${confidenceLabel(target.confidence).toLowerCase()}`}>
+          {confidenceLabel(target.confidence)} CONFIDENCE
+        </span>
+      </div>
+      <div className="analyzer-target-album">{target.albumPeriod}</div>
+      <div className="analyzer-target-objective">{target.objective}</div>
+      <details className="analyzer-sources">
+        <summary>Research, sources & limitations ({target.sources.length})</summary>
+        <p className="analyzer-limitation">{target.limitations}</p>
+        <ul>
+          {target.sources.map((source, index) => (
+            <li key={`${source.url}-${index}`}>
+              <a
+                href={source.url}
+                onClick={(event) => {
+                  event.preventDefault();
+                  onOpenSource(source.url);
+                }}
+              >
+                {source.title}
+              </a>
+              <span className="analyzer-source-meta"> [{source.date} · {source.evidenceLabel}]</span>
+              <div className="analyzer-source-claim">{source.claim}</div>
+            </li>
+          ))}
+        </ul>
+        <p className="analyzer-source-note">
+          These profiles are inspired by the listed references. They do not reproduce an album, producer or
+          artist&apos;s exact EQ, and EQ alone cannot recreate an amp, cabinet, microphone or performance.
+        </p>
+      </details>
+    </div>
+  );
+}
+
+function AnalyzerResultPanel({
+  info,
+  target,
+}: {
+  info: AnalyzerInfo;
+  target: AnalyzerTargetInfo | null;
+}) {
+  if (info.status !== AnalyzerStatus.ready || !info.hasReport) return null;
+
+  const input = info.input;
+  const targetShape = info.target;
+  const predicted = info.predicted;
+  if (!input || !targetShape || !predicted) return null;
+
+  const freqs = info.featureFreqs ?? [90, 175, 350, 700, 1400, 2800, 5600, 9500];
+  const correctionFreqs = info.correctionFreqs ?? [120, 350, 1000, 2800, 7000];
+  const mismatches = freqs
+    .map((freq, index) => ({ freq, delta: targetShape[index] - input[index] }))
+    .filter((entry) => Math.abs(entry.delta) >= 0.75)
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+    .slice(0, 3);
+
+  return (
+    <div className="analyzer-report">
+      <div className="analyzer-report-head">
+        <span className="analyzer-column-title">INPUT vs TARGET · eight broad bands, dB relative to 500–2000 Hz</span>
+        <span className="analyzer-report-confidence">
+          input {Math.round((info.inputConfidence ?? 0) * 100)}%
+          {target ? ` · target ${confidenceLabel(target.confidence)}` : ''}
+        </span>
+      </div>
+
+      <div className="analyzer-band-table" role="table" aria-label="Analyzer input, target and predicted band balances">
+        <div className="analyzer-band-row analyzer-band-head" role="row">
+          <span />
+          {freqs.map((freq) => (
+            <span key={freq} role="columnheader">{formatFreqPlain(freq)}</span>
+          ))}
+        </div>
+        <div className="analyzer-band-row" role="row">
+          <span className="analyzer-band-label">INPUT</span>
+          {input.map((value, index) => (
+            <span key={`input-${freqs[index]}`} role="cell" className={value >= 0 ? 'positive' : 'negative'}>
+              {formatDb(value)}
+            </span>
+          ))}
+        </div>
+        <div className="analyzer-band-row" role="row">
+          <span className="analyzer-band-label">TARGET</span>
+          {targetShape.map((value, index) => (
+            <span key={`target-${freqs[index]}`} role="cell" className={value >= 0 ? 'positive' : 'negative'}>
+              {formatDb(value)}
+            </span>
+          ))}
+        </div>
+        <div className="analyzer-band-row" role="row">
+          <span className="analyzer-band-label">PREDICTED</span>
+          {predicted.map((value, index) => (
+            <span key={`predicted-${freqs[index]}`} role="cell" className="predicted">
+              {formatDb(value)}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      <div className="analyzer-correction-block">
+        <div className="analyzer-column-title">EQ CORRECTION · applied to the five musical bands at 100%</div>
+        <div className="analyzer-correction-bars">
+          {correctionFreqs.map((freq, index) => {
+            const gain = info.suggestion[index] ?? 0;
+            const width = Math.min(50, (Math.abs(gain) / 6) * 50);
+            return (
+              <div className="analyzer-correction-row" key={`corr-${freq}`}>
+                <span className="analyzer-correction-freq">{formatFreqPlain(freq)}</span>
+                <span className="analyzer-correction-track" aria-hidden="true">
+                  <span
+                    className={`analyzer-correction-bar ${gain >= 0 ? 'boost' : 'cut'}`}
+                    style={gain >= 0
+                      ? { left: '50%', width: `${width}%` }
+                      : { left: `${50 - width}%`, width: `${width}%` }}
+                  />
+                  <span className="analyzer-correction-zero" />
+                </span>
+                <span className={`analyzer-correction-value ${gain >= 0 ? 'positive' : 'negative'}`}>
+                  {formatDb(gain)} dB
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="analyzer-report-footer">
+        <span>
+          {info.alreadyClose
+            ? 'Already within tolerance: no meaningful correction is suggested.'
+            : mismatches.length > 0
+              ? `Largest gaps: ${mismatches.map((entry) => `${formatFreqPlain(entry.freq)} ${formatDb(entry.delta)} dB`).join(' · ')}`
+              : 'The input is close to the target in every broad band.'}
+        </span>
+        <span className="analyzer-report-note">
+          Target = destination · correction = the five-band move · predicted = input plus that move.
+        </span>
+      </div>
+    </div>
+  );
 }
 
 function ResonancePanel({
@@ -194,6 +369,7 @@ function ResonancePanel({
   hovered,
   surgicalActive,
   audition,
+  busy,
   onScan,
   onCancel,
   onToggleCandidate,
@@ -202,11 +378,12 @@ function ResonancePanel({
   onClear,
   onAudition,
 }: {
-  info: ResonanceInfo;
+  info: SurgicalResonanceInfo;
   selected: number[];
   hovered: number | null;
   surgicalActive: boolean;
   audition: boolean;
+  busy: boolean;
   onScan: () => void;
   onCancel: () => void;
   onToggleCandidate: (index: number) => void;
@@ -232,8 +409,8 @@ function ResonancePanel({
           type="button"
           className="btn capture-btn"
           onClick={capturing ? onCancel : onScan}
-          disabled={analyzing}
-          title="Capture 8 seconds of playing. The scan looks for peaks that stay at the same frequency across notes."
+          disabled={busy || analyzing}
+          title="Capture 8 seconds of playing for the surgical candidates. This capture is independent from the dynamic scan."
         >
           {capturing ? 'Stop scan' : analyzing ? 'Analyzing…' : 'Scan 8 seconds'}
         </button>
@@ -323,22 +500,22 @@ function DynamicSuggestionPanel({
   selected,
   dynamicActive,
   audition,
+  busy,
   onScan,
   onCancel,
   onToggleCandidate,
-  onHoverCandidate,
   onApply,
   onClear,
   onAudition,
 }: {
-  info: ResonanceInfo;
+  info: DynamicResonanceInfo;
   selected: number[];
   dynamicActive: boolean;
   audition: boolean;
+  busy: boolean;
   onScan: () => void;
   onCancel: () => void;
   onToggleCandidate: (candidateIndex: number) => void;
-  onHoverCandidate: (candidateIndex: number | null) => void;
   onApply: () => void;
   onClear: () => void;
   onAudition: (enabled: boolean) => void;
@@ -346,14 +523,14 @@ function DynamicSuggestionPanel({
   const capturing = info.status === AnalyzerStatus.capturing;
   const analyzing = info.status === AnalyzerStatus.analyzing;
   const ready = info.status === AnalyzerStatus.ready;
-  const suggestions = info.dynamicCandidates;
+  const suggestions = info.candidates;
 
   return (
     <div className="dynamic-suggestion-panel">
       <div className="dynamic-suggestion-heading">
         <span className="dynamic-suggestion-title">AUTO-SUGGEST</span>
         <span className="dynamic-suggestion-hint">
-          scan once, choose suggestions, then load them into the four dynamic bands
+          its own 8-second scan feeds only these four dynamic bands
         </span>
       </div>
 
@@ -362,8 +539,8 @@ function DynamicSuggestionPanel({
           type="button"
           className="btn capture-btn"
           onClick={capturing ? onCancel : onScan}
-          disabled={analyzing}
-          title="Capture 8 seconds of playing. The same scan also feeds the surgical suggestions."
+          disabled={busy || analyzing}
+          title="Capture 8 seconds of playing for the dynamic suggestions. This capture is independent from the surgical scan."
         >
           {capturing ? 'Stop scan' : analyzing ? 'Analyzing…' : 'Scan 8 seconds'}
         </button>
@@ -414,8 +591,6 @@ function DynamicSuggestionPanel({
               <label
                 key={suggestion.candidateIndex}
                 className={`resonance-candidate${isSelected ? ' selected' : ''}`}
-                onPointerEnter={() => onHoverCandidate(suggestion.candidateIndex)}
-                onPointerLeave={() => onHoverCandidate(null)}
               >
                 <input
                   type="checkbox"
@@ -998,12 +1173,6 @@ function FilterPanel({
           <span className="filter-hint">tame fizz and harshness</span>
         </div>
         <div className="filter-controls">
-          <Toggle
-            label="Enabled"
-            checked={(params.lpOn ?? 0) >= 0.5}
-            onChange={(enabled) => onParam('lpOn', enabled ? 1 : 0)}
-            tip="Enable or bypass the high-frequency low-pass filter."
-          />
           <Slider
             label="CUTOFF"
             value={params.lpFreq ?? 12000}
@@ -1021,7 +1190,7 @@ function FilterPanel({
             options={SLOPE_CHOICES}
             onChange={(value) => onParam('lpSlope', Number(value))}
             ariaLabel="Low-pass slope"
-            tip="Steeper slopes remove more high frequencies above the cutoff."
+            tip="Off bypasses the high cut. Steeper slopes remove more high frequencies above the cutoff."
           />
         </div>
       </div>
@@ -1230,6 +1399,11 @@ export function App(): React.JSX.Element {
   const analyzerReady = state.analyzer.status === AnalyzerStatus.ready;
   const capturing = state.analyzer.status === AnalyzerStatus.capturing;
   const resonance = state.resonance;
+  const surgicalScan = resonance.surgical;
+  const dynamicScan = resonance.dynamic;
+  const resonanceBusy = state.analyzer.status === AnalyzerStatus.analyzing
+    || surgicalScan.status === AnalyzerStatus.analyzing
+    || dynamicScan.status === AnalyzerStatus.analyzing;
   const surgicalActive = useMemo(() => {
     for (let i = 0; i < NUM_SURGICAL_BANDS; i++) {
       const n = i + 1;
@@ -1252,29 +1426,40 @@ export function App(): React.JSX.Element {
     return false;
   }, [state.params]);
 
-  // A new scan invalidates the previous selection. Keep indices in range if a
-  // tick ever arrives with a shorter candidate list.
+  // A new scan in a section invalidates only that section's selection.
   useEffect(() => {
-    if (resonance.status !== AnalyzerStatus.ready) {
+    if (surgicalScan.status !== AnalyzerStatus.ready) {
       setSelectedCandidates([]);
-      setSelectedDynamicCandidates([]);
       setHoveredCandidate(null);
     }
-  }, [resonance.status]);
+  }, [surgicalScan.status]);
 
   useEffect(() => {
-    setSelectedCandidates((previous) => previous.filter((index) => index < resonance.candidates.length));
-  }, [resonance.candidates.length]);
+    if (dynamicScan.status !== AnalyzerStatus.ready)
+      setSelectedDynamicCandidates([]);
+  }, [dynamicScan.status]);
 
   useEffect(() => {
-    const valid = new Set(resonance.dynamicCandidates.map((suggestion) => suggestion.candidateIndex));
+    setSelectedCandidates((previous) => previous.filter ((index) => index < surgicalScan.candidates.length));
+  }, [surgicalScan.candidates.length]);
+
+  useEffect(() => {
+    const valid = new Set(dynamicScan.candidates.map((suggestion) => suggestion.candidateIndex));
     setSelectedDynamicCandidates((previous) => previous.filter((index) => valid.has(index)));
-  }, [resonance.dynamicCandidates]);
+  }, [dynamicScan.candidates]);
 
   const analyzerTargets = state.analyzerTargets;
   const targetOptions = useMemo<SelectOption[]>(
-    () => analyzerTargets.map((target) => ({ value: String(target.index), label: target.label })),
+    () => analyzerTargets.map((target) => ({
+      value: String(target.index),
+      label: target.shortLabel || target.label,
+      group: target.categoryLabel,
+    })),
     [analyzerTargets],
+  );
+  const selectedTarget = useMemo<AnalyzerTargetInfo | null>(
+    () => analyzerTargets.find((target) => target.index === profile) ?? null,
+    [analyzerTargets, profile],
   );
 
   //----------------------------------------------------------------------
@@ -1351,13 +1536,22 @@ export function App(): React.JSX.Element {
     };
   }, [manageMenuOpen]);
 
+  const analyzerTargetInitialised = useRef(false);
   useEffect(() => {
     if (targetOptions.length === 0) {
       if (profile !== 0) setProfile(0);
       return;
     }
+    if (!analyzerTargetInitialised.current) {
+      const authoritative = state.analyzer.targetIndex;
+      if (typeof authoritative === 'number' && authoritative >= 0 && authoritative < targetOptions.length) {
+        if (profile !== authoritative) setProfile(authoritative);
+        analyzerTargetInitialised.current = true;
+      }
+      return;
+    }
     if (profile >= targetOptions.length) setProfile(0);
-  }, [profile, targetOptions.length]);
+  }, [profile, targetOptions.length, state.analyzer.targetIndex]);
 
   // Suggested-correction curve: fetched whenever the analyzer is ready and
   // the amount changes (debounced so dragging the slider stays cheap).
@@ -1425,6 +1619,26 @@ export function App(): React.JSX.Element {
   //----------------------------------------------------------------------
   // Preset flows (mirror the native comboBox + AlertWindow behaviour).
   const showError = useCallback((message: string) => setModal({ kind: 'error', message }), []);
+
+  const onOpenAnalyzerSource = useCallback(
+    (url: string) => {
+      void bridge.openExternalUrl(url).then((result) => {
+        if (!result.ok) showError(result.error ?? 'The research link could not be opened.');
+      });
+    },
+    [bridge, showError],
+  );
+
+  const onAnalyzerTargetChange = useCallback(
+    (value: string) => {
+      const next = Number(value);
+      setProfile(next);
+      void bridge.setAnalyzerTarget(next).then((result) => {
+        if (!result.ok) showError(result.error ?? 'Selecting the analyzer target failed.');
+      });
+    },
+    [bridge, showError],
+  );
 
   const userPresetExists = useCallback(
     (name: string) => state.userPresets.some((n) => n.toLowerCase() === name.toLowerCase()),
@@ -1563,14 +1777,14 @@ export function App(): React.JSX.Element {
     });
   }, [bridge, amount, showError]);
 
-  const onResonanceScan = useCallback(() => {
-    void bridge.startResonanceScan().then((result) => {
+  const onResonanceScan = useCallback((dynamic: boolean) => {
+    void bridge.startResonanceScan(dynamic).then((result) => {
       if (!result.ok) showError(result.error ?? 'Could not start the resonance scan.');
     });
   }, [bridge, showError]);
 
-  const onResonanceCancel = useCallback(() => {
-    void bridge.cancelResonanceScan().then((result) => {
+  const onResonanceCancel = useCallback((dynamic: boolean) => {
+    void bridge.cancelResonanceScan(dynamic).then((result) => {
       if (!result.ok) showError(result.error ?? 'Could not stop the resonance scan.');
     });
   }, [bridge, showError]);
@@ -1725,7 +1939,7 @@ export function App(): React.JSX.Element {
     <section className="analyzer-section">
       <div className="section-heading">
         <span className="section-title">Analyzer</span>
-        <span className="section-hint">match a captured spectrum to a reference tone</span>
+        <span className="section-hint">research-backed destination · the input decides the correction</span>
       </div>
       <div className="analyzer-row">
         <span className="row-label target-label">TARGET</span>
@@ -1733,9 +1947,9 @@ export function App(): React.JSX.Element {
           className="target-select"
           value={String(profile)}
           options={targetOptions}
-          onChange={(value) => setProfile(Number(value))}
+          onChange={onAnalyzerTargetChange}
           ariaLabel="Analyzer target profile"
-          tip="The analyzer compares the captured spectrum with this target; it does not detect the source genre."
+          tip="Choose a genre, artist or producer destination. The correction is calculated from the captured input, not from a fixed preset curve."
         />
         <button
           type="button"
@@ -1756,19 +1970,29 @@ export function App(): React.JSX.Element {
           onChange={setAmount}
         />
         <div className="analyzer-spacer" />
-        <button type="button" className="btn primary apply-btn" disabled={!analyzerReady} onClick={onApplySuggestion}>
-          Apply suggestion
+        <button
+          type="button"
+          className="btn primary apply-btn"
+          disabled={!analyzerReady || state.analyzer.resultTarget !== profile || !state.analyzer.hasReport}
+          onClick={onApplySuggestion}
+          title="Copy the fitted five-band correction into the five musical bands, scaled by Amount."
+        >
+          Apply correction
         </button>
       </div>
-      <div className="analyzer-status">
-        {analyzerStatusText(state.analyzer.status, state.analyzer.progress, state.analyzer.suggestion)}
-      </div>
+      <AnalyzerTargetDetails target={selectedTarget} onOpenSource={onOpenAnalyzerSource} />
+      <AnalyzerResultPanel info={state.analyzer} target={selectedTarget} />
+      {!(state.analyzer.status === AnalyzerStatus.ready && state.analyzer.hasReport) && (
+        <div className="analyzer-status">
+          {analyzerStatusText(state.analyzer, selectedTarget?.shortLabel)}
+        </div>
+      )}
       <div className="analyzer-disclaimer">
-        Average-spectrum suggestion only. Capture is temporary and never saved in presets.
+        Target curve ≠ correction curve. Profiles are evidence-backed estimates, not exact album or producer
+        settings. EQ cannot recreate an amp, cabinet, microphone or performance.
       </div>
     </section>
   );
-
   return (
     <div className={`metaleq-app ${view}`}>
       {isMock && <div className="mock-badge">UI preview · mock data (not the plugin)</div>}
@@ -1897,7 +2121,7 @@ export function App(): React.JSX.Element {
           curve={state.curve}
           params={state.params}
           suggestionCurve={analyzerReady ? state.suggestionCurve : null}
-          resonanceCandidates={resonance.status === AnalyzerStatus.ready ? resonance.candidates : []}
+          resonanceCandidates={surgicalScan.status === AnalyzerStatus.ready ? surgicalScan.candidates : []}
           selectedCandidates={selectedCandidates}
           hoveredCandidate={hoveredCandidate}
           onToggleCandidate={onToggleCandidate}
@@ -1949,14 +2173,17 @@ export function App(): React.JSX.Element {
             <ShelfPanel params={state.params} onParam={setParam} onDrag={knobDrag} />
           </section>
 
+          {analyzerPanel}
+
           <ResonancePanel
-            info={resonance}
+            info={surgicalScan}
             selected={selectedCandidates}
             hovered={hoveredCandidate}
             surgicalActive={surgicalActive}
             audition={(state.params.resAudition ?? 0) >= 0.5}
-            onScan={onResonanceScan}
-            onCancel={onResonanceCancel}
+            busy={resonanceBusy}
+            onScan={() => onResonanceScan(false)}
+            onCancel={() => onResonanceCancel(false)}
             onToggleCandidate={onToggleCandidate}
             onHoverCandidate={setHoveredCandidate}
             onApply={onApplyResonance}
@@ -1982,14 +2209,14 @@ export function App(): React.JSX.Element {
               </span>
             </div>
             <DynamicSuggestionPanel
-              info={resonance}
+              info={dynamicScan}
               selected={selectedDynamicCandidates}
               dynamicActive={dynamicActive}
               audition={(state.params.dynAudition ?? 0) >= 0.5}
-              onScan={onResonanceScan}
-              onCancel={onResonanceCancel}
+              busy={resonanceBusy}
+              onScan={() => onResonanceScan(true)}
+              onCancel={() => onResonanceCancel(true)}
               onToggleCandidate={onToggleDynamicCandidate}
-              onHoverCandidate={setHoveredCandidate}
               onApply={onApplyDynamicResonance}
               onClear={onClearDynamic}
               onAudition={onAuditionDynamic}
@@ -2002,7 +2229,6 @@ export function App(): React.JSX.Element {
             />
           </section>
 
-          {analyzerPanel}
         </>
       )}
 

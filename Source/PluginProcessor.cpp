@@ -59,6 +59,42 @@ namespace
         return end == cursor && std::isfinite (result);
     }
 
+    void normaliseLowPassParameterState (juce::ValueTree state)
+    {
+        if (! state.isValid() || ! state.hasType ("PARAMS"))
+            return;
+
+        juce::ValueTree enabled;
+        juce::ValueTree slope;
+
+        for (int i = 0; i < state.getNumChildren(); ++i)
+        {
+            const auto child = state.getChild (i);
+            const auto id = child.getProperty ("id").toString();
+            if (id == MetalEQAudioProcessor::ParameterIDs::lpOn)
+                enabled = child;
+            else if (id == MetalEQAudioProcessor::ParameterIDs::lpSlope)
+                slope = child;
+        }
+
+        if (! enabled.isValid() || ! slope.isValid())
+            return;
+
+        double enabledValue = 0.0;
+        double slopeValue = 0.0;
+        if (! parsePresetNumber (enabled.getProperty ("value").toString().trim(), enabledValue)
+            || ! parsePresetNumber (slope.getProperty ("value").toString().trim(), slopeValue))
+            return;
+
+        // The old UI had an enable toggle. If either control bypassed the
+        // filter, move the state to the equivalent new representation so it
+        // keeps sounding the same and no longer appears contradictory.
+        if (enabledValue < 0.5 && slopeValue > 0.0)
+            slope.setProperty ("value", "0", nullptr);
+        else if (enabledValue >= 0.5 && slopeValue <= 0.0)
+            enabled.setProperty ("value", "0", nullptr);
+    }
+
     //==========================================================================
     // Parameter identities. Never change these strings: they are the plugin's
     // automation map and part of every saved session.
@@ -176,7 +212,6 @@ MetalEQAudioProcessor::MetalEQAudioProcessor()
     apvts = std::make_unique<juce::AudioProcessorValueTreeState> (*this, nullptr, "PARAMS", createParameterLayout());
     apvts->addParameterListener (ParameterIDs::preset, this);
     apvts->addParameterListener (ParameterIDs::abCompare, this);
-    apvts->addParameterListener (ParameterIDs::lpOn, this);
 
     rememberCurrentAsLoadedPreset ("Custom", false);
     captureActiveAbSlot();
@@ -192,14 +227,17 @@ MetalEQAudioProcessor::MetalEQAudioProcessor()
     for (auto& value : resonanceResidual)     value.store (0.0f, std::memory_order_relaxed);
     for (auto& value : resonanceConfidence)   value.store (0.0f, std::memory_order_relaxed);
     for (auto& value : resonanceCut)          value.store (0.0f, std::memory_order_relaxed);
-    for (auto& value : resonanceDynamicEligible)  value.store (false, std::memory_order_relaxed);
-    for (auto& value : resonanceDynamicQ)         value.store (0.0f, std::memory_order_relaxed);
-    for (auto& value : resonanceDynamicThreshold) value.store (0.0f, std::memory_order_relaxed);
-    for (auto& value : resonanceDynamicRatio)     value.store (0.0f, std::memory_order_relaxed);
-    for (auto& value : resonanceDynamicAttack)    value.store (0.0f, std::memory_order_relaxed);
-    for (auto& value : resonanceDynamicRelease)   value.store (0.0f, std::memory_order_relaxed);
-    for (auto& value : resonanceDynamicMaxCut)    value.store (0.0f, std::memory_order_relaxed);
-    for (auto& value : resonanceDynamicExcess)    value.store (0.0f, std::memory_order_relaxed);
+    for (auto& value : dynamicResonanceFreq)        value.store (0.0f, std::memory_order_relaxed);
+    for (auto& value : dynamicResonanceQ)           value.store (0.0f, std::memory_order_relaxed);
+    for (auto& value : dynamicResonanceThreshold)   value.store (0.0f, std::memory_order_relaxed);
+    for (auto& value : dynamicResonanceRatio)       value.store (0.0f, std::memory_order_relaxed);
+    for (auto& value : dynamicResonanceAttack)      value.store (0.0f, std::memory_order_relaxed);
+    for (auto& value : dynamicResonanceRelease)     value.store (0.0f, std::memory_order_relaxed);
+    for (auto& value : dynamicResonanceMaxCut)      value.store (0.0f, std::memory_order_relaxed);
+    for (auto& value : dynamicResonanceConfidence)  value.store (0.0f, std::memory_order_relaxed);
+    for (auto& value : dynamicResonanceExcess)      value.store (0.0f, std::memory_order_relaxed);
+    for (auto& status : resonanceStatus)
+        status.store (static_cast<int> (AnalyzerStatus::idle), std::memory_order_relaxed);
 
     for (auto& level : peakLevels)
         level.store (0.0f, std::memory_order_relaxed);
@@ -223,7 +261,6 @@ MetalEQAudioProcessor::~MetalEQAudioProcessor()
     {
         apvts->removeParameterListener (ParameterIDs::preset, this);
         apvts->removeParameterListener (ParameterIDs::abCompare, this);
-        apvts->removeParameterListener (ParameterIDs::lpOn, this);
     }
 
     stopAnalyzerWorker.store (true, std::memory_order_release);
@@ -522,6 +559,18 @@ void MetalEQAudioProcessor::captureAnalyzerInput (const juce::AudioBuffer<float>
     // cancel/restart must not be allowed to join the new capture.
     const auto callbackGeneration = analyzerCaptureGeneration.load (std::memory_order_acquire);
     const auto callbackState = analyzerCaptureState.load (std::memory_order_acquire);
+
+    // A cancel can land between callbacks, after the previous callback has
+    // released the writer. Finish that transition here instead of leaving the
+    // capture stuck in cancelPending until the next start request.
+    if (callbackState == AnalyzerCaptureState::cancelPending)
+    {
+        auto expected = AnalyzerCaptureState::cancelPending;
+        analyzerCaptureState.compare_exchange_strong (expected, AnalyzerCaptureState::idle,
+            std::memory_order_acq_rel, std::memory_order_acquire);
+        return;
+    }
+
     if (callbackState != AnalyzerCaptureState::requested && callbackState != AnalyzerCaptureState::recording)
         return;
 
@@ -650,10 +699,18 @@ void MetalEQAudioProcessor::serviceDeferredAnalyzerStart() noexcept
     bool pending = true;
     if (analyzerDeferredStartRequested.compare_exchange_strong (pending, false,
             std::memory_order_acq_rel, std::memory_order_acquire))
-        startAnalyzerCaptureWithGeneration (
-            analyzerDeferredStartProfile.load (std::memory_order_relaxed),
-            analyzerDeferredStartMode.load (std::memory_order_relaxed),
-            cancelGeneration);
+    {
+        const int profile = analyzerDeferredStartProfile.load (std::memory_order_relaxed);
+        const int mode = analyzerDeferredStartMode.load (std::memory_order_relaxed);
+
+        if (! startAnalyzerCaptureWithGeneration (profile, mode, cancelGeneration))
+        {
+            const int resonanceTarget = resonanceTargetForAnalyzerMode (mode);
+            if (resonanceTarget >= 0)
+                setResonanceStatus (static_cast<ResonanceScanTarget> (resonanceTarget),
+                                    AnalyzerStatus::idle);
+        }
+    }
 }
 
 //==============================================================================
@@ -910,11 +967,6 @@ void MetalEQAudioProcessor::parameterChanged (const juce::String& parameterID, f
         pendingAbSlot.store (newValue >= 0.5f ? 1 : 0, std::memory_order_release);
         needService = true;
     }
-    else if (parameterID == ParameterIDs::lpOn && newValue >= 0.5f)
-    {
-        pendingLowPassFix.store (true, std::memory_order_release);
-        needService = true;
-    }
 
     if (! needService)
         return;
@@ -932,26 +984,8 @@ void MetalEQAudioProcessor::handleAsyncUpdate()
     servicePendingAutomation();
 }
 
-void MetalEQAudioProcessor::serviceLowPassFix()
-{
-    if (! pendingLowPassFix.exchange (false, std::memory_order_acq_rel))
-        return;
-
-    if (apvts->getRawParameterValue (ParameterIDs::lpOn)->load() < 0.5f)
-        return;
-
-    if (apvts->getRawParameterValue (ParameterIDs::lpSlope)->load() >= 0.5f)
-        return;
-
-    applyingPreset.store (true, std::memory_order_relaxed);
-    setChoiceParameter (ParameterIDs::lpSlope, 2);
-    applyingPreset.store (false, std::memory_order_release);
-}
-
 void MetalEQAudioProcessor::servicePendingAutomation()
 {
-    serviceLowPassFix();
-
     const int preset = pendingPresetIndex.exchange (-1, std::memory_order_acq_rel);
     if (preset >= 0 && preset != getSelectedPresetIndex())
         applyPreset (preset);
@@ -1109,7 +1143,11 @@ void MetalEQAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
         if (snapshot.params.isValid())
             slot.appendChild (snapshot.params.createCopy(), nullptr);
         if (snapshot.loadedPresetState.isValid())
-            slot.appendChild (snapshot.loadedPresetState.createCopy(), nullptr);
+        {
+            juce::ValueTree slotBaseline ("BASELINE");
+            slotBaseline.appendChild (snapshot.loadedPresetState.createCopy(), nullptr);
+            slot.appendChild (slotBaseline, nullptr);
+        }
 
         ab.appendChild (slot, nullptr);
     }
@@ -1132,7 +1170,6 @@ void MetalEQAudioProcessor::setStateInformation (const void* data, int sizeInByt
     cancelPendingUpdate();
     pendingPresetIndex.store (-1, std::memory_order_release);
     pendingAbSlot.store (-1, std::memory_order_release);
-    pendingLowPassFix.store (false, std::memory_order_release);
 
     const int version = static_cast<int> (tree.getProperty ("version", 1));
 
@@ -1195,17 +1232,43 @@ void MetalEQAudioProcessor::setStateInformation (const void* data, int sizeInByt
             lastPresetId = metaleq::getPreset (factory).id;
     }
 
-    // Low-pass migration: old builds defaulted lpOn to true while the slope
-    // was Off. Both versions produced no filter; preserve that sound by
-    // clearing the contradictory enable flag.
+    // Low-pass migration. The web UI used to expose a separate enable toggle.
+    // Preserve the sound of old sessions in both contradictory combinations:
+    // an Off slope with lpOn set, and a stored Off toggle with an active slope.
+    bool lowPassWasExplicitlyDisabled = false;
+    if (child.isValid())
+    {
+        for (int i = 0; i < child.getNumChildren(); ++i)
+        {
+            const auto parameter = child.getChild (i);
+            if (parameter.getProperty ("id").toString() == ParameterIDs::lpOn
+                && parameter.getProperty ("value").toString().trim().isNotEmpty()
+                && parameter.getProperty ("value").toString().getDoubleValue() < 0.5)
+            {
+                lowPassWasExplicitlyDisabled = true;
+                break;
+            }
+        }
+    }
+
     if (apvts->getRawParameterValue (ParameterIDs::lpOn)->load() >= 0.5f
         && apvts->getRawParameterValue (ParameterIDs::lpSlope)->load() < 0.5f)
+    {
         setFloatParameter (ParameterIDs::lpOn, 0.0);
+    }
+    else if (lowPassWasExplicitlyDisabled
+             && apvts->getRawParameterValue (ParameterIDs::lpSlope)->load() >= 0.5f)
+    {
+        setChoiceParameter (ParameterIDs::lpSlope, 0);
+    }
 
     loadedPresetState = juce::ValueTree();
     const auto baseline = tree.getChildWithName ("BASELINE");
     if (baseline.isValid() && baseline.getChildWithName ("PARAMS").isValid())
+    {
         loadedPresetState = migrateSoundParameterState (baseline.getChildWithName ("PARAMS"));
+        normaliseLowPassParameterState (loadedPresetState);
+    }
 
     for (auto& slot : abSlots)
         slot = AbSlotSnapshot {};
@@ -1228,10 +1291,37 @@ void MetalEQAudioProcessor::setStateInformation (const void* data, int sizeInByt
             slot.presetId = slotTree.getProperty ("presetId").toString();
             slot.userPreset = static_cast<bool> (slotTree.getProperty ("presetIsUser", false));
 
-            if (slotTree.getChildWithName ("PARAMS").isValid())
-                slot.params = migrateSoundParameterState (slotTree.getChildWithName ("PARAMS"), false);
-            if (slotTree.getChildWithName ("BASELINE").isValid())
-                slot.loadedPresetState = migrateSoundParameterState (slotTree.getChildWithName ("BASELINE"));
+            // Newer sessions wrap the slot baseline in a BASELINE node, while
+            // sessions written by earlier builds stored it as a second PARAMS
+            // child. Accept both layouts.
+            juce::ValueTree slotParams;
+            juce::ValueTree slotBaseline;
+            for (int j = 0; j < slotTree.getNumChildren(); ++j)
+            {
+                const auto slotChild = slotTree.getChild (j);
+                if (slotChild.hasType ("BASELINE"))
+                {
+                    slotBaseline = slotChild.getChildWithName ("PARAMS");
+                }
+                else if (slotChild.hasType ("PARAMS"))
+                {
+                    if (! slotParams.isValid())
+                        slotParams = slotChild;
+                    else if (! slotBaseline.isValid())
+                        slotBaseline = slotChild;
+                }
+            }
+
+            if (slotParams.isValid())
+            {
+                slot.params = migrateSoundParameterState (slotParams, false);
+                normaliseLowPassParameterState (slot.params);
+            }
+            if (slotBaseline.isValid())
+            {
+                slot.loadedPresetState = migrateSoundParameterState (slotBaseline);
+                normaliseLowPassParameterState (slot.loadedPresetState);
+            }
             slot.valid = slot.params.isValid();
         }
     }
@@ -1293,7 +1383,10 @@ metaleq::EqSettings MetalEQAudioProcessor::readEqSettings() const
     eq.lpFreq   = load (ParameterIDs::lpFreq);
     eq.hpSlope  = juce::jlimit (0, 3, (int) load (ParameterIDs::hpSlope));
     eq.lpSlope  = juce::jlimit (0, 3, (int) load (ParameterIDs::lpSlope));
-    eq.lpEnabled = load (ParameterIDs::lpOn) >= 0.5f;
+    // The slope selector is the low-pass bypass: Off means transparent. lpOn
+    // remains in the state/automation schema for backwards compatibility, but
+    // it no longer gates the filter.
+    eq.lpEnabled = eq.lpSlope > 0;
     eq.lsFreq   = load (ParameterIDs::lsFreq);
     eq.lsGainDb = load (ParameterIDs::lsGain);
     eq.hsFreq   = load (ParameterIDs::hsFreq);
@@ -1434,7 +1527,6 @@ void MetalEQAudioProcessor::applyEqSettings (const metaleq::EqSettings& eq, bool
 {
     setFloatParameter (ParameterIDs::hpFreq, eq.hpFreq);
     setFloatParameter (ParameterIDs::lpFreq, eq.lpFreq);
-    setFloatParameter (ParameterIDs::lpOn, eq.lpEnabled ? 1.0 : 0.0);
     setFloatParameter (ParameterIDs::lsFreq, eq.lsFreq);
     setFloatParameter (ParameterIDs::lsGain, eq.lsGainDb);
     setFloatParameter (ParameterIDs::hsFreq, eq.hsFreq);
@@ -1479,6 +1571,7 @@ void MetalEQAudioProcessor::applyEqSettings (const metaleq::EqSettings& eq, bool
     {
         setChoiceParameter (ParameterIDs::hpSlope, eq.hpSlope);
         setChoiceParameter (ParameterIDs::lpSlope, eq.lpSlope);
+        setFloatParameter (ParameterIDs::lpOn, eq.lpSlope > 0 ? 1.0 : 0.0);
     }
 }
 
@@ -1541,13 +1634,6 @@ void MetalEQAudioProcessor::applyNeutralParameters()
     applyMacroSettings (neutralMacroSettings());
     for (const auto* id : ParameterIDs::shapeOn)
         setFloatParameter (id, 0.0);
-}
-
-void MetalEQAudioProcessor::setLowPassEnabled (bool enabled)
-{
-    setFloatParameter (ParameterIDs::lpOn, enabled ? 1.0 : 0.0);
-    if (enabled && apvts->getRawParameterValue (ParameterIDs::lpSlope)->load() < 0.5f)
-        setChoiceParameter (ParameterIDs::lpSlope, 2);
 }
 
 void MetalEQAudioProcessor::resetToNeutral()
@@ -1703,7 +1789,9 @@ juce::ValueTree MetalEQAudioProcessor::getSoundParameterState (bool includeTrim)
         {
             juce::ValueTree node ("PARAM");
             node.setProperty ("id", id, nullptr);
-            const auto plainValue = parameter->convertFrom0to1 (parameter->getValue());
+            const auto plainValue = id == ParameterIDs::lpOn
+                ? (apvts->getRawParameterValue (ParameterIDs::lpSlope)->load() > 0.5f ? 1.0 : 0.0)
+                : parameter->convertFrom0to1 (parameter->getValue());
             node.setProperty ("value", juce::String (static_cast<double> (plainValue), 9), nullptr);
             state.appendChild (node, nullptr);
         }
@@ -1977,28 +2065,10 @@ bool MetalEQAudioProcessor::applySoundParameterState (const juce::ValueTree& sta
         seenIds.add (id);
     }
 
-    // A later build changed low-pass semantics: the filter is audible only
-    // when enabled AND slope > 0. Migrate the contradictory legacy combination
-    // by disabling it, which preserves the sound old sessions and presets had.
-    for (int i = 0; i < validatedState.getNumChildren(); ++i)
-    {
-        auto child = validatedState.getChild (i);
-        if (child.getProperty ("id").toString() != ParameterIDs::lpOn)
-            continue;
-        if (child.getProperty ("value").toString().getDoubleValue() < 0.5)
-            break;
-        for (int j = 0; j < validatedState.getNumChildren(); ++j)
-        {
-            const auto slopeChild = validatedState.getChild (j);
-            if (slopeChild.getProperty ("id").toString() == ParameterIDs::lpSlope
-                && slopeChild.getProperty ("value").toString().getDoubleValue() <= 0.0)
-            {
-                child.setProperty ("value", "0", nullptr);
-                break;
-            }
-        }
-        break;
-    }
+    // The low-pass is now controlled solely by its slope; lpOn remains a
+    // legacy mirror. Normalise the two contradictory combinations written by
+    // older builds without changing the sound they produced.
+    normaliseLowPassParameterState (validatedState);
 
     applyingPreset.store (true, std::memory_order_relaxed);
     for (int i = 0; i < validatedState.getNumChildren(); ++i)
@@ -2147,22 +2217,39 @@ void MetalEQAudioProcessor::revertToLoadedPreset()
 
 void MetalEQAudioProcessor::startAnalyzerCapture (int targetProfile)
 {
+    // The target-profile analyzer cannot run at the same time as a resonance
+    // capture. If a resonance start is still waiting for the audio callback to
+    // release the capture buffer, replace it cleanly instead of leaving that
+    // section's status stuck on capturing.
+    if (analyzerDeferredStartRequested.load (std::memory_order_acquire))
+    {
+        const int deferredTarget = resonanceTargetForAnalyzerMode (
+            analyzerDeferredStartMode.load (std::memory_order_relaxed));
+        cancelAnalyzerCapture();
+        if (deferredTarget >= 0)
+        {
+            const auto target = static_cast<ResonanceScanTarget> (deferredTarget);
+            setResonanceStatus (target, AnalyzerStatus::idle);
+            clearResonanceResults (target);
+        }
+    }
+
     startAnalyzerCaptureWithGeneration (
         targetProfile, 0, analyzerCancelGeneration.load (std::memory_order_acquire));
 }
 
-void MetalEQAudioProcessor::startAnalyzerCaptureWithGeneration (
+bool MetalEQAudioProcessor::startAnalyzerCaptureWithGeneration (
     int targetProfile, int mode, unsigned long long cancelGeneration)
 {
     bool expectedStart = false;
     if (! analyzerCaptureStartInProgress.compare_exchange_strong (expectedStart, true,
             std::memory_order_acq_rel, std::memory_order_acquire))
-        return;
+        return false;
 
     if (cancelGeneration != analyzerCancelGeneration.load (std::memory_order_acquire))
     {
         analyzerCaptureStartInProgress.store (false, std::memory_order_release);
-        return;
+        return false;
     }
 
     auto state = analyzerCaptureState.load (std::memory_order_acquire);
@@ -2171,13 +2258,13 @@ void MetalEQAudioProcessor::startAnalyzerCaptureWithGeneration (
                 && analyzerCaptureCancelled.load (std::memory_order_acquire)))
         && analyzerCaptureWriterActive.load (std::memory_order_acquire))
     {
-        analyzerDeferredStartProfile.store (juce::jlimit (0, metaleq::getNumAnalyzerTargets() - 1, targetProfile), std::memory_order_relaxed);
+        analyzerDeferredStartProfile.store (juce::jlimit (0, metaleq::tone::getNumToneTargets() - 1, targetProfile), std::memory_order_relaxed);
         analyzerDeferredStartMode.store (mode, std::memory_order_relaxed);
         analyzerDeferredStartRequested.store (true, std::memory_order_release);
         if (analyzerCaptureWriterActive.load (std::memory_order_acquire))
         {
             analyzerCaptureStartInProgress.store (false, std::memory_order_release);
-            return;
+            return true;
         }
 
         // The writer may have released its guard just before the request was
@@ -2200,7 +2287,7 @@ void MetalEQAudioProcessor::startAnalyzerCaptureWithGeneration (
         || analyzerCaptureWriterActive.load (std::memory_order_acquire))
     {
         analyzerCaptureStartInProgress.store (false, std::memory_order_release);
-        return;
+        return false;
     }
 
     // Only a serialized start may clear this before publishing arming, so a
@@ -2211,14 +2298,14 @@ void MetalEQAudioProcessor::startAnalyzerCaptureWithGeneration (
     {
         analyzerCaptureCancelled.store (true, std::memory_order_release);
         analyzerCaptureStartInProgress.store (false, std::memory_order_release);
-        return;
+        return false;
     }
 
     if (! analyzerCaptureState.compare_exchange_strong (state, AnalyzerCaptureState::arming,
             std::memory_order_acq_rel, std::memory_order_acquire))
     {
         analyzerCaptureStartInProgress.store (false, std::memory_order_release);
-        return;
+        return false;
     }
 
     // If Stop raced while the old state was idle, it could not transition that
@@ -2230,17 +2317,21 @@ void MetalEQAudioProcessor::startAnalyzerCaptureWithGeneration (
         analyzerCaptureState.compare_exchange_strong (armingState, AnalyzerCaptureState::idle,
             std::memory_order_acq_rel, std::memory_order_acquire);
         analyzerCaptureStartInProgress.store (false, std::memory_order_release);
-        return;
+        return false;
     }
 
     analyzerDeferredStartRequested.store (false, std::memory_order_release);
     analyzerCaptureGeneration.fetch_add (1, std::memory_order_acq_rel);
-    analyzerTargetProfile.store (juce::jlimit (0, metaleq::getNumAnalyzerTargets() - 1, targetProfile), std::memory_order_relaxed);
-    analyzerMode.store (mode == 1 ? 1 : 0, std::memory_order_release);
+    analyzerTargetProfile.store (juce::jlimit (0, metaleq::tone::getNumToneTargets() - 1, targetProfile), std::memory_order_relaxed);
+    analyzerMode.store (mode >= 1 ? (mode == 2 ? 2 : 1) : 0, std::memory_order_release);
+    if (mode == 0)
+        clearAnalyzerResult();
+
     auto arming = AnalyzerCaptureState::arming;
     analyzerCaptureState.compare_exchange_strong (arming, AnalyzerCaptureState::requested,
         std::memory_order_release, std::memory_order_acquire);
     analyzerCaptureStartInProgress.store (false, std::memory_order_release);
+    return true;
 }
 
 void MetalEQAudioProcessor::cancelAnalyzerCapture() noexcept
@@ -2267,6 +2358,9 @@ void MetalEQAudioProcessor::cancelAnalyzerCapture() noexcept
                 std::memory_order_acq_rel, std::memory_order_acquire))
             break;
     }
+
+    if (analyzerMode.load (std::memory_order_acquire) == 0)
+        clearAnalyzerResult();
 }
 
 MetalEQAudioProcessor::AnalyzerStatus MetalEQAudioProcessor::captureStatus() const noexcept
@@ -2301,8 +2395,14 @@ MetalEQAudioProcessor::AnalyzerStatus MetalEQAudioProcessor::captureStatus() con
 
 MetalEQAudioProcessor::AnalyzerStatus MetalEQAudioProcessor::getAnalyzerStatus() const noexcept
 {
-    return analyzerMode.load (std::memory_order_acquire) == 0
-        ? captureStatus() : AnalyzerStatus::idle;
+    if (analyzerMode.load (std::memory_order_acquire) != 0)
+        return AnalyzerStatus::idle;
+
+    const auto status = captureStatus();
+    if (status == AnalyzerStatus::ready
+        && ! analyzerReportValid.load (std::memory_order_acquire))
+        return AnalyzerStatus::failed;
+    return status;
 }
 
 float MetalEQAudioProcessor::getAnalyzerProgress() const noexcept
@@ -2317,18 +2417,167 @@ float MetalEQAudioProcessor::getAnalyzerProgress() const noexcept
         static_cast<float> (analyzerSampleCount.load (std::memory_order_relaxed)) / limit) : 0.0f;
 }
 
-MetalEQAudioProcessor::AnalyzerStatus MetalEQAudioProcessor::getResonanceStatus() const noexcept
+void MetalEQAudioProcessor::setAnalyzerTarget (int targetIndex)
 {
-    return analyzerMode.load (std::memory_order_acquire) == 1
-        ? captureStatus() : AnalyzerStatus::idle;
+    const int clamped = juce::jlimit (0, metaleq::tone::getNumToneTargets() - 1, targetIndex);
+    analyzerTargetProfile.store (clamped, std::memory_order_relaxed);
+
+    // If a capture is already available, recalculate the correction against
+    // the new destination instead of forcing the player to play again.
+    if (getAnalyzerStatus() != AnalyzerStatus::ready
+        || getAnalyzerResultTarget() == clamped)
+        return;
+
+    metaleq::tone::InputProfile input;
+    if (! readAnalyzerInput (input))
+    {
+        clearAnalyzerResult();
+        return;
+    }
+
+    const auto& target = metaleq::tone::getToneTarget (clamped);
+    const auto correction = metaleq::tone::computeCorrection (
+        input, target, getDisplaySampleRate());
+    storeAnalyzerResult (input, correction, clamped);
 }
 
-float MetalEQAudioProcessor::getResonanceProgress() const noexcept
+int MetalEQAudioProcessor::getAnalyzerTargetIndex() const noexcept
 {
-    if (analyzerMode.load (std::memory_order_acquire) != 1)
+    return analyzerTargetProfile.load (std::memory_order_acquire);
+}
+
+int MetalEQAudioProcessor::getAnalyzerResultTarget() const noexcept
+{
+    return analyzerResultTarget.load (std::memory_order_acquire);
+}
+
+unsigned long long MetalEQAudioProcessor::getAnalyzerRevision() const noexcept
+{
+    return analyzerRevision.load (std::memory_order_acquire);
+}
+
+bool MetalEQAudioProcessor::getAnalyzerReport (AnalyzerReport& report) const noexcept
+{
+    report = AnalyzerReport {};
+    report.valid = analyzerReportValid.load (std::memory_order_acquire);
+    if (! report.valid)
+        return false;
+
+    for (int i = 0; i < metaleq::kNumBands; ++i)
+        report.gains[static_cast<size_t> (i)] =
+            analyzerSuggestion[static_cast<size_t> (i)].load (std::memory_order_acquire);
+
+    const juce::SpinLock::ScopedLockType lock (analyzerReportLock);
+    report.input = analyzerInputShape;
+    report.target = analyzerTargetShape;
+    report.predicted = analyzerPredictedShape;
+    report.inputConfidence = analyzerInputConfidence;
+    report.correctionConfidence = analyzerCorrectionConfidence;
+    report.alreadyClose = analyzerAlreadyClose;
+    return true;
+}
+
+bool MetalEQAudioProcessor::readAnalyzerInput (metaleq::tone::InputProfile& input) const noexcept
+{
+    input = metaleq::tone::InputProfile {};
+    if (! analyzerReportValid.load (std::memory_order_acquire))
+        return false;
+
+    const juce::SpinLock::ScopedLockType lock (analyzerReportLock);
+    for (int i = 0; i < metaleq::tone::kNumFeatures; ++i)
+        input.relativeDb[static_cast<size_t> (i)] =
+            static_cast<double> (analyzerInputShape[static_cast<size_t> (i)]);
+    input.confidence = static_cast<double> (analyzerInputConfidence);
+    input.valid = true;
+    return true;
+}
+
+void MetalEQAudioProcessor::storeAnalyzerResult (
+    const metaleq::tone::InputProfile& input,
+    const metaleq::tone::CorrectionResult& correction,
+    int targetIndex) noexcept
+{
+    const int clampedTarget = juce::jlimit (0, metaleq::tone::getNumToneTargets() - 1, targetIndex);
+
+    for (int i = 0; i < metaleq::kNumBands; ++i)
+        analyzerSuggestion[static_cast<size_t> (i)].store (
+            static_cast<float> (juce::jlimit (-metaleq::tone::kGlobalMaxGainDb,
+                                              metaleq::tone::kGlobalMaxGainDb,
+                                              correction.gainsDb[static_cast<size_t> (i)])),
+            std::memory_order_release);
+
+    {
+        const juce::SpinLock::ScopedLockType lock (analyzerReportLock);
+        for (int i = 0; i < metaleq::tone::kNumFeatures; ++i)
+        {
+            analyzerInputShape[static_cast<size_t> (i)] =
+                static_cast<float> (input.relativeDb[static_cast<size_t> (i)]);
+            analyzerTargetShape[static_cast<size_t> (i)] =
+                static_cast<float> (correction.targetDb[static_cast<size_t> (i)]);
+            analyzerPredictedShape[static_cast<size_t> (i)] =
+                static_cast<float> (correction.predictedDb[static_cast<size_t> (i)]);
+        }
+        analyzerInputConfidence = static_cast<float> (input.confidence);
+        analyzerCorrectionConfidence = static_cast<float> (correction.confidence);
+        analyzerAlreadyClose = correction.alreadyClose;
+    }
+
+    analyzerResultTarget.store (clampedTarget, std::memory_order_release);
+    analyzerReportValid.store (true, std::memory_order_release);
+    analyzerRevision.fetch_add (1, std::memory_order_acq_rel);
+}
+
+void MetalEQAudioProcessor::clearAnalyzerResult() noexcept
+{
+    for (auto& gain : analyzerSuggestion)
+        gain.store (0.0f, std::memory_order_release);
+
+    {
+        const juce::SpinLock::ScopedLockType lock (analyzerReportLock);
+        analyzerInputShape.fill (0.0f);
+        analyzerTargetShape.fill (0.0f);
+        analyzerPredictedShape.fill (0.0f);
+        analyzerInputConfidence = 0.0f;
+        analyzerCorrectionConfidence = 0.0f;
+        analyzerAlreadyClose = false;
+    }
+
+    analyzerResultTarget.store (-1, std::memory_order_release);
+    analyzerReportValid.store (false, std::memory_order_release);
+    analyzerRevision.fetch_add (1, std::memory_order_acq_rel);
+}
+
+MetalEQAudioProcessor::AnalyzerStatus MetalEQAudioProcessor::getResonanceStatus (
+    ResonanceScanTarget target) const noexcept
+{
+    const int index = resonanceTargetIndex (target);
+    const int mode = resonanceAnalyzerMode (target);
+
+    if (analyzerDeferredStartRequested.load (std::memory_order_acquire)
+        && analyzerDeferredStartMode.load (std::memory_order_relaxed) == mode)
+        return AnalyzerStatus::capturing;
+
+    if (analyzerMode.load (std::memory_order_acquire) == mode)
+    {
+        const auto state = analyzerCaptureState.load (std::memory_order_acquire);
+        if (state == AnalyzerCaptureState::arming || state == AnalyzerCaptureState::requested
+            || state == AnalyzerCaptureState::recording || state == AnalyzerCaptureState::cancelPending
+            || state == AnalyzerCaptureState::ready || state == AnalyzerCaptureState::analyzing)
+            return captureStatus();
+    }
+
+    return static_cast<AnalyzerStatus> (resonanceStatus[static_cast<size_t> (index)].load (
+        std::memory_order_acquire));
+}
+
+float MetalEQAudioProcessor::getResonanceProgress (ResonanceScanTarget target) const noexcept
+{
+    if (getResonanceStatus (target) != AnalyzerStatus::capturing)
         return 0.0f;
 
     if (analyzerDeferredStartRequested.load (std::memory_order_acquire))
+        return 0.0f;
+    if (analyzerMode.load (std::memory_order_acquire) != resonanceAnalyzerMode (target))
         return 0.0f;
     const int limit = analyzerCaptureLimit.load (std::memory_order_relaxed);
     return limit > 0 ? juce::jlimit (0.0f, 1.0f,
@@ -2362,6 +2611,8 @@ void MetalEQAudioProcessor::applyAnalyzerSuggestion (float amount)
 {
     if (getAnalyzerStatus() != AnalyzerStatus::ready)
         return;
+    if (getAnalyzerResultTarget() != getAnalyzerTargetIndex())
+        return;
 
     static constexpr double frequencies[metaleq::kNumBands] = { 120.0, 350.0, 1000.0, 2800.0, 7000.0 };
     amount = juce::jlimit (0.0f, 1.0f, amount);
@@ -2382,35 +2633,80 @@ void MetalEQAudioProcessor::applyAnalyzerSuggestion (float amount)
     applyingPreset.store (false, std::memory_order_release);
 }
 
-void MetalEQAudioProcessor::startResonanceScan()
+bool MetalEQAudioProcessor::startResonanceScan (ResonanceScanTarget target)
 {
+    const int mode = resonanceAnalyzerMode (target);
+
     const auto state = analyzerCaptureState.load (std::memory_order_acquire);
-    if (state != AnalyzerCaptureState::idle && state != AnalyzerCaptureState::complete
-        && state != AnalyzerCaptureState::failed)
-        return;
-    if (analyzerDeferredStartRequested.load (std::memory_order_acquire)
-        || analyzerCaptureWriterActive.load (std::memory_order_acquire))
-        return;
+    if (state == AnalyzerCaptureState::ready || state == AnalyzerCaptureState::analyzing)
+        return false;
 
-    clearResonanceCandidates();
-    startAnalyzerCaptureWithGeneration (
-        0, 1, analyzerCancelGeneration.load (std::memory_order_acquire));
+    // A new panel scan replaces any capture that is still running, including a
+    // start deferred until the audio callback releases the capture buffer.
+    // Completed results in the other panel are left alone.
+    const bool deferredStart = analyzerDeferredStartRequested.load (std::memory_order_acquire);
+    if (deferredStart
+        || state == AnalyzerCaptureState::arming || state == AnalyzerCaptureState::requested
+        || state == AnalyzerCaptureState::recording || state == AnalyzerCaptureState::cancelPending)
+    {
+        const int previousTarget = deferredStart
+            ? resonanceTargetForAnalyzerMode (analyzerDeferredStartMode.load (std::memory_order_relaxed))
+            : resonanceTargetForAnalyzerMode (analyzerMode.load (std::memory_order_acquire));
+        cancelAnalyzerCapture();
+        if (previousTarget >= 0)
+        {
+            const auto previous = static_cast<ResonanceScanTarget> (previousTarget);
+            setResonanceStatus (previous, AnalyzerStatus::idle);
+            clearResonanceResults (previous);
+        }
+    }
+
+    if (! startAnalyzerCaptureWithGeneration (
+            0, mode, analyzerCancelGeneration.load (std::memory_order_acquire)))
+        return false;
+
+    clearResonanceResults (target);
+    setResonanceStatus (target, AnalyzerStatus::capturing);
+    return true;
 }
 
-void MetalEQAudioProcessor::cancelResonanceScan() noexcept
+void MetalEQAudioProcessor::cancelResonanceScan (ResonanceScanTarget target) noexcept
 {
+    const int mode = resonanceAnalyzerMode (target);
+
+    const auto state = analyzerCaptureState.load (std::memory_order_acquire);
+    const bool deferred = analyzerDeferredStartRequested.load (std::memory_order_acquire)
+                       && analyzerDeferredStartMode.load (std::memory_order_relaxed) == mode;
+    const bool active = deferred
+        || (analyzerMode.load (std::memory_order_acquire) == mode
+            && (state == AnalyzerCaptureState::arming || state == AnalyzerCaptureState::requested
+                || state == AnalyzerCaptureState::recording || state == AnalyzerCaptureState::cancelPending));
+
+    if (! active)
+        return;
+
     cancelAnalyzerCapture();
+    clearResonanceResults (target);
+    setResonanceStatus (target, AnalyzerStatus::idle);
 }
 
-bool MetalEQAudioProcessor::getResonanceEnoughVariation() const noexcept
+bool MetalEQAudioProcessor::getResonanceEnoughVariation (ResonanceScanTarget target) const noexcept
 {
-    return resonanceEnoughVariation.load (std::memory_order_acquire);
+    return target == ResonanceScanTarget::dynamic
+        ? dynamicResonanceEnoughVariation.load (std::memory_order_acquire)
+        : resonanceEnoughVariation.load (std::memory_order_acquire);
 }
 
 int MetalEQAudioProcessor::getResonanceCandidateCount() const noexcept
 {
     return juce::jlimit (0, metaleq::kMaxResonanceCandidates,
         resonanceCandidateCount.load (std::memory_order_acquire));
+}
+
+int MetalEQAudioProcessor::getResonanceDynamicSuggestionCount() const noexcept
+{
+    return juce::jlimit (0, metaleq::kMaxResonanceCandidates,
+        dynamicResonanceCount.load (std::memory_order_acquire));
 }
 
 bool MetalEQAudioProcessor::getResonanceCandidate (
@@ -2430,29 +2726,26 @@ bool MetalEQAudioProcessor::getResonanceCandidate (
 }
 
 bool MetalEQAudioProcessor::getResonanceDynamicSuggestion (
-    int candidateIndex,
+    int index,
     metaleq::DynamicBandSettings& band,
     double& confidence,
     double& measuredExcessDb) const noexcept
 {
-    if (candidateIndex < 0 || candidateIndex >= getResonanceCandidateCount())
+    if (index < 0 || index >= getResonanceDynamicSuggestionCount())
         return false;
 
-    const auto slot = static_cast<size_t> (candidateIndex);
-    if (! resonanceDynamicEligible[slot].load (std::memory_order_acquire))
-        return false;
-
-    band.freq        = resonanceFreq[slot].load (std::memory_order_relaxed);
-    band.q           = resonanceDynamicQ[slot].load (std::memory_order_relaxed);
-    band.thresholdDb = resonanceDynamicThreshold[slot].load (std::memory_order_relaxed);
-    band.ratio       = resonanceDynamicRatio[slot].load (std::memory_order_relaxed);
-    band.attackMs    = resonanceDynamicAttack[slot].load (std::memory_order_relaxed);
-    band.releaseMs   = resonanceDynamicRelease[slot].load (std::memory_order_relaxed);
-    band.maxCutDb    = resonanceDynamicMaxCut[slot].load (std::memory_order_relaxed);
+    const auto slot = static_cast<size_t> (index);
+    band.freq        = dynamicResonanceFreq[slot].load (std::memory_order_acquire);
+    band.q           = dynamicResonanceQ[slot].load (std::memory_order_acquire);
+    band.thresholdDb = dynamicResonanceThreshold[slot].load (std::memory_order_acquire);
+    band.ratio       = dynamicResonanceRatio[slot].load (std::memory_order_acquire);
+    band.attackMs    = dynamicResonanceAttack[slot].load (std::memory_order_acquire);
+    band.releaseMs   = dynamicResonanceRelease[slot].load (std::memory_order_acquire);
+    band.maxCutDb    = dynamicResonanceMaxCut[slot].load (std::memory_order_acquire);
     band.on          = true;
 
-    confidence = resonanceConfidence[slot].load (std::memory_order_relaxed);
-    measuredExcessDb = resonanceDynamicExcess[slot].load (std::memory_order_relaxed);
+    confidence = dynamicResonanceConfidence[slot].load (std::memory_order_acquire);
+    measuredExcessDb = dynamicResonanceExcess[slot].load (std::memory_order_acquire);
     return true;
 }
 
@@ -2461,19 +2754,47 @@ unsigned long long MetalEQAudioProcessor::getResonanceRevision() const noexcept
     return resonanceRevision.load (std::memory_order_acquire);
 }
 
-void MetalEQAudioProcessor::clearResonanceCandidates() noexcept
+int MetalEQAudioProcessor::resonanceTargetIndex (ResonanceScanTarget target) noexcept
 {
-    for (auto& eligible : resonanceDynamicEligible)
-        eligible.store (false, std::memory_order_relaxed);
+    return target == ResonanceScanTarget::dynamic ? 1 : 0;
+}
 
-    resonanceCandidateCount.store (0, std::memory_order_release);
-    resonanceEnoughVariation.store (false, std::memory_order_relaxed);
+int MetalEQAudioProcessor::resonanceAnalyzerMode (ResonanceScanTarget target) noexcept
+{
+    return resonanceTargetIndex (target) + 1;
+}
+
+int MetalEQAudioProcessor::resonanceTargetForAnalyzerMode (int mode) noexcept
+{
+    return mode == 1 ? 0 : (mode == 2 ? 1 : -1);
+}
+
+void MetalEQAudioProcessor::setResonanceStatus (ResonanceScanTarget target,
+                                                AnalyzerStatus status) noexcept
+{
+    resonanceStatus[static_cast<size_t> (resonanceTargetIndex (target))].store (
+        static_cast<int> (status), std::memory_order_release);
+}
+
+void MetalEQAudioProcessor::clearResonanceResults (ResonanceScanTarget target) noexcept
+{
+    if (target == ResonanceScanTarget::dynamic)
+    {
+        dynamicResonanceCount.store (0, std::memory_order_release);
+        dynamicResonanceEnoughVariation.store (false, std::memory_order_relaxed);
+    }
+    else
+    {
+        resonanceCandidateCount.store (0, std::memory_order_release);
+        resonanceEnoughVariation.store (false, std::memory_order_relaxed);
+    }
+
     resonanceRevision.fetch_add (1, std::memory_order_acq_rel);
 }
 
 void MetalEQAudioProcessor::applyResonanceSelection (const std::vector<int>& candidateIndices)
 {
-    if (getResonanceStatus() != AnalyzerStatus::ready)
+    if (getResonanceStatus (ResonanceScanTarget::surgical) != AnalyzerStatus::ready)
         return;
 
     const int candidateCount = getResonanceCandidateCount();
@@ -2541,7 +2862,7 @@ void MetalEQAudioProcessor::clearSurgicalBands()
 
 void MetalEQAudioProcessor::applyResonanceToDynamic (const std::vector<int>& candidateIndices)
 {
-    if (getResonanceStatus() != AnalyzerStatus::ready)
+    if (getResonanceStatus (ResonanceScanTarget::dynamic) != AnalyzerStatus::ready)
         return;
 
     std::array<metaleq::DynamicBandSettings, metaleq::kNumDynamicBands> selected {};
@@ -2553,7 +2874,7 @@ void MetalEQAudioProcessor::applyResonanceToDynamic (const std::vector<int>& can
     {
         if (numSelected >= metaleq::kNumDynamicBands)
             break;
-        if (index < 0 || index >= getResonanceCandidateCount())
+        if (index < 0 || index >= getResonanceDynamicSuggestionCount())
             continue;
         if (std::find (seen.begin(), seen.end(), index) != seen.end())
             continue;
@@ -2630,8 +2951,11 @@ void MetalEQAudioProcessor::analyzerWorkerLoop()
             const int samples = analyzerSampleCount.load (std::memory_order_acquire);
             const double sampleRate = static_cast<double> (analyzerSampleRate.load (std::memory_order_relaxed));
 
-            if (analyzerMode.load (std::memory_order_acquire) == 1)
-                analyzeResonanceCapture (samples, sampleRate);
+            const int mode = analyzerMode.load (std::memory_order_acquire);
+            if (mode == 1)
+                analyzeResonanceCapture (samples, sampleRate, 0);
+            else if (mode == 2)
+                analyzeResonanceCapture (samples, sampleRate, 1);
             else
                 analyzeCapture (samples, sampleRate);
         }
@@ -2644,83 +2968,86 @@ void MetalEQAudioProcessor::analyzerWorkerLoop()
 
 void MetalEQAudioProcessor::analyzeCapture (int sampleCount, double sampleRate)
 {
-    constexpr int fftOrder = 11;
-    constexpr int fftSize = 1 << fftOrder;
-    juce::dsp::FFT fft (fftOrder);
-    std::array<float, fftSize * 2> frame {};
-    std::array<double, fftSize / 2 + 1> spectrum {};
-    int frames = 0;
+    const auto input = metaleq::tone::analyseInput (analyzerCapture.get(), sampleCount, sampleRate);
 
-    for (int offset = 0; offset + fftSize <= sampleCount; offset += fftSize / 2)
+    if (! input.valid)
     {
-        double energy = 0.0;
-        for (int i = 0; i < fftSize; ++i)
-        {
-            const float sample = analyzerCapture[static_cast<size_t> (offset + i)];
-            energy += static_cast<double> (sample) * sample;
-            const float window = 0.5f - 0.5f * std::cos (
-                2.0f * static_cast<float> (metaleq::kPi) * i / (fftSize - 1));
-            frame[static_cast<size_t> (i)] = sample * window;
-        }
-        if (energy / fftSize > 1.0e-10)
-        {
-            fft.performFrequencyOnlyForwardTransform (frame.data(), true);
-            for (int bin = 0; bin <= fftSize / 2; ++bin)
-            {
-                const double magnitude = frame[static_cast<size_t> (bin)];
-                spectrum[static_cast<size_t> (bin)] += magnitude * magnitude;
-            }
-            ++frames;
-        }
-    }
-
-    if (frames == 0)
-    {
+        clearAnalyzerResult();
         analyzerCaptureState.store (AnalyzerCaptureState::failed, std::memory_order_release);
         return;
     }
 
-    static constexpr double frequencies[metaleq::kNumBands] = { 120.0, 350.0, 1000.0, 2800.0, 7000.0 };
-    std::array<double, metaleq::kNumBands> measured {};
-    for (int band = 0; band < metaleq::kNumBands; ++band)
-    {
-        const int centre = juce::jlimit (1, fftSize / 2,
-            static_cast<int> (frequencies[band] * fftSize / sampleRate));
-        double sum = 0.0;
-        int count = 0;
-        for (int bin = juce::jmax (1, centre - 3); bin <= juce::jmin (fftSize / 2, centre + 3); ++bin)
-        {
-            sum += spectrum[static_cast<size_t> (bin)];
-            ++count;
-        }
-        measured[static_cast<size_t> (band)] = 10.0 * std::log10 (sum / juce::jmax (1, count) + 1.0e-20);
-    }
+    const int targetIndex = getAnalyzerTargetIndex();
+    const auto& target = metaleq::tone::getToneTarget (targetIndex);
+    const auto correction = metaleq::tone::computeCorrection (input, target, sampleRate);
 
-    const auto& target = metaleq::getAnalyzerTarget (analyzerTargetProfile.load (std::memory_order_relaxed));
-    const int targetPreset = metaleq::findPresetById (target.presetId);
-    const auto& profile = targetPreset >= 0 ? metaleq::getPreset (targetPreset) : metaleq::getPreset (0);
-    const auto macros = profile.setsMacros ? profile.macros : neutralMacroSettings();
-    const double measuredReference = measured[2];
-    const double targetReference = metaleq::responseDb (profile.eq, macros, sampleRate, frequencies[2]);
-    for (int band = 0; band < metaleq::kNumBands; ++band)
-    {
-        const double target = metaleq::responseDb (profile.eq, macros, sampleRate, frequencies[band]);
-        const float correction = static_cast<float> (juce::jlimit (-6.0, 6.0,
-            (target - targetReference) - (measured[static_cast<size_t> (band)] - measuredReference)));
-        analyzerSuggestion[static_cast<size_t> (band)].store (correction, std::memory_order_relaxed);
-    }
+    storeAnalyzerResult (input, correction, targetIndex);
     analyzerCaptureState.store (AnalyzerCaptureState::complete, std::memory_order_release);
 }
 
-void MetalEQAudioProcessor::analyzeResonanceCapture (int sampleCount, double sampleRate)
+void MetalEQAudioProcessor::analyzeResonanceCapture (int sampleCount, double sampleRate, int target)
 {
+    const auto scanTarget = static_cast<ResonanceScanTarget> (target);
+
     metaleq::ResonanceAnalysisResult result;
     metaleq::analyseResonances (analyzerCapture.get(), sampleCount, sampleRate, result);
 
     if (result.framesAnalysed <= 0)
     {
-        clearResonanceCandidates();
+        clearResonanceResults (scanTarget);
+        setResonanceStatus (scanTarget, AnalyzerStatus::failed);
         analyzerCaptureState.store (AnalyzerCaptureState::failed, std::memory_order_release);
+        return;
+    }
+
+    publishResonanceResults (scanTarget, result);
+    setResonanceStatus (scanTarget, AnalyzerStatus::ready);
+    analyzerCaptureState.store (AnalyzerCaptureState::complete, std::memory_order_release);
+}
+
+void MetalEQAudioProcessor::publishResonanceResults (
+    ResonanceScanTarget target, const metaleq::ResonanceAnalysisResult& result) noexcept
+{
+    if (target == ResonanceScanTarget::dynamic)
+    {
+        int count = 0;
+
+        for (int i = 0; i < result.numDynamicSuggestions; ++i)
+        {
+            if (count >= metaleq::kMaxResonanceCandidates)
+                break;
+
+            const auto& suggestion = result.dynamicSuggestions[static_cast<size_t> (i)];
+            const int candidateIndex = suggestion.candidateIndex;
+            if (candidateIndex < 0 || candidateIndex >= result.numCandidates)
+                continue;
+
+            const auto slot = static_cast<size_t> (count);
+            const auto& band = suggestion.band;
+            dynamicResonanceFreq[slot].store (static_cast<float> (band.freq),
+                                               std::memory_order_relaxed);
+            dynamicResonanceQ[slot].store (static_cast<float> (band.q),
+                                            std::memory_order_relaxed);
+            dynamicResonanceThreshold[slot].store (static_cast<float> (band.thresholdDb),
+                                                    std::memory_order_relaxed);
+            dynamicResonanceRatio[slot].store (static_cast<float> (band.ratio),
+                                                std::memory_order_relaxed);
+            dynamicResonanceAttack[slot].store (static_cast<float> (band.attackMs),
+                                                 std::memory_order_relaxed);
+            dynamicResonanceRelease[slot].store (static_cast<float> (band.releaseMs),
+                                                  std::memory_order_relaxed);
+            dynamicResonanceMaxCut[slot].store (static_cast<float> (band.maxCutDb),
+                                                 std::memory_order_relaxed);
+            dynamicResonanceConfidence[slot].store (static_cast<float> (suggestion.confidence),
+                                                     std::memory_order_relaxed);
+            dynamicResonanceExcess[slot].store (static_cast<float> (suggestion.measuredExcessDb),
+                                                 std::memory_order_relaxed);
+            ++count;
+        }
+
+        dynamicResonanceEnoughVariation.store (result.enoughVariation, std::memory_order_relaxed);
+        dynamicResonanceCount.store (count, std::memory_order_release);
+        resonanceRevision.fetch_add (1, std::memory_order_acq_rel);
         return;
     }
 
@@ -2738,38 +3065,9 @@ void MetalEQAudioProcessor::analyzeResonanceCapture (int sampleCount, double sam
         resonanceCut[slot].store (static_cast<float> (candidate.suggestedCutDb), std::memory_order_relaxed);
     }
 
-    for (auto& eligible : resonanceDynamicEligible)
-        eligible.store (false, std::memory_order_relaxed);
-
-    for (int i = 0; i < result.numDynamicSuggestions; ++i)
-    {
-        const auto& suggestion = result.dynamicSuggestions[static_cast<size_t> (i)];
-        const int candidateIndex = suggestion.candidateIndex;
-        if (candidateIndex < 0 || candidateIndex >= count)
-            continue;
-
-        const auto slot = static_cast<size_t> (candidateIndex);
-        const auto& band = suggestion.band;
-        resonanceDynamicQ[slot].store (static_cast<float> (band.q), std::memory_order_relaxed);
-        resonanceDynamicThreshold[slot].store (static_cast<float> (band.thresholdDb),
-                                                std::memory_order_relaxed);
-        resonanceDynamicRatio[slot].store (static_cast<float> (band.ratio), std::memory_order_relaxed);
-        resonanceDynamicAttack[slot].store (static_cast<float> (band.attackMs),
-                                            std::memory_order_relaxed);
-        resonanceDynamicRelease[slot].store (static_cast<float> (band.releaseMs),
-                                             std::memory_order_relaxed);
-        resonanceDynamicMaxCut[slot].store (static_cast<float> (band.maxCutDb),
-                                            std::memory_order_relaxed);
-        resonanceDynamicExcess[slot].store (static_cast<float> (suggestion.measuredExcessDb),
-                                            std::memory_order_relaxed);
-        resonanceDynamicEligible[slot].store (true, std::memory_order_release);
-    }
-
     resonanceEnoughVariation.store (result.enoughVariation, std::memory_order_relaxed);
     resonanceCandidateCount.store (count, std::memory_order_release);
     resonanceRevision.fetch_add (1, std::memory_order_acq_rel);
-
-    analyzerCaptureState.store (AnalyzerCaptureState::complete, std::memory_order_release);
 }
 
 //==============================================================================

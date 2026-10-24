@@ -318,7 +318,8 @@ struct EqSettings
     int    hpSlope  = 0;   // 0 = off, 1 = 12, 2 = 24, 3 = 36 dB/oct
     int    lpSlope  = 0;
     // A low-pass is audible only when it is enabled AND its slope is > 0.
-    // Default off: the transparent state must not roll off any top end.
+    // The processor derives this from the slope, where 0 means Off; the field
+    // remains so the DSP can be driven directly by tests and other callers.
     bool   lpEnabled = false;
     double lsFreq   = 140.0;
     double lsGainDb = 0.0;

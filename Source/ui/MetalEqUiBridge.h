@@ -14,7 +14,7 @@
     * The audio thread never touches the bridge, the WebView, or any state
       owned here. Parameters travel exclusively through APVTS atomics.
 
-    Protocol (version 5)
+    Protocol (version 7)
     --------------------
     JS -> C++ via registered native functions (promise based):
         uiReady()                              -> full initial snapshot
@@ -30,17 +30,19 @@
         setAbSlot (slot)                       // 0 = A, 1 = B
         copyAbToOther()
         swapAbSlots()
+        setAnalyzerTarget (targetIndex)       // recalculates if a capture is ready
         startAnalyzerCapture (targetProfile)
         cancelAnalyzerCapture()
         applyAnalyzerSuggestion (amount)
         getSuggestionCurve (amount)            -> { ok, curve, error? }
-        startResonanceScan()
-        cancelResonanceScan()
+        startResonanceScan (dynamic)           // false = surgical, true = dynamic
+        cancelResonanceScan (dynamic)
         applyResonanceSelection ([indices])    // up to six candidates
         clearSurgicalBands()
         applyResonanceToDynamic ([indices])    // up to four candidates
         clearDynamicBands()
         setEditorExpanded (expanded)           -> { ok } (Advanced view window grow)
+        openExternalUrl (url)                  -> { ok, error? } (http/https only)
 
     C++ -> JS via one event ("metaleq.tick") carrying a JSON object:
         {
@@ -50,16 +52,19 @@
           preset,         // { index, presetId, name, kind, dirty, abSlot } when changed
           userPresets,    // [ names ] when changed
           factoryPresets, // metadata on the uiReady snapshot only
-          analyzerTargets,// stable target ids/labels on the uiReady snapshot only
+          analyzerTargets,// full target metadata + provenance on uiReady only
           meters,         // { in, out } every tick (cheap atomics)
           dynamicReduction, // [dB, dB, dB, dB] positive gain reduction per band
-          analyzer,       // { status, progress, suggestion[5] } when changed
-          resonance,      // { status, progress, enoughVariation,
-                          //   candidates: [{freq,q,prominence,residual,
-                          //                 confidence,cutDb}],
-                          //   dynamicCandidates: [{candidateIndex,freq,q,
-                          //     threshold,ratio,attack,release,maxCut,
-                          //     confidence,excessDb}] } when changed
+          analyzer,       // { status, progress, targetIndex, suggestion[5],
+                          //   input[8], target[8], predicted[8], confidences,
+                          //   alreadyClose } when changed
+          resonance,      // { surgical: { status, progress, enoughVariation,
+                          //       candidates: [{freq,q,prominence,residual,
+                          //                     confidence,cutDb}] },
+                          //   dynamic: { status, progress, enoughVariation,
+                          //       candidates: [{candidateIndex,freq,q,
+                          //         threshold,ratio,attack,release,maxCut,
+                          //         confidence,excessDb}] } } when changed
           curve           // { points: [dB x 240], minDb: -15, maxDb: 15 }
                           // when EQ-relevant params changed
         }
@@ -111,7 +116,7 @@ std::optional<double> validateParameterWrite (juce::AudioProcessorValueTreeState
 class UiBridge : public juce::OptionsBuilder<juce::WebBrowserComponent::Options>
 {
 public:
-    static constexpr int protocolVersion = 5;
+    static constexpr int protocolVersion = 7;
     static constexpr int numCurvePoints  = 240;
     static constexpr int tickHz          = 20;
 
@@ -173,17 +178,19 @@ private:
     juce::var handleSetAbSlot (const juce::Array<juce::var>& args);
     juce::var handleCopyAbToOther();
     juce::var handleSwapAbSlots();
+    juce::var handleSetAnalyzerTarget (const juce::Array<juce::var>& args);
     juce::var handleStartAnalyzerCapture (const juce::Array<juce::var>& args);
     juce::var handleCancelAnalyzerCapture();
     juce::var handleApplyAnalyzerSuggestion (const juce::Array<juce::var>& args);
     juce::var handleGetSuggestionCurve (const juce::Array<juce::var>& args);
-    juce::var handleStartResonanceScan();
-    juce::var handleCancelResonanceScan();
+    juce::var handleStartResonanceScan (const juce::Array<juce::var>& args);
+    juce::var handleCancelResonanceScan (const juce::Array<juce::var>& args);
     juce::var handleApplyResonanceSelection (const juce::Array<juce::var>& args);
     juce::var handleClearSurgicalBands();
     juce::var handleApplyResonanceToDynamic (const juce::Array<juce::var>& args);
     juce::var handleClearDynamicBands();
     juce::var handleSetEditorExpanded (const juce::Array<juce::var>& args);
+    juce::var handleOpenExternalUrl (const juce::Array<juce::var>& args);
 
     //==========================================================================
     juce::var buildFullSnapshot();
@@ -219,9 +226,12 @@ private:
     std::vector<std::pair<juce::String, double>> lastSentValues;
     std::array<float, metaleq::kNumBands> lastSuggestion {};
     int lastAnalyzerStatus = -1;
+    int lastAnalyzerTarget = -1;
+    int lastAnalyzerResultTarget = -1;
+    unsigned long long lastAnalyzerRevision = 0;
     float lastAnalyzerProgress = -1.0f;
-    int lastResonanceStatus = -1;
-    float lastResonanceProgress = -1.0f;
+    std::array<int, 2> lastResonanceStatus { -1, -1 };
+    std::array<float, 2> lastResonanceProgress { -1.0f, -1.0f };
     unsigned long long lastResonanceRevision = 0;
     juce::StringArray lastUserPresets;
     double lastSampleRate = 0.0;

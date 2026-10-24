@@ -2056,3 +2056,223 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+/* V3.2 analyzer: separated input / target / correction report */
+
+.analyzer-target-details,
+.analyzer-report {
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.analyzer-target-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.analyzer-category {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: var(--panel-2);
+  color: var(--accent);
+}
+
+.analyzer-category.category-1 { color: #c4b5fd; }
+.analyzer-category.category-2 { color: #e8c66a; }
+
+.analyzer-target-name {
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.analyzer-target-album {
+  color: var(--text-dim);
+  font-size: 10px;
+  margin-top: 3px;
+}
+
+.analyzer-target-objective {
+  color: var(--text);
+  font-size: 11px;
+  margin-top: 4px;
+  line-height: 15px;
+}
+
+.analyzer-sources {
+  margin-top: 5px;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.analyzer-sources summary {
+  cursor: pointer;
+  color: var(--accent);
+  outline: none;
+}
+
+.analyzer-sources ul {
+  margin: 6px 0 0 16px;
+  display: grid;
+  gap: 5px;
+}
+
+.analyzer-sources a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.analyzer-sources a:hover { text-decoration: underline; }
+
+.analyzer-source-meta { color: var(--text-faint); }
+
+.analyzer-source-claim {
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.analyzer-limitation {
+  color: #e8c66a;
+  margin-top: 4px;
+  line-height: 14px;
+}
+
+.analyzer-source-note {
+  color: var(--text-faint);
+  margin-top: 6px;
+  line-height: 14px;
+}
+
+.analyzer-report-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.analyzer-column-title {
+  color: var(--text-faint);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.analyzer-report-confidence {
+  color: var(--text-faint);
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.analyzer-band-table {
+  margin-top: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.analyzer-band-row {
+  display: grid;
+  grid-template-columns: 70px repeat(8, minmax(0, 1fr));
+  gap: 3px;
+  font-size: 10px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.analyzer-band-head { color: var(--text-faint); }
+
+.analyzer-band-label {
+  color: var(--text-dim);
+  text-align: left;
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+}
+
+.analyzer-band-row .predicted { color: var(--accent); }
+
+.analyzer-correction-block {
+  margin-top: 7px;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+
+.analyzer-correction-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 4px;
+}
+
+.analyzer-correction-row {
+  display: grid;
+  grid-template-columns: 56px 1fr 58px;
+  gap: 8px;
+  align-items: center;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.analyzer-correction-track {
+  position: relative;
+  height: 8px;
+  background: var(--panel-2);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.analyzer-correction-zero {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border-strong);
+}
+
+.analyzer-correction-bar {
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  border-radius: 2px;
+}
+
+.analyzer-correction-bar.boost { background: var(--accent); }
+.analyzer-correction-bar.cut { background: #8fb8ff; }
+
+.analyzer-correction-value { text-align: right; }
+
+.analyzer-target-details .resonance-confidence,
+.analyzer-report .resonance-confidence {
+  margin-left: auto;
+}
+
+.analyzer-report-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 6px;
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.analyzer-report-note { color: var(--text-faint); text-align: right; }
+
+.analyzer-status {
+  height: auto;
+  min-height: 22px;
+  line-height: 16px;
+  white-space: normal;
+}

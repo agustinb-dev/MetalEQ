@@ -25,6 +25,47 @@ import type {
 } from './types';
 import { defaultParams, getSpec, snapPlain } from './params';
 
+function normaliseAnalyzer(info?: Partial<AnalyzerInfo> | null): AnalyzerInfo {
+  return {
+    status: info?.status ?? 0,
+    progress: info?.progress ?? 0,
+    suggestion: info?.suggestion ?? [0, 0, 0, 0, 0],
+    targetIndex: info?.targetIndex ?? 0,
+    targetId: info?.targetId,
+    targetLabel: info?.targetLabel,
+    resultTarget: info?.resultTarget ?? -1,
+    hasReport: info?.hasReport ?? false,
+    input: info?.input,
+    target: info?.target,
+    predicted: info?.predicted,
+    featureFreqs: info?.featureFreqs,
+    correctionFreqs: info?.correctionFreqs,
+    inputConfidence: info?.inputConfidence,
+    correctionConfidence: info?.correctionConfidence,
+    alreadyClose: info?.alreadyClose,
+    changed: info?.changed,
+  };
+}
+
+function normaliseResonance(info?: Partial<ResonanceInfo> | null): ResonanceInfo {
+  return {
+    surgical: {
+      status: info?.surgical?.status ?? 0,
+      progress: info?.surgical?.progress ?? 0,
+      enoughVariation: info?.surgical?.enoughVariation ?? false,
+      candidates: info?.surgical?.candidates ?? [],
+      changed: info?.surgical?.changed,
+    },
+    dynamic: {
+      status: info?.dynamic?.status ?? 0,
+      progress: info?.dynamic?.progress ?? 0,
+      enoughVariation: info?.dynamic?.enoughVariation ?? false,
+      candidates: info?.dynamic?.candidates ?? [],
+      changed: info?.dynamic?.changed,
+    },
+  };
+}
+
 export interface UiState {
   ready: boolean;
   protocolVersion: number;
@@ -64,8 +105,8 @@ const initialState: UiState = {
   userPresets: [],
   meters: { in: 0, out: 0 },
   dynamicReduction: [0, 0, 0, 0],
-  analyzer: { status: 0, progress: 0, suggestion: [0, 0, 0, 0, 0] },
-  resonance: { status: 0, progress: 0, enoughVariation: false, candidates: [], dynamicCandidates: [] },
+  analyzer: normaliseAnalyzer(),
+  resonance: normaliseResonance(),
   curve: null,
   suggestionCurve: null,
   dragging: new Set(),
@@ -100,14 +141,8 @@ class Store {
       analyzerTargets: s.analyzerTargets ?? [],
       userPresets: s.userPresets ?? [],
       dynamicReduction: s.dynamicReduction ?? this.state.dynamicReduction,
-      analyzer: s.analyzer ?? this.state.analyzer,
-      resonance: s.resonance
-        ? {
-          ...s.resonance,
-          candidates: s.resonance.candidates ?? [],
-          dynamicCandidates: s.resonance.dynamicCandidates ?? [],
-        }
-        : this.state.resonance,
+      analyzer: normaliseAnalyzer({ ...this.state.analyzer, ...(s.analyzer ?? {}) }),
+      resonance: s.resonance ? normaliseResonance(s.resonance) : this.state.resonance,
       curve: s.curve ?? this.state.curve,
       suggestionCurve: null,
     });
@@ -124,26 +159,12 @@ class Store {
     if (t.meters) patch.meters = t.meters;
     if (t.dynamicReduction) patch.dynamicReduction = t.dynamicReduction;
     if (t.analyzer) {
-      patch.analyzer = {
-        status: t.analyzer.status,
-        progress: t.analyzer.progress,
-        suggestion: t.analyzer.suggestion ?? this.state.analyzer.suggestion,
-        changed: t.analyzer.changed,
-      };
+      patch.analyzer = normaliseAnalyzer({ ...this.state.analyzer, ...t.analyzer });
       // Analyzer left "ready": the shown suggestion is no longer valid.
       if (t.analyzer.status !== 4) patch.suggestionCurve = null;
     }
     if (t.curve) patch.curve = t.curve;
-    if (t.resonance) {
-      patch.resonance = {
-        status: t.resonance.status,
-        progress: t.resonance.progress,
-        enoughVariation: t.resonance.enoughVariation,
-        candidates: t.resonance.candidates ?? [],
-        dynamicCandidates: t.resonance.dynamicCandidates ?? [],
-        changed: t.resonance.changed,
-      };
-    }
+    if (t.resonance) patch.resonance = normaliseResonance(t.resonance);
 
     if (Object.keys(patch).length > 0) this.set(patch);
   }

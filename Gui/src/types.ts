@@ -1,11 +1,11 @@
 /*
-    Wire types for the MetalEQ bridge protocol (version 5).
+    Wire types for the MetalEQ bridge protocol (version 7).
 
     These mirror Source/ui/MetalEqUiBridge.cpp exactly: the native side is the
     single source of truth, JS only renders what it receives and sends requests.
 */
 
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 7;
 
 export type ParamKind = 'float' | 'choice' | 'bool';
 
@@ -51,11 +51,34 @@ export interface PresetInfo {
   abSlot: number;
 }
 
-/** Analyzer target with stable identity (table order may change). */
+/** One research citation attached to a target model. */
+export interface AnalyzerSourceInfo {
+  title: string;
+  url: string;
+  /** Interview/publication/access date as supplied by the native record. */
+  date: string;
+  /** What this source supports, in the target's own terms. */
+  claim: string;
+  /** 0 documented, 1 secondary analysis, 2 engineering interpretation, 3 unknown. */
+  evidence: number;
+  evidenceLabel: string;
+}
+
+/** Analyzer target with stable identity and evidence metadata. */
 export interface AnalyzerTargetInfo {
   index: number;
-  presetId: string;
+  /** Stable id, independent of table order. */
+  id: string;
   label: string;
+  shortLabel: string;
+  /** 0 genre, 1 artist, 2 producer. */
+  category: number;
+  categoryLabel: string;
+  albumPeriod: string;
+  objective: string;
+  limitations: string;
+  confidence: number;
+  sources: AnalyzerSourceInfo[];
 }
 
 /** Mirrors MetalEQAudioProcessor::AnalyzerStatus. */
@@ -72,6 +95,27 @@ export interface AnalyzerInfo {
   status: number;
   progress: number;
   suggestion: number[];
+  /** Selected destination, authoritative on the native side. */
+  targetIndex?: number;
+  targetId?: string;
+  targetLabel?: string;
+  /** Target the current recommendation was computed for, or -1. */
+  resultTarget?: number;
+  /** True when input/target/predicted arrays are present and usable. */
+  hasReport?: boolean;
+  /** Eight measured input band levels, dB relative to the 500-2000 Hz region. */
+  input?: number[];
+  /** Eight target band levels in the same domain. */
+  target?: number[];
+  /** Input plus the fitted correction, in the same domain. */
+  predicted?: number[];
+  /** Feature band centres (Hz), sent by the native side. */
+  featureFreqs?: number[];
+  /** Five correction band centres (Hz). */
+  correctionFreqs?: number[];
+  inputConfidence?: number;
+  correctionConfidence?: number;
+  alreadyClose?: boolean;
   changed?: boolean;
 }
 
@@ -89,9 +133,9 @@ export interface ResonanceCandidateInfo {
   cutDb: number;
 }
 
-/** A complete V3.1 dynamic-band suggestion for one scan candidate. */
+/** A complete V3.1 dynamic-band suggestion from the dynamic scan. */
 export interface DynamicCandidateInfo {
-  /** Index into ResonanceInfo.candidates. */
+  /** Index into the dynamic scan's own candidate list. */
   candidateIndex: number;
   freq: number;
   q: number;
@@ -105,15 +149,28 @@ export interface DynamicCandidateInfo {
   excessDb: number;
 }
 
-export interface ResonanceInfo {
+/** Shared state for one independent resonance capture. */
+export interface ResonanceScanInfo {
   status: number;
   progress: number;
   /** False when the capture was too static to separate harmonics from resonances. */
   enoughVariation: boolean;
-  candidates: ResonanceCandidateInfo[];
-  /** Candidates that measured enough relative excess for a dynamic cut. */
-  dynamicCandidates: DynamicCandidateInfo[];
   changed?: boolean;
+}
+
+/** Surgical scan result: stationary peaks for the six fixed cuts. */
+export interface SurgicalResonanceInfo extends ResonanceScanInfo {
+  candidates: ResonanceCandidateInfo[];
+}
+
+/** Dynamic scan result: suggestions for the four dynamic bands. */
+export interface DynamicResonanceInfo extends ResonanceScanInfo {
+  candidates: DynamicCandidateInfo[];
+}
+
+export interface ResonanceInfo {
+  surgical: SurgicalResonanceInfo;
+  dynamic: DynamicResonanceInfo;
 }
 
 export interface CurveInfo {
@@ -190,13 +247,15 @@ export interface MetalEqBridge {
   setAbSlot(slot: number): Promise<OpResult>;
   copyAbToOther(): Promise<OpResult>;
   swapAbSlots(): Promise<OpResult>;
+  /** Selects a target; if a capture is already analysed, the recommendation is recalculated. */
+  setAnalyzerTarget(index: number): Promise<OpResult>;
   startAnalyzerCapture(profile: number): Promise<OpResult>;
   cancelAnalyzerCapture(): Promise<OpResult>;
   applyAnalyzerSuggestion(amount: number): Promise<OpResult>;
   getSuggestionCurve(amount: number): Promise<SuggestionCurveResult>;
-  /** V3: capture 8 s and look for stationary resonances. */
-  startResonanceScan(): Promise<OpResult>;
-  cancelResonanceScan(): Promise<OpResult>;
+  /** V3: independent 8 s captures for the surgical and dynamic sections. */
+  startResonanceScan(dynamic: boolean): Promise<OpResult>;
+  cancelResonanceScan(dynamic: boolean): Promise<OpResult>;
   /** Selected candidate indices, in order; up to six are copied to surgical bands. */
   applyResonanceSelection(indices: number[]): Promise<OpResult>;
   clearSurgicalBands(): Promise<OpResult>;
@@ -205,4 +264,6 @@ export interface MetalEqBridge {
   clearDynamicBands(): Promise<OpResult>;
   /** Advanced view asks the native editor to grow for the numeric band panel. */
   setEditorExpanded(expanded: boolean): Promise<OpResult>;
+  /** Opens a research link in the system browser (http/https only). */
+  openExternalUrl(url: string): Promise<OpResult>;
 }

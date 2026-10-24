@@ -197,8 +197,8 @@ export function EqGraph({
       freqParam: { id: 'lpFreq', label: '', kind: 'float', min: 0, max: 1, skew: 1, step: 0, def: 0 },
       slopeParam: { id: 'lpSlope', label: '', kind: 'choice', min: 0, max: 1, skew: 1, step: 1, def: 0 },
       id: 'lp',
-      enabled: params.lpOn >= 0.5,
-      color: params.lpOn >= 0.5 ? 'rgba(105, 214, 166, 0.85)' : '#737b85',
+      enabled: true,
+      color: 'rgba(105, 214, 166, 0.85)',
       radius: editable ? 6 : 4,
     });
   }
@@ -395,7 +395,7 @@ export function EqGraph({
       </text>
       {suggestionPath && (
         <text x={146} y={14} className="graph-legend suggestion">
-          SUGGESTED
+          CORRECTION
         </text>
       )}
       {editable && (

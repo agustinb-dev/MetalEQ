@@ -432,6 +432,159 @@ void testStateRoundTrip (MetalEQAudioProcessor& processor)
     check (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::dynOn[1]) < 0.5f,
            "old session disables dynamic bands");
 }
+
+void setLowPassInParameterTrees (juce::ValueTree tree, double enabled, double slope)
+{
+    if (! tree.isValid())
+        return;
+
+    if (tree.hasType ("PARAMS"))
+    {
+        for (int i = 0; i < tree.getNumChildren(); ++i)
+        {
+            auto child = tree.getChild (i);
+            const auto id = child.getProperty ("id").toString();
+            if (id == MetalEQAudioProcessor::ParameterIDs::lpOn)
+                child.setProperty ("value", juce::String (enabled, 9), nullptr);
+            else if (id == MetalEQAudioProcessor::ParameterIDs::lpSlope)
+                child.setProperty ("value", juce::String (slope, 9), nullptr);
+        }
+    }
+
+    for (int i = 0; i < tree.getNumChildren(); ++i)
+        setLowPassInParameterTrees (tree.getChild (i), enabled, slope);
+}
+
+juce::MemoryBlock stateToBlock (const juce::ValueTree& tree)
+{
+    juce::MemoryBlock block;
+    juce::MemoryOutputStream stream (block, false);
+    tree.writeToStream (stream);
+    return block;
+}
+
+void testLowPassStateMigration (MetalEQAudioProcessor& processor)
+{
+    processor.setAbSlot (0);
+    processor.resetToNeutral();
+    check (processor.copyActiveAbToOther(), "low-pass migration fixture copies a clean A/B slot");
+
+    juce::MemoryBlock state;
+    processor.getStateInformation (state);
+    const auto tree = juce::ValueTree::readFromData (state.getData(),
+                                                     static_cast<size_t> (state.getSize()));
+    check (tree.isValid(), "low-pass migration fixture has valid session state");
+
+    // The old UI could store the toggle Off while the slope stayed active. That
+    // combination was silent; after migration the slope itself must be Off.
+    auto legacyOff = tree.createCopy();
+    setLowPassInParameterTrees (legacyOff, 0.0, 2.0);
+    const auto legacyOffBlock = stateToBlock (legacyOff);
+    processor.setStateInformation (legacyOffBlock.getData(),
+                                   static_cast<int> (legacyOffBlock.getSize()));
+
+    check (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::lpSlope) < 0.5f,
+           "legacy toggle-off session migrates to an Off slope");
+    check (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::lpOn) < 0.5f,
+           "legacy toggle-off session keeps the mirror disabled");
+    check (! processor.getDisplayState().eq.lpEnabled,
+           "migrated toggle-off session stays bypassed");
+    check (! processor.getDisplayState().presetDirty,
+           "migrated legacy baseline is not dirty");
+
+    // Revert uses the migrated baseline, so it must restore bypass and clear
+    // the dirty marker instead of reintroducing the old contradictory state.
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::bandGain[0], 3.0f);
+    check (processor.getDisplayState().presetDirty, "editing a migrated session marks it dirty");
+    processor.revertToLoadedPreset();
+    check (! processor.getDisplayState().presetDirty,
+           "revert clears dirty for a migrated legacy session");
+    check (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::lpSlope) < 0.5f,
+           "revert keeps the migrated low-pass bypassed");
+
+    processor.setAbSlot (1);
+    check (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::lpSlope) < 0.5f,
+           "inactive A/B slot also migrates its low-pass slope");
+    check (! processor.getDisplayState().eq.lpEnabled,
+           "inactive A/B slot also stays bypassed");
+    check (! processor.getDisplayState().presetDirty,
+           "inactive A/B slot baseline is not dirty after migration");
+    processor.setAbSlot (0);
+
+    // Sessions written before the BASELINE wrapper stored the slot baseline as
+    // a second bare PARAMS child. Those must still restore cleanly.
+    auto legacySlotLayout = tree.createCopy();
+    auto legacyAb = legacySlotLayout.getChildWithName ("AB");
+    for (int i = 0; i < legacyAb.getNumChildren(); ++i)
+    {
+        auto slot = legacyAb.getChild (i);
+        auto slotBaseline = slot.getChildWithName ("BASELINE");
+        if (! slotBaseline.isValid())
+            continue;
+        auto slotParams = slotBaseline.getChildWithName ("PARAMS");
+        slot.removeChild (slotBaseline, nullptr);
+        slot.appendChild (slotParams, nullptr);
+    }
+    setLowPassInParameterTrees (legacySlotLayout, 0.0, 2.0);
+    const auto legacySlotBlock = stateToBlock (legacySlotLayout);
+    processor.setStateInformation (legacySlotBlock.getData(),
+                                   static_cast<int> (legacySlotBlock.getSize()));
+    processor.setAbSlot (1);
+    check (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::lpSlope) < 0.5f,
+           "legacy second-PARAMS slot layout restores its low-pass slope");
+    check (! processor.getDisplayState().presetDirty,
+           "legacy second-PARAMS slot layout restores a clean baseline");
+    processor.setAbSlot (0);
+
+    // The opposite legacy combination: toggle On with the slope Off was also
+    // silent. Clear the mirror but leave the Off slope untouched.
+    auto legacyOn = tree.createCopy();
+    setLowPassInParameterTrees (legacyOn, 1.0, 0.0);
+    const auto legacyOnBlock = stateToBlock (legacyOn);
+    processor.setStateInformation (legacyOnBlock.getData(),
+                                   static_cast<int> (legacyOnBlock.getSize()));
+
+    check (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::lpOn) < 0.5f,
+           "legacy toggle-on session clears the contradictory mirror");
+    check (readPlain (processor, MetalEQAudioProcessor::ParameterIDs::lpSlope) < 0.5f,
+           "legacy toggle-on session keeps the Off slope");
+    check (! processor.getDisplayState().eq.lpEnabled,
+           "legacy toggle-on session stays bypassed");
+    check (! processor.getDisplayState().presetDirty,
+           "legacy toggle-on baseline is not dirty");
+
+    // Serialization derives the legacy mirror from the slope even when a host
+    // automation lane left the hidden parameter out of sync.
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::lpSlope, 2.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::lpOn, 0.0f);
+    processor.getStateInformation (state);
+    auto serialized = juce::ValueTree::readFromData (state.getData(),
+                                                     static_cast<size_t> (state.getSize()));
+    auto readSerializedLowPass = [&] (const juce::ValueTree& params, const char* id)
+    {
+        if (! params.isValid())
+            return -1.0;
+        for (int i = 0; i < params.getNumChildren(); ++i)
+        {
+            const auto child = params.getChild (i);
+            if (child.getProperty ("id").toString() == id)
+                return child.getProperty ("value").toString().getDoubleValue();
+        }
+        return -1.0;
+    };
+    check (std::abs (readSerializedLowPass (serialized.getChildWithName ("PARAMS"),
+                                            MetalEQAudioProcessor::ParameterIDs::lpOn) - 1.0) < 0.01,
+           "serialized lpOn mirrors an active low-pass slope");
+
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::lpSlope, 0.0f);
+    setPlain (processor, MetalEQAudioProcessor::ParameterIDs::lpOn, 1.0f);
+    processor.getStateInformation (state);
+    serialized = juce::ValueTree::readFromData (state.getData(),
+                                                static_cast<size_t> (state.getSize()));
+    check (std::abs (readSerializedLowPass (serialized.getChildWithName ("PARAMS"),
+                                            MetalEQAudioProcessor::ParameterIDs::lpOn)) < 0.01,
+           "serialized lpOn mirrors an Off low-pass slope");
+}
 } // namespace
 
 int main()
@@ -703,6 +856,7 @@ int main()
     testFactoryRecall (processor);
     testAbSlots (processor);
     testStateRoundTrip (processor);
+    testLowPassStateMigration (processor);
     testSectionMonitorAudio (processor);
 
     if (failures != 0)

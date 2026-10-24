@@ -228,14 +228,6 @@ void testFactorySettings()
                    && neutral.macros.fizzCut == 0.0,
                "neutral preset uses centred/off macros");
     }
-
-    for (int i = 0; i < metaleq::getNumAnalyzerTargets(); ++i)
-    {
-        const auto& target = metaleq::getAnalyzerTarget (i);
-        check (target.label != nullptr && *target.label != 0, "analyzer target has a label");
-        check (metaleq::findPresetById (target.presetId) >= 0,
-               "analyzer target points at an existing stable preset id");
-    }
 }
 } // namespace
 

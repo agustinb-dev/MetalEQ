@@ -25,6 +25,7 @@
 #include "dsp/MetalEqDsp.h"
 #include "dsp/MetalEqParams.h"
 #include "dsp/MetalEqPresets.h"
+#include "dsp/MetalEqToneTargets.h"
 
 //==============================================================================
 class MetalEQAudioProcessor;
@@ -142,8 +143,6 @@ public:
     /** Recalls a factory preset by its stable id. Returns false if unknown. */
     bool applyPresetById (const juce::String& presetId);
 
-    void setLowPassEnabled (bool enabled);
-
     /** Real A/B comparison. Both slots store the complete EQ, macros and shape
         state; output trim deliberately stays global for level-matched listening.
     */
@@ -229,34 +228,66 @@ public:
     double getAnalyzerResponseDb (double freq, float amount) const;
     void applyAnalyzerSuggestion (float amount);
 
-    //--- V3 resonance scan ---------------------------------------------------
-    /** Starts an 8-second capture whose analysis looks for stationary,
-        narrow resonances instead of matching a target curve.
+    //--- V3.2 evidence-based analyzer ---------------------------------------
+    /** Chooses a target without starting a capture. When a previous capture is
+        still available, the correction is recalculated immediately, so the
+        player can compare destinations on the same input.
     */
-    void startResonanceScan();
-    void cancelResonanceScan() noexcept;
-    AnalyzerStatus getResonanceStatus() const noexcept;
-    float getResonanceProgress() const noexcept;
-    bool getResonanceEnoughVariation() const noexcept;
+    void setAnalyzerTarget (int targetIndex);
+
+    int getAnalyzerTargetIndex() const noexcept;
+    /** Index of the target the current recommendation was computed for, or -1. */
+    int getAnalyzerResultTarget() const noexcept;
+    /** Monotonic revision, bumped whenever the recommendation changes. */
+    unsigned long long getAnalyzerRevision() const noexcept;
+
+    /** Separated input/target/correction data for the UI. */
+    struct AnalyzerReport
+    {
+        std::array<float, metaleq::tone::kNumFeatures> input {};
+        std::array<float, metaleq::tone::kNumFeatures> target {};
+        std::array<float, metaleq::tone::kNumFeatures> predicted {};
+        std::array<float, metaleq::kNumBands> gains {};
+        float inputConfidence = 0.0f;
+        float correctionConfidence = 0.0f;
+        bool alreadyClose = false;
+        bool valid = false;
+    };
+    bool getAnalyzerReport (AnalyzerReport& report) const noexcept;
+
+    //--- V3 resonance scan ---------------------------------------------------
+    /** The two resonance sections capture independently. Each target owns its
+        own status, progress and result set, so a scan in one panel never
+        replaces the suggestions shown by the other.
+    */
+    enum class ResonanceScanTarget : int { surgical = 0, dynamic = 1 };
+
+    /** Starts an independent 8-second capture for one resonance section.
+        Returns false when a previous scan is still being analysed.
+    */
+    bool startResonanceScan (ResonanceScanTarget target);
+    void cancelResonanceScan (ResonanceScanTarget target) noexcept;
+    AnalyzerStatus getResonanceStatus (ResonanceScanTarget target) const noexcept;
+    float getResonanceProgress (ResonanceScanTarget target) const noexcept;
+    bool getResonanceEnoughVariation (ResonanceScanTarget target) const noexcept;
     int getResonanceCandidateCount() const noexcept;
     bool getResonanceCandidate (int index, metaleq::ResonanceCandidate& candidate) const noexcept;
+    /** Number of dynamic-band suggestions produced by the dynamic scan. */
+    int getResonanceDynamicSuggestionCount() const noexcept;
     unsigned long long getResonanceRevision() const noexcept;
-    /** Copies the selected candidates into the six surgical bands, strongest
-        selection first. Bands not covered by the selection are switched off.
+    /** Copies the selected surgical candidates into the six surgical bands,
+        strongest selection first. Bands not covered by the selection are
+        switched off.
     */
     void applyResonanceSelection (const std::vector<int>& candidateIndices);
     void clearSurgicalBands();
-    /** Full dynamic-band suggestion for one resonance candidate. False when
-        that candidate did not measure enough relative excess to drive a
-        dynamic cut.
-    */
-    bool getResonanceDynamicSuggestion (int candidateIndex,
+    /** Full dynamic-band suggestion for one index in the dynamic scan result. */
+    bool getResonanceDynamicSuggestion (int index,
                                         metaleq::DynamicBandSettings& band,
                                         double& confidence,
                                         double& measuredExcessDb) const noexcept;
-    /** Copies the selected candidates' dynamic suggestions into the four
-        dynamic bands in selection order. Bands not covered by the selection
-        are switched off.
+    /** Copies the selected dynamic suggestions into the four dynamic bands in
+        selection order. Bands not covered by the selection are switched off.
     */
     void applyResonanceToDynamic (const std::vector<int>& candidateIndices);
     void clearDynamicBands();
@@ -271,12 +302,23 @@ private:
 
     void analyzerWorkerLoop();
     void analyzeCapture (int sampleCount, double sampleRate);
-    void analyzeResonanceCapture (int sampleCount, double sampleRate);
+    void analyzeResonanceCapture (int sampleCount, double sampleRate, int target);
+    void storeAnalyzerResult (const metaleq::tone::InputProfile& input,
+                              const metaleq::tone::CorrectionResult& correction,
+                              int targetIndex) noexcept;
+    void clearAnalyzerResult() noexcept;
+    bool readAnalyzerInput (metaleq::tone::InputProfile& input) const noexcept;
     void captureAnalyzerInput (const juce::AudioBuffer<float>& buffer) noexcept;
     void serviceDeferredAnalyzerStart() noexcept;
-    void startAnalyzerCaptureWithGeneration (int targetProfile, int mode, unsigned long long cancelGeneration);
+    bool startAnalyzerCaptureWithGeneration (int targetProfile, int mode, unsigned long long cancelGeneration);
     AnalyzerStatus captureStatus() const noexcept;
-    void clearResonanceCandidates() noexcept;
+    static int resonanceTargetIndex (ResonanceScanTarget target) noexcept;
+    static int resonanceAnalyzerMode (ResonanceScanTarget target) noexcept;
+    static int resonanceTargetForAnalyzerMode (int mode) noexcept;
+    void clearResonanceResults (ResonanceScanTarget target) noexcept;
+    void publishResonanceResults (ResonanceScanTarget target,
+                                  const metaleq::ResonanceAnalysisResult& result) noexcept;
+    void setResonanceStatus (ResonanceScanTarget target, AnalyzerStatus status) noexcept;
 
     metaleq::EqSettings     readEqSettings() const;
     metaleq::MacroSettings  readMacroSettings() const;
@@ -319,7 +361,6 @@ private:
     bool loadAbSlot (int slot);
     void switchAbSlotInternal (int slot, bool writeParameter);
     void syncPresetChoiceToLoadedIdentity();
-    void serviceLowPassFix();
     void servicePendingAutomation();
 
     //==============================================================================
@@ -343,7 +384,6 @@ private:
     // thread through AsyncUpdater.
     std::atomic<int>  pendingPresetIndex { -1 };
     std::atomic<int>  pendingAbSlot { -1 };
-    std::atomic<bool> pendingLowPassFix { false };
 
     // Audio-thread-only chain cache. The chain is rebuilt only when a relevant
     // parameter or the sample rate actually changes.
@@ -367,8 +407,22 @@ private:
     std::atomic<int> analyzerSampleCount { 0 };
     std::atomic<int> analyzerCaptureLimit { maxCaptureSamples };
     std::atomic<int> analyzerTargetProfile { 0 };
+    std::atomic<int> analyzerResultTarget { -1 };
+    std::atomic<unsigned long long> analyzerRevision { 0 };
+    std::atomic<bool> analyzerReportValid { false };
     std::atomic<int> analyzerSampleRate { 48000 };
-    /** 0 = target-profile analyzer, 1 = V3 resonance scan. */
+
+    /** Guards the feature vectors. Written by the analyzer worker, read by the
+        message thread. Never touched by the audio thread.
+    */
+    mutable juce::SpinLock analyzerReportLock;
+    std::array<float, metaleq::tone::kNumFeatures> analyzerInputShape {};
+    std::array<float, metaleq::tone::kNumFeatures> analyzerTargetShape {};
+    std::array<float, metaleq::tone::kNumFeatures> analyzerPredictedShape {};
+    float analyzerInputConfidence = 0.0f;
+    float analyzerCorrectionConfidence = 0.0f;
+    bool analyzerAlreadyClose = false;
+    /** 0 = target-profile analyzer, 1 = surgical scan, 2 = dynamic scan. */
     std::atomic<int> analyzerMode { 0 };
     std::atomic<int> analyzerDeferredStartMode { 0 };
     std::array<std::atomic<float>, metaleq::kNumBands> analyzerSuggestion {};
@@ -376,22 +430,27 @@ private:
     std::thread analyzerWorker;
 
     //--- V3 resonance scan results ------------------------------------------
+    // Surgical candidates and dynamic suggestions are captured separately.
+    std::array<std::atomic<int>, 2> resonanceStatus {};
     std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> resonanceFreq {};
     std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> resonanceQ {};
     std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> resonanceProminence {};
     std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> resonanceResidual {};
     std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> resonanceConfidence {};
     std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> resonanceCut {};
-    std::array<std::atomic<bool>, metaleq::kMaxResonanceCandidates> resonanceDynamicEligible {};
-    std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> resonanceDynamicQ {};
-    std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> resonanceDynamicThreshold {};
-    std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> resonanceDynamicRatio {};
-    std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> resonanceDynamicAttack {};
-    std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> resonanceDynamicRelease {};
-    std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> resonanceDynamicMaxCut {};
-    std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> resonanceDynamicExcess {};
+    std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> dynamicResonanceFreq {};
+    std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> dynamicResonanceQ {};
+    std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> dynamicResonanceThreshold {};
+    std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> dynamicResonanceRatio {};
+    std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> dynamicResonanceAttack {};
+    std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> dynamicResonanceRelease {};
+    std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> dynamicResonanceMaxCut {};
+    std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> dynamicResonanceConfidence {};
+    std::array<std::atomic<float>, metaleq::kMaxResonanceCandidates> dynamicResonanceExcess {};
     std::atomic<int> resonanceCandidateCount { 0 };
     std::atomic<bool> resonanceEnoughVariation { false };
+    std::atomic<int> dynamicResonanceCount { 0 };
+    std::atomic<bool> dynamicResonanceEnoughVariation { false };
     std::atomic<unsigned long long> resonanceRevision { 0 };
 
     metaleq::EqEngine engine;

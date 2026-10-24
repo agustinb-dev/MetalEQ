@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(MetalEQ VERSION 3.1.0)
+project(MetalEQ VERSION 3.2.0)
 
 include(CTest)
 
@@ -186,6 +186,7 @@ target_sources(${PROJECT_NAME}
         Source/PluginProcessor.cpp
         Source/PluginEditor.cpp
         Source/dsp/MetalEqPresets.cpp
+        Source/dsp/MetalEqToneTargets.cpp
         Source/ui/MetalEqUiBridge.cpp
         Source/ui/MetalEqWebUiResources.cpp
         Source/native/MetalEQNativeFallbackEditor.cpp
@@ -314,6 +315,19 @@ if(BUILD_TESTING)
   endif()
   add_test(NAME MetalEQ_DspTests COMMAND MetalEQ_DspTests)
 
+  # V3.2 analyzer model: target-table provenance, eight-band input analysis,
+  # adaptive correction, deadband and safety caps. JUCE-free and deterministic.
+  add_executable(MetalEQ_ToneTargetTests
+      Tests/MetalEqToneTargetTests.cpp
+      Source/dsp/MetalEqToneTargets.cpp
+  )
+  target_compile_features(MetalEQ_ToneTargetTests PRIVATE cxx_std_17)
+  target_include_directories(MetalEQ_ToneTargetTests PRIVATE Source)
+  if(MSVC)
+    target_compile_options(MetalEQ_ToneTargetTests PRIVATE /W4 /permissive-)
+  endif()
+  add_test(NAME MetalEQ_ToneTargetTests COMMAND MetalEQ_ToneTargetTests)
+
   add_executable(MetalEQ_ResonanceTests Tests/MetalEqResonanceTests.cpp)
   target_compile_features(MetalEQ_ResonanceTests PRIVATE cxx_std_17)
   target_include_directories(MetalEQ_ResonanceTests PRIVATE Source)
@@ -327,8 +341,9 @@ if(BUILD_TESTING)
   metaleq_link_plugin_shared_code(MetalEQ_StateTests)
   add_test(NAME MetalEQ_StateTests COMMAND MetalEQ_StateTests)
 
-  # UI bridge tests: validateParameterWrite clamping, the lpOn side effect, and
-  # the applyPreset index mapping shared with the native combo box.
+  # UI bridge tests: validateParameterWrite clamping, the low-pass slope
+  # enable mirror, and the applyPreset index mapping shared with the native
+  # combo box.
   add_executable(MetalEQ_UiBridgeTests Tests/MetalEqUiBridgeTests.cpp)
   target_compile_features(MetalEQ_UiBridgeTests PRIVATE cxx_std_17)
 

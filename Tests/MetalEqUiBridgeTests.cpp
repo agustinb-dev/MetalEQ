@@ -7,8 +7,8 @@
 
       1. validateParameterWrite() never lets an out-of-range or non-finite
          value through - JavaScript is never authoritative.
-      2. handleSetParameter() reproduces the native low-pass enable side
-         effect (enabling while the slope is Off jumps it to 24 dB/oct).
+      2. handleSetParameter() keeps the legacy low-pass enable mirror in sync
+         with the slope selector, which is now the filter's bypass.
       3. applyPreset() uses the canonical v2 mapping: 0 = Custom and
          selector 1..N = factory preset 0..N-1.
       4. The v2 snapshot exposes stable preset ids, taxonomy and analyzer
@@ -20,8 +20,10 @@
 
 #include <cmath>
 #include <cstdlib>
+#include <chrono>
 #include <iostream>
 #include <limits>
+#include <thread>
 
 #include "../Source/PluginProcessor.h"
 #include "../Source/dsp/MetalEqGraphAxis.h"
@@ -159,29 +161,48 @@ static void testValidateParameterWrite (MetalEQAudioProcessor& processor)
 }
 
 //==============================================================================
-static void testSetParameterLpSideEffect (MetalEQAudioProcessor& processor)
+static void testSetParameterLpSlopeSyncsEnable (MetalEQAudioProcessor& processor)
 {
     metaleq::ui::UiBridge bridge (processor);
 
-    // Match the native toggle: enabling the low-pass while the slope is Off
-    // must jump the slope to 24 dB/oct (choice index 2 of 0..3) so the filter
-    // is audible immediately.
+    // The low-pass slope selector is its bypass. Selecting a slope must clear
+    // or set the legacy lpOn mirror so saved state stays coherent, while the
+    // filter itself follows the slope.
     setPlain (processor, "lpSlope", 0.0f);
     setPlain (processor, "lpOn", 0.0f);
     check (static_cast<int> (readPlain (processor, "lpSlope")) == 0,
-           "the low-pass slope starts at Off for the side-effect test");
+           "the low-pass slope starts at Off for the slope test");
+    check (! processor.getDisplayState().eq.lpEnabled,
+           "Off slope keeps the low-pass bypassed");
 
     juce::var result;
-    const bool completed = callNative (bridge, "setParameter", makeArgs ("lpOn", 1.0), result);
+    const bool completed = callNative (bridge, "setParameter", makeArgs ("lpSlope", 2.0), result);
     check (completed, "setParameter is registered with the bridge");
-    check (resultOk (result), "enabling the low-pass succeeds");
+    check (resultOk (result), "selecting a low-pass slope succeeds");
     check (static_cast<int> (readPlain (processor, "lpSlope")) == 2,
-           "enabling the low-pass while the slope is Off jumps it to 24 dB/oct");
+           "the selected low-pass slope is stored");
+    check (readPlain (processor, "lpOn") > 0.5f,
+           "selecting a low-pass slope enables the legacy mirror");
+    check (processor.getDisplayState().eq.lpEnabled,
+           "the low-pass is audible from the slope alone");
 
-    // Turning it back off must leave the slope alone.
-    check (callNative (bridge, "setParameter", makeArgs ("lpOn", 0.0), result), "setParameter runs again");
-    check (static_cast<int> (readPlain (processor, "lpSlope")) == 2,
-           "disabling the low-pass does not reset the slope");
+    check (callNative (bridge, "setParameter", makeArgs ("lpSlope", 0.0), result),
+           "setParameter can bypass the low-pass");
+    check (static_cast<int> (readPlain (processor, "lpSlope")) == 0,
+           "Off is stored as the low-pass slope");
+    check (readPlain (processor, "lpOn") < 0.5f,
+           "Off clears the legacy low-pass enable mirror");
+    check (! processor.getDisplayState().eq.lpEnabled,
+           "Off slope bypasses the low-pass again");
+
+    // The legacy parameter is still automatable but no longer gates the filter
+    // or forces a slope; the visible selector is the single source of truth.
+    check (callNative (bridge, "setParameter", makeArgs ("lpOn", 1.0), result),
+           "the legacy low-pass enable parameter still accepts writes");
+    check (static_cast<int> (readPlain (processor, "lpSlope")) == 0,
+           "writing the legacy enable does not change the slope");
+    check (! processor.getDisplayState().eq.lpEnabled,
+           "writing the legacy enable does not make the low-pass audible");
 
     // A non-finite write is rejected and leaves the parameter untouched.
     setPlain (processor, "lsGain", 3.0f);
@@ -329,24 +350,33 @@ static void testCurveRangeIsFixed (MetalEQAudioProcessor& processor)
 }
 
 //==============================================================================
-static void testSnapshotV5 (MetalEQAudioProcessor& processor)
+static void testSnapshotV7 (MetalEQAudioProcessor& processor)
 {
     metaleq::ui::UiBridge bridge (processor);
     juce::var snapshot;
     check (callNative (bridge, "uiReady", juce::Array<juce::var> {}, snapshot),
            "uiReady is registered with the bridge");
 
-    check (static_cast<int> (getProperty (snapshot, "protocolVersion")) == 5,
-           "snapshot advertises protocol version 5");
+    check (static_cast<int> (getProperty (snapshot, "protocolVersion")) == 7,
+           "snapshot advertises protocol version 7");
 
     const auto resonance = getProperty (snapshot, "resonance");
     check (resonance.isObject(), "snapshot contains the V3 resonance state");
-    check (getProperty (resonance, "status").isInt(), "resonance state carries a status");
-    check (getProperty (resonance, "candidates").isArray(), "resonance state carries a candidate list");
-    check (getProperty (resonance, "dynamicCandidates").isArray(),
-           "resonance state carries a dynamic-suggestion list");
-    check (getProperty (resonance, "enoughVariation").isBool(),
-           "resonance state reports whether the capture varied enough");
+
+    const auto surgical = getProperty (resonance, "surgical");
+    const auto dynamic = getProperty (resonance, "dynamic");
+    check (surgical.isObject(), "resonance state contains the surgical scan");
+    check (dynamic.isObject(), "resonance state contains the dynamic scan");
+    check (getProperty (surgical, "status").isInt(), "surgical scan carries a status");
+    check (getProperty (dynamic, "status").isInt(), "dynamic scan carries a status");
+    check (getProperty (surgical, "candidates").isArray(),
+           "surgical scan carries a candidate list");
+    check (getProperty (dynamic, "candidates").isArray(),
+           "dynamic scan carries a dynamic-suggestion list");
+    check (getProperty (surgical, "enoughVariation").isBool(),
+           "surgical scan reports whether the capture varied enough");
+    check (getProperty (dynamic, "enoughVariation").isBool(),
+           "dynamic scan reports whether the capture varied enough");
 
     const auto params = getProperty (snapshot, "params");
     check (params.isObject(), "snapshot contains parameter values");
@@ -365,14 +395,60 @@ static void testSnapshotV5 (MetalEQAudioProcessor& processor)
            "snapshot exposes one dynamic gain-reduction value per band");
 
     juce::var result;
-    check (callNative (bridge, "startResonanceScan", juce::Array<juce::var> {}, result),
-           "startResonanceScan is registered");
-    check (resultOk (result), "startResonanceScan accepts the request");
-    check (callNative (bridge, "cancelResonanceScan", juce::Array<juce::var> {}, result),
-           "cancelResonanceScan is registered");
+    check (callNative (bridge, "startResonanceScan", makeArgs (false), result),
+           "startResonanceScan is registered for the surgical scan");
+    check (resultOk (result), "startResonanceScan starts the surgical scan");
+    check (processor.getResonanceStatus (MetalEQAudioProcessor::ResonanceScanTarget::surgical)
+               == MetalEQAudioProcessor::AnalyzerStatus::capturing,
+           "the surgical scan reports capturing");
+
+    check (callNative (bridge, "cancelResonanceScan", makeArgs (false), result),
+           "cancelResonanceScan is registered for the surgical scan");
     check (resultOk (result), "cancelResonanceScan returns to idle");
-    check (processor.getResonanceStatus() == MetalEQAudioProcessor::AnalyzerStatus::idle,
+    check (processor.getResonanceStatus (MetalEQAudioProcessor::ResonanceScanTarget::surgical)
+               == MetalEQAudioProcessor::AnalyzerStatus::idle,
            "cancelling the scan clears its status");
+
+    // Regression: cancelling used to leave the capture in cancelPending, so a
+    // second start was silently rejected.
+    check (callNative (bridge, "startResonanceScan", makeArgs (false), result),
+           "startResonanceScan can restart after a cancelled capture");
+    check (resultOk (result), "restarting the surgical scan succeeds");
+    check (processor.getResonanceStatus (MetalEQAudioProcessor::ResonanceScanTarget::surgical)
+               == MetalEQAudioProcessor::AnalyzerStatus::capturing,
+           "the restarted surgical scan reports capturing");
+
+    check (callNative (bridge, "startResonanceScan", makeArgs (true), result),
+           "the dynamic scan can start while the surgical capture is pending");
+    check (resultOk (result), "starting the dynamic scan succeeds");
+    check (processor.getResonanceStatus (MetalEQAudioProcessor::ResonanceScanTarget::surgical)
+               == MetalEQAudioProcessor::AnalyzerStatus::idle,
+           "starting the dynamic scan replaces the unfinished surgical capture");
+    check (processor.getResonanceStatus (MetalEQAudioProcessor::ResonanceScanTarget::dynamic)
+               == MetalEQAudioProcessor::AnalyzerStatus::capturing,
+           "the dynamic scan reports capturing independently");
+
+    check (callNative (bridge, "cancelResonanceScan", makeArgs (false), result),
+           "stopping the idle surgical scan is accepted");
+    check (processor.getResonanceStatus (MetalEQAudioProcessor::ResonanceScanTarget::dynamic)
+               == MetalEQAudioProcessor::AnalyzerStatus::capturing,
+           "stopping one section does not cancel the other section's capture");
+
+    check (callNative (bridge, "cancelResonanceScan", makeArgs (true), result),
+           "cancelResonanceScan stops the dynamic scan");
+    check (processor.getResonanceStatus (MetalEQAudioProcessor::ResonanceScanTarget::dynamic)
+               == MetalEQAudioProcessor::AnalyzerStatus::idle,
+           "cancelling the dynamic scan leaves it idle");
+
+    check (callNative (bridge, "startResonanceScan", makeArgs (true), result),
+           "the dynamic scan can restart after its own cancelled capture");
+    check (resultOk (result), "restarting the dynamic scan succeeds");
+    check (processor.getResonanceStatus (MetalEQAudioProcessor::ResonanceScanTarget::dynamic)
+               == MetalEQAudioProcessor::AnalyzerStatus::capturing,
+           "the restarted dynamic scan reports capturing");
+
+    check (callNative (bridge, "cancelResonanceScan", makeArgs (true), result),
+           "the restarted dynamic scan can be stopped again");
 
     check (callNative (bridge, "applyResonanceSelection", makeArgs (juce::Array<juce::var> {}), result),
            "applyResonanceSelection is registered");
@@ -409,11 +485,35 @@ static void testSnapshotV5 (MetalEQAudioProcessor& processor)
     }
 
     const auto targets = getProperty (snapshot, "analyzerTargets");
-    check (targets.isArray() && targets.size() == metaleq::getNumAnalyzerTargets(),
+    check (targets.isArray() && targets.size() == metaleq::tone::getNumToneTargets(),
            "snapshot contains analyzer targets");
     if (targets.isArray() && targets.size() > 0)
-        check (getProperty (targets[0], "presetId").toString() == metaleq::getAnalyzerTarget (0).presetId,
-               "analyzer target carries its stable preset id");
+    {
+        check (getProperty (targets[0], "id").toString() == metaleq::tone::getToneTarget (0).id,
+               "analyzer target carries its stable id");
+        check (getProperty (targets[0], "categoryLabel").toString().isNotEmpty(),
+               "analyzer target carries its category");
+        check (getProperty (targets[0], "objective").toString().isNotEmpty(),
+               "analyzer target carries a tonal objective");
+        check (getProperty (targets[0], "confidence").isDouble(),
+               "analyzer target carries a confidence");
+        const auto sources = getProperty (targets[0], "sources");
+        check (sources.isArray() && sources.size() > 0,
+               "analyzer target carries its research sources");
+        if (sources.isArray() && sources.size() > 0)
+            check (getProperty (sources[0], "url").toString().startsWith ("http"),
+                   "target source carries a URL");
+    }
+
+    check (callNative (bridge, "setAnalyzerTarget", makeArgs (2.0), result),
+           "setAnalyzerTarget is registered");
+    check (resultOk (result), "setAnalyzerTarget succeeds");
+    check (processor.getAnalyzerTargetIndex() == 2,
+           "setAnalyzerTarget updates the selected destination");
+
+    check (callNative (bridge, "openExternalUrl", makeArgs ("file:///etc/passwd"), result),
+           "openExternalUrl is registered");
+    check (! resultOk (result), "openExternalUrl refuses non-http(s) URLs");
 
     const auto preset = getProperty (snapshot, "preset");
     check (getProperty (preset, "abSlot").isInt(), "preset snapshot carries the active A/B slot");
@@ -435,6 +535,142 @@ static void testSnapshotV5 (MetalEQAudioProcessor& processor)
 }
 
 //==============================================================================
+static void testResonanceRestartDuringLiveCapture (MetalEQAudioProcessor& processor)
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int blockSize = 512;
+    processor.prepareToPlay (sampleRate, blockSize);
+
+    metaleq::ui::UiBridge bridge (processor);
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    for (int channel = 0; channel < buffer.getNumChannels(); ++channel)
+        for (int sample = 0; sample < blockSize; ++sample)
+            buffer.setSample (channel, sample,
+                0.1f * std::sin (juce::MathConstants<float>::twoPi
+                                 * 440.0f * static_cast<float> (sample) / static_cast<float> (sampleRate)));
+    juce::MidiBuffer midi;
+
+    juce::var result;
+    check (callNative (bridge, "startResonanceScan", makeArgs (false), result),
+           "the live-capture test starts a surgical scan");
+    processor.processBlock (buffer, midi);
+    check (processor.getResonanceStatus (MetalEQAudioProcessor::ResonanceScanTarget::surgical)
+               == MetalEQAudioProcessor::AnalyzerStatus::capturing,
+           "an audio callback moves the surgical scan into its capture");
+    check (processor.getResonanceProgress (MetalEQAudioProcessor::ResonanceScanTarget::surgical) > 0.0f,
+           "the live surgical capture reports progress");
+
+    check (callNative (bridge, "cancelResonanceScan", makeArgs (false), result),
+           "the live surgical scan can be stopped mid-capture");
+    processor.processBlock (buffer, midi);
+    check (processor.getResonanceStatus (MetalEQAudioProcessor::ResonanceScanTarget::surgical)
+               == MetalEQAudioProcessor::AnalyzerStatus::idle,
+           "the cancelled live capture returns to idle on the next callback");
+
+    check (callNative (bridge, "startResonanceScan", makeArgs (false), result),
+           "the surgical scan restarts after a cancelled live capture");
+    check (resultOk (result), "the live restart succeeds");
+    processor.processBlock (buffer, midi);
+    check (processor.getResonanceStatus (MetalEQAudioProcessor::ResonanceScanTarget::surgical)
+               == MetalEQAudioProcessor::AnalyzerStatus::capturing,
+           "the restarted live scan reports capturing");
+    check (processor.getResonanceProgress (MetalEQAudioProcessor::ResonanceScanTarget::surgical) > 0.0f,
+           "the restarted live scan reports new progress");
+
+    check (callNative (bridge, "cancelResonanceScan", makeArgs (false), result),
+           "the restarted live scan can be stopped");
+    processor.processBlock (buffer, midi);
+    processor.releaseResources();
+}
+
+//==============================================================================
+static void testAnalyzerModelIntegration (MetalEQAudioProcessor& processor)
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int blockSize = 512;
+    processor.prepareToPlay (sampleRate, blockSize);
+
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    for (int channel = 0; channel < buffer.getNumChannels(); ++channel)
+    {
+        for (int sample = 0; sample < blockSize; ++sample)
+        {
+            const double t = static_cast<double> (sample) / sampleRate;
+            double value = 0.0;
+            for (const auto freq : { 90.0, 175.0, 350.0, 700.0, 1400.0, 2800.0, 5600.0, 9500.0 })
+                value += 0.012 * std::sin (2.0 * metaleq::kPi * freq * t);
+            buffer.setSample (channel, sample, static_cast<float> (value));
+        }
+    }
+    juce::MidiBuffer midi;
+
+    processor.startAnalyzerCapture (0);
+
+    for (int block = 0; block < 900; ++block)
+    {
+        processor.processBlock (buffer, midi);
+        const auto status = processor.getAnalyzerStatus();
+        if (status == MetalEQAudioProcessor::AnalyzerStatus::ready
+            || status == MetalEQAudioProcessor::AnalyzerStatus::failed)
+            break;
+    }
+
+    for (int attempt = 0; attempt < 200; ++attempt)
+    {
+        const auto status = processor.getAnalyzerStatus();
+        if (status == MetalEQAudioProcessor::AnalyzerStatus::ready
+            || status == MetalEQAudioProcessor::AnalyzerStatus::failed)
+            break;
+        std::this_thread::sleep_for (std::chrono::milliseconds (10));
+    }
+
+    check (processor.getAnalyzerStatus() == MetalEQAudioProcessor::AnalyzerStatus::ready,
+           "a synthetic capture produces a ready analyzer report");
+    check (processor.getAnalyzerResultTarget() == 0,
+           "the report records the target it was computed for");
+
+    MetalEQAudioProcessor::AnalyzerReport first;
+    check (processor.getAnalyzerReport (first), "the analyzer report is available");
+    check (first.valid && first.inputConfidence > 0.0f,
+           "the report carries a measured input profile");
+
+    double maxGain = 0.0;
+    for (const auto gain : first.gains)
+    {
+        maxGain = std::max (maxGain, std::abs (static_cast<double> (gain)));
+        check (std::isfinite (gain) && std::abs (gain) <= 6.0f,
+               "the integrated suggestion stays inside the safety cap");
+    }
+    check (maxGain <= 6.0, "the integrated analyzer respects the global gain cap");
+    check (! first.alreadyClose || maxGain < 0.25,
+           "an already-close report is flagged rather than over-corrected");
+
+    const auto revisionBefore = processor.getAnalyzerRevision();
+    processor.setAnalyzerTarget (5); // ...And Justice for All
+    check (processor.getAnalyzerTargetIndex() == 5,
+           "the target switch updates the selected destination");
+    check (processor.getAnalyzerResultTarget() == 5,
+           "the recommendation is recalculated for the new destination");
+    check (processor.getAnalyzerRevision() > revisionBefore,
+           "the target switch publishes a new analyzer revision");
+
+    MetalEQAudioProcessor::AnalyzerReport second;
+    check (processor.getAnalyzerReport (second), "the recalculated report is available");
+    check (second.target != first.target,
+           "the target model changed with the destination");
+
+    processor.applyAnalyzerSuggestion (1.0f);
+    checkNear (readPlain (processor, "band1Gain"), second.gains[0], 0.05,
+               "Apply correction writes the first band gain");
+    checkNear (readPlain (processor, "band2Gain"), second.gains[1], 0.05,
+               "Apply correction writes the second band gain");
+    checkNear (static_cast<double> (readPlain (processor, "band1Freq")), 120.0, 0.01,
+               "Apply correction uses the analyzer's 120 Hz band");
+
+    processor.releaseResources();
+}
+
+//==============================================================================
 int main()
 {
     {
@@ -444,7 +680,7 @@ int main()
 
     {
         MetalEQAudioProcessor processor;
-        testSetParameterLpSideEffect (processor);
+        testSetParameterLpSlopeSyncsEnable (processor);
     }
 
     {
@@ -464,7 +700,17 @@ int main()
 
     {
         MetalEQAudioProcessor processor;
-        testSnapshotV5 (processor);
+        testSnapshotV7 (processor);
+    }
+
+    {
+        MetalEQAudioProcessor processor;
+        testResonanceRestartDuringLiveCapture (processor);
+    }
+
+    {
+        MetalEQAudioProcessor processor;
+        testAnalyzerModelIntegration (processor);
     }
 
     if (failures == 0)

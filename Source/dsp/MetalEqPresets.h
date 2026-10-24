@@ -50,22 +50,6 @@ struct PresetDefinition
     MacroSettings  macros {};
 };
 
-/** Analyzer comparison targets, exposed to the UI by label and identified by
-    stable preset id so table reordering can never change their meaning.
-*/
-struct AnalyzerTarget
-{
-    const char* presetId = "";
-    const char* label    = "";
-};
-
-inline constexpr std::array<AnalyzerTarget, 4> analyzerTargets {{
-    { "metalcore-2000s-tight-rhythm", "2000s Metalcore: Tight Rhythm" },
-    { "thrash-technical-clarity",     "Thrash: Technical Clarity" },
-    { "thrash-classic-midrange-punch", "Classic Thrash: Midrange Punch" },
-    { "utility-postamp-mix-cleanup",  "Post-Amp: Mix Cleanup" }
-}};
-
 int getNumPresets() noexcept;
 const PresetDefinition& getPreset (int index) noexcept;
 
@@ -74,9 +58,6 @@ int findPresetById (const char* id) noexcept;
 
 /** Factory index (0-based) for a display name, case-insensitive, or -1. */
 int findPresetByName (const char* name) noexcept;
-
-int getNumAnalyzerTargets() noexcept;
-const AnalyzerTarget& getAnalyzerTarget (int index) noexcept;
 
 const char* placementToString (Placement p) noexcept;
 

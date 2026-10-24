@@ -387,14 +387,6 @@ int findPresetByName (const char* name) noexcept
     return -1;
 }
 
-int getNumAnalyzerTargets() noexcept { return static_cast<int> (analyzerTargets.size()); }
-
-const AnalyzerTarget& getAnalyzerTarget (int index) noexcept
-{
-    return analyzerTargets[static_cast<size_t> (
-        clampValue (index, 0, getNumAnalyzerTargets() - 1))];
-}
-
 const char* placementToString (Placement p) noexcept
 {
     switch (p)

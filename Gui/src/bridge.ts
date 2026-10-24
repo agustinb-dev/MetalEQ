@@ -153,6 +153,10 @@ export class JuceBridge implements MetalEqBridge {
     return this.call<OpResult>('swapAbSlots', []);
   }
 
+  setAnalyzerTarget(index: number): Promise<OpResult> {
+    return this.call<OpResult>('setAnalyzerTarget', [index]);
+  }
+
   startAnalyzerCapture(profile: number): Promise<OpResult> {
     return this.call<OpResult>('startAnalyzerCapture', [profile]);
   }
@@ -169,12 +173,12 @@ export class JuceBridge implements MetalEqBridge {
     return this.call<SuggestionCurveResult>('getSuggestionCurve', [amount]);
   }
 
-  startResonanceScan(): Promise<OpResult> {
-    return this.call<OpResult>('startResonanceScan', []);
+  startResonanceScan(dynamic: boolean): Promise<OpResult> {
+    return this.call<OpResult>('startResonanceScan', [dynamic]);
   }
 
-  cancelResonanceScan(): Promise<OpResult> {
-    return this.call<OpResult>('cancelResonanceScan', []);
+  cancelResonanceScan(dynamic: boolean): Promise<OpResult> {
+    return this.call<OpResult>('cancelResonanceScan', [dynamic]);
   }
 
   applyResonanceSelection(indices: number[]): Promise<OpResult> {
@@ -195,5 +199,9 @@ export class JuceBridge implements MetalEqBridge {
 
   setEditorExpanded(expanded: boolean): Promise<OpResult> {
     return this.call<OpResult>('setEditorExpanded', [expanded]);
+  }
+
+  openExternalUrl(url: string): Promise<OpResult> {
+    return this.call<OpResult>('openExternalUrl', [url]);
   }
 }

@@ -1,0 +1,82 @@
+{
+  "bands": [
+    {
+      "centreHz": 90.0,
+      "label": "90",
+      "maxRelDb": 28.36,
+      "meanRelDb": 7.88,
+      "medianRelDb": 1.81,
+      "minRelDb": -13.6
+    },
+    {
+      "centreHz": 175.0,
+      "label": "175",
+      "maxRelDb": 35.38,
+      "meanRelDb": 11.45,
+      "medianRelDb": 4.3,
+      "minRelDb": -10.08
+    },
+    {
+      "centreHz": 350.0,
+      "label": "350",
+      "maxRelDb": 16.92,
+      "meanRelDb": 4.9,
+      "medianRelDb": 3.89,
+      "minRelDb": -6.82
+    },
+    {
+      "centreHz": 700.0,
+      "label": "700",
+      "maxRelDb": 5.48,
+      "meanRelDb": 2.38,
+      "medianRelDb": 2.1,
+      "minRelDb": -4.99
+    },
+    {
+      "centreHz": 1400.0,
+      "label": "1.4k",
+      "maxRelDb": 1.91,
+      "meanRelDb": -0.97,
+      "medianRelDb": -1.0,
+      "minRelDb": -6.44
+    },
+    {
+      "centreHz": 2800.0,
+      "label": "2.8k",
+      "maxRelDb": 2.07,
+      "meanRelDb": -2.54,
+      "medianRelDb": -2.25,
+      "minRelDb": -8.52
+    },
+    {
+      "centreHz": 5600.0,
+      "label": "5.6k",
+      "maxRelDb": -2.41,
+      "meanRelDb": -12.57,
+      "medianRelDb": -12.38,
+      "minRelDb": -20.35
+    },
+    {
+      "centreHz": 9500.0,
+      "label": "9.5k",
+      "maxRelDb": -4.49,
+      "meanRelDb": -35.9,
+      "medianRelDb": -36.85,
+      "minRelDb": -45.07
+    }
+  ],
+  "durationSeconds": 231.04,
+  "family": "richardson-metalcore",
+  "framesSkipped": 0,
+  "framesUsed": 209,
+  "hfFloorRelDb": -42.03,
+  "id": "aild-the-darkest-nights",
+  "path": "Docs/GuitarOnlyStems/As I Lay Dying/The Darkest Nights (Low Quality)/As I Lay Dying - The Darkest Nights [Isolated Guitars Track].mp3",
+  "quality": "low-indep",
+  "referenceDb": 26.52,
+  "rmsDb": -14.66,
+  "sampleRate": 48000,
+  "sub60RelDb": -12.24,
+  "tiltDbPerOct": -2.998,
+  "valid": true
+}

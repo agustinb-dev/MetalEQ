@@ -41,3 +41,6 @@ Gui/dist/
 Thumbs.db
 .vscode/
 .idea/
+
+# Source audio for offline calibration (large, not distributed)
+Docs/GuitarOnlyStems/

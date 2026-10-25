@@ -1,0 +1,28 @@
+{
+  "description": "Synthetic deterministic buffer; see syncSyntheticSignal in the profiler and Tests/MetalEqToneTargetTests.cpp.",
+  "expectedMeanRelDb": [
+    -59.87,
+    -50.8,
+    -52.41,
+    -58.86,
+    -40.2,
+    -49.07,
+    -55.28,
+    -26.61
+  ],
+  "fftSize": 8192,
+  "hop": 4096,
+  "labels": [
+    "90",
+    "175",
+    "350",
+    "700",
+    "1.4k",
+    "2.8k",
+    "5.6k",
+    "9.5k"
+  ],
+  "sampleRate": 48000.0,
+  "seconds": 8.0,
+  "toleranceDb": 0.25
+}

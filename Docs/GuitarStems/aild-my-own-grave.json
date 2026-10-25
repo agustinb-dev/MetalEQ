@@ -1,0 +1,82 @@
+{
+  "bands": [
+    {
+      "centreHz": 90.0,
+      "label": "90",
+      "maxRelDb": 20.21,
+      "meanRelDb": 8.99,
+      "medianRelDb": 7.12,
+      "minRelDb": -46.98
+    },
+    {
+      "centreHz": 175.0,
+      "label": "175",
+      "maxRelDb": 27.11,
+      "meanRelDb": 12.75,
+      "medianRelDb": 9.93,
+      "minRelDb": -33.19
+    },
+    {
+      "centreHz": 350.0,
+      "label": "350",
+      "maxRelDb": 28.6,
+      "meanRelDb": 4.96,
+      "medianRelDb": 3.84,
+      "minRelDb": -14.61
+    },
+    {
+      "centreHz": 700.0,
+      "label": "700",
+      "maxRelDb": 6.75,
+      "meanRelDb": 1.32,
+      "medianRelDb": 1.46,
+      "minRelDb": -8.45
+    },
+    {
+      "centreHz": 1400.0,
+      "label": "1.4k",
+      "maxRelDb": 3.33,
+      "meanRelDb": -0.8,
+      "medianRelDb": -1.42,
+      "minRelDb": -49.78
+    },
+    {
+      "centreHz": 2800.0,
+      "label": "2.8k",
+      "maxRelDb": 1.41,
+      "meanRelDb": -4.11,
+      "medianRelDb": -3.25,
+      "minRelDb": -95.47
+    },
+    {
+      "centreHz": 5600.0,
+      "label": "5.6k",
+      "maxRelDb": -2.98,
+      "meanRelDb": -10.82,
+      "medianRelDb": -10.12,
+      "minRelDb": -101.91
+    },
+    {
+      "centreHz": 9500.0,
+      "label": "9.5k",
+      "maxRelDb": -25.28,
+      "meanRelDb": -39.98,
+      "medianRelDb": -40.65,
+      "minRelDb": -106.91
+    }
+  ],
+  "durationSeconds": 250.08,
+  "family": "richardson-metalcore",
+  "framesSkipped": 2,
+  "framesUsed": 205,
+  "hfFloorRelDb": -46.95,
+  "id": "aild-my-own-grave",
+  "path": "Docs/GuitarOnlyStems/As I Lay Dying/My Own Grave (low quality)/As I Lay Dying - My Own Grave (Guitars Only).mp3",
+  "quality": "low-indep",
+  "referenceDb": 22.47,
+  "rmsDb": -17.96,
+  "sampleRate": 44100,
+  "sub60RelDb": -11.97,
+  "tiltDbPerOct": -3.554,
+  "valid": true
+}

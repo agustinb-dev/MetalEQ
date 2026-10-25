@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
 #include <set>
@@ -27,6 +28,7 @@
 
 #include "../Source/dsp/MetalEqParams.h"
 #include "../Source/dsp/MetalEqToneTargets.h"
+#include "../Tools/SpectrumProfiler/fixtures/synthetic_expected.h"
 
 namespace
 {
@@ -478,6 +480,52 @@ void testTargetDistinctness()
     check (shapes.size() == 16, "all sixteen target shapes are distinct");
 }
 
+/** Cross-language fixture: the offline SpectrumProfiler and the native
+    analyser must agree on the same deterministic buffer. The signal is
+    defined identically in Tools/SpectrumProfiler/profile_stems.py
+    (synthetic_signal) and generated here with the same operations.
+*/
+void testAnalyzerProfilerEquivalence()
+{
+    using namespace metaleq::tone;
+    namespace fixture = metaleq::test::fixture;
+
+    const int numSamples = static_cast<int> (fixture::kSampleRate * fixture::kSeconds);
+    std::vector<float> samples (static_cast<size_t> (numSamples));
+
+    constexpr double twoPi = 6.283185307179586476925286766559;
+    for (int i = 0; i < numSamples; ++i)
+    {
+        const double t = static_cast<double> (i) / fixture::kSampleRate;
+        const auto noise = ((1103515245u * static_cast<std::uint32_t> (i) + 12345u) >> 16) & 0x7fffu;
+        const double value = 0.25 * std::sin (twoPi * 1000.0 * t)
+                           + 0.10 * std::sin (twoPi * 250.0 * t)
+                           + 0.06 * std::sin (twoPi * 4000.0 * t)
+                           + 0.02 * std::sin (twoPi * 9500.0 * t)
+                           + 0.01 * (static_cast<double> (noise) / 32768.0 - 1.0);
+        samples[static_cast<size_t> (i)] = static_cast<float> (value);
+    }
+
+    const auto profile = analyseInput (samples.data(), numSamples, fixture::kSampleRate);
+    check (profile.valid, "profiler fixture: analysis is valid");
+    check (profile.frames == 92, "profiler fixture: expected 92 non-silent frames");
+    check (fixture::kExpectedMeanRelDb.size() == static_cast<size_t> (kNumFeatures),
+           "profiler fixture: expected values match the current feature count");
+    check (fixture::kLabels.size() == static_cast<size_t> (kNumFeatures),
+           "profiler fixture: labels match the current feature count");
+
+    for (int i = 0; i < kNumFeatures; ++i)
+    {
+        check (std::string (fixture::kLabels[static_cast<size_t> (i)])
+                   == kFeatures[static_cast<size_t> (i)].shortLabel,
+               "profiler fixture: band order matches kFeatures");
+        checkNear (profile.relativeDb[static_cast<size_t> (i)],
+                   fixture::kExpectedMeanRelDb[static_cast<size_t> (i)],
+                   fixture::kToleranceDb,
+                   "profiler and native analyser agree on every feature band");
+    }
+}
+
 void testEvidenceTraceability()
 {
     using namespace metaleq::tone;
@@ -530,6 +578,7 @@ int main()
     testInputAdaptation();
     testTargetDistinctness();
     testEvidenceTraceability();
+    testAnalyzerProfilerEquivalence();
 
     if (failures != 0)
     {

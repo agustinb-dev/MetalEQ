@@ -1,0 +1,82 @@
+{
+  "bands": [
+    {
+      "centreHz": 90.0,
+      "label": "90",
+      "maxRelDb": 26.88,
+      "meanRelDb": 10.97,
+      "medianRelDb": 9.06,
+      "minRelDb": -17.13
+    },
+    {
+      "centreHz": 175.0,
+      "label": "175",
+      "maxRelDb": 20.65,
+      "meanRelDb": 8.16,
+      "medianRelDb": 7.08,
+      "minRelDb": -18.27
+    },
+    {
+      "centreHz": 350.0,
+      "label": "350",
+      "maxRelDb": 24.44,
+      "meanRelDb": 3.52,
+      "medianRelDb": -0.49,
+      "minRelDb": -30.31
+    },
+    {
+      "centreHz": 700.0,
+      "label": "700",
+      "maxRelDb": 6.57,
+      "meanRelDb": 4.16,
+      "medianRelDb": 3.29,
+      "minRelDb": -6.63
+    },
+    {
+      "centreHz": 1400.0,
+      "label": "1.4k",
+      "maxRelDb": 2.92,
+      "meanRelDb": -2.48,
+      "medianRelDb": -2.03,
+      "minRelDb": -13.76
+    },
+    {
+      "centreHz": 2800.0,
+      "label": "2.8k",
+      "maxRelDb": 11.53,
+      "meanRelDb": 1.77,
+      "medianRelDb": 2.34,
+      "minRelDb": -9.14
+    },
+    {
+      "centreHz": 5600.0,
+      "label": "5.6k",
+      "maxRelDb": -1.73,
+      "meanRelDb": -14.58,
+      "medianRelDb": -14.47,
+      "minRelDb": -23.16
+    },
+    {
+      "centreHz": 9500.0,
+      "label": "9.5k",
+      "maxRelDb": -1.72,
+      "meanRelDb": -36.63,
+      "medianRelDb": -35.89,
+      "minRelDb": -47.95
+    }
+  ],
+  "durationSeconds": 307.06,
+  "family": "classic-thrash",
+  "framesSkipped": 0,
+  "framesUsed": 207,
+  "hfFloorRelDb": -47.5,
+  "id": "megadeth-the-conjuring",
+  "path": "Docs/GuitarOnlyStems/Megadeth/The Conjuring/Megadeth - The Conjuring (Guitar Track).mp3",
+  "quality": "unknown",
+  "referenceDb": 25.04,
+  "rmsDb": -15.32,
+  "sampleRate": 44100,
+  "sub60RelDb": -14.73,
+  "tiltDbPerOct": -2.988,
+  "valid": true
+}

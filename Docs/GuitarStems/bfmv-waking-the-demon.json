@@ -1,0 +1,82 @@
+{
+  "bands": [
+    {
+      "centreHz": 90.0,
+      "label": "90",
+      "maxRelDb": 15.74,
+      "meanRelDb": -0.09,
+      "medianRelDb": -4.41,
+      "minRelDb": -52.58
+    },
+    {
+      "centreHz": 175.0,
+      "label": "175",
+      "maxRelDb": 18.89,
+      "meanRelDb": 2.61,
+      "medianRelDb": -2.57,
+      "minRelDb": -41.01
+    },
+    {
+      "centreHz": 350.0,
+      "label": "350",
+      "maxRelDb": 13.22,
+      "meanRelDb": 2.49,
+      "medianRelDb": 1.69,
+      "minRelDb": -38.03
+    },
+    {
+      "centreHz": 700.0,
+      "label": "700",
+      "maxRelDb": 6.63,
+      "meanRelDb": 3.02,
+      "medianRelDb": 3.16,
+      "minRelDb": -34.14
+    },
+    {
+      "centreHz": 1400.0,
+      "label": "1.4k",
+      "maxRelDb": 3.74,
+      "meanRelDb": -1.98,
+      "medianRelDb": -2.51,
+      "minRelDb": -26.34
+    },
+    {
+      "centreHz": 2800.0,
+      "label": "2.8k",
+      "maxRelDb": 2.18,
+      "meanRelDb": -2.14,
+      "medianRelDb": -3.17,
+      "minRelDb": -15.5
+    },
+    {
+      "centreHz": 5600.0,
+      "label": "5.6k",
+      "maxRelDb": -3.44,
+      "meanRelDb": -7.07,
+      "medianRelDb": -6.76,
+      "minRelDb": -15.12
+    },
+    {
+      "centreHz": 9500.0,
+      "label": "9.5k",
+      "maxRelDb": -20.21,
+      "meanRelDb": -43.75,
+      "medianRelDb": -49.42,
+      "minRelDb": -101.91
+    }
+  ],
+  "durationSeconds": 257.32,
+  "family": "richardson-metalcore",
+  "framesSkipped": 14,
+  "framesUsed": 199,
+  "hfFloorRelDb": -53.26,
+  "id": "bfmv-waking-the-demon",
+  "path": "Docs/GuitarOnlyStems/Waking The Demon/Waking The Demon (GUITAR MASTER TRACK).mp3",
+  "quality": "clean",
+  "referenceDb": 23.93,
+  "rmsDb": -18.16,
+  "sampleRate": 44100,
+  "sub60RelDb": -18.07,
+  "tiltDbPerOct": -1.177,
+  "valid": true
+}

@@ -1,0 +1,680 @@
+{
+  "analyzer": {
+    "features": [
+      {
+        "centreHz": 90.0,
+        "highHz": 115.0,
+        "label": "90",
+        "lowHz": 70.0
+      },
+      {
+        "centreHz": 175.0,
+        "highHz": 220.0,
+        "label": "175",
+        "lowHz": 140.0
+      },
+      {
+        "centreHz": 350.0,
+        "highHz": 440.0,
+        "label": "350",
+        "lowHz": 280.0
+      },
+      {
+        "centreHz": 700.0,
+        "highHz": 880.0,
+        "label": "700",
+        "lowHz": 560.0
+      },
+      {
+        "centreHz": 1400.0,
+        "highHz": 1760.0,
+        "label": "1.4k",
+        "lowHz": 1120.0
+      },
+      {
+        "centreHz": 2800.0,
+        "highHz": 3520.0,
+        "label": "2.8k",
+        "lowHz": 2240.0
+      },
+      {
+        "centreHz": 5600.0,
+        "highHz": 7040.0,
+        "label": "5.6k",
+        "lowHz": 4480.0
+      },
+      {
+        "centreHz": 9500.0,
+        "highHz": 12000.0,
+        "label": "9.5k",
+        "lowHz": 7600.0
+      }
+    ],
+    "fftSize": 8192,
+    "frameLimit": 200,
+    "hop": 4096,
+    "referenceHz": [
+      500.0,
+      2000.0
+    ],
+    "silenceMeanSquare": 1e-08,
+    "window": "hann"
+  },
+  "families": {
+    "classic-thrash": {
+      "bands": [
+        {
+          "centreHz": 90.0,
+          "label": "90",
+          "medianRelDb": 11.24,
+          "spreadDb": 6.02
+        },
+        {
+          "centreHz": 175.0,
+          "label": "175",
+          "medianRelDb": 10.3,
+          "spreadDb": 11.74
+        },
+        {
+          "centreHz": 350.0,
+          "label": "350",
+          "medianRelDb": 9.08,
+          "spreadDb": 10.62
+        },
+        {
+          "centreHz": 700.0,
+          "label": "700",
+          "medianRelDb": 0.67,
+          "spreadDb": 2.91
+        },
+        {
+          "centreHz": 1400.0,
+          "label": "1.4k",
+          "medianRelDb": -1.15,
+          "spreadDb": 2.08
+        },
+        {
+          "centreHz": 2800.0,
+          "label": "2.8k",
+          "medianRelDb": 4.15,
+          "spreadDb": 3.26
+        },
+        {
+          "centreHz": 5600.0,
+          "label": "5.6k",
+          "medianRelDb": -12.42,
+          "spreadDb": 9.0
+        },
+        {
+          "centreHz": 9500.0,
+          "label": "9.5k",
+          "medianRelDb": -35.89,
+          "spreadDb": 5.83
+        }
+      ],
+      "members": [
+        "megadeth-the-conjuring",
+        "metallica-master-of-puppets",
+        "metallica-for-whom-the-bell-tolls"
+      ],
+      "title": "Classic Thrash \u2014 '84-'86 Era"
+    },
+    "richardson-metalcore": {
+      "bands": [
+        {
+          "centreHz": 90.0,
+          "label": "90",
+          "medianRelDb": -4.41,
+          "note": "low anchor: bfmv-waking-the-demon",
+          "spreadDb": 0.0
+        },
+        {
+          "centreHz": 175.0,
+          "label": "175",
+          "medianRelDb": -2.57,
+          "note": "low anchor: bfmv-waking-the-demon",
+          "spreadDb": 0.0
+        },
+        {
+          "centreHz": 350.0,
+          "label": "350",
+          "medianRelDb": 1.69,
+          "note": "low anchor: bfmv-waking-the-demon",
+          "spreadDb": 0.0
+        },
+        {
+          "centreHz": 700.0,
+          "label": "700",
+          "medianRelDb": 2.1,
+          "spreadDb": 1.7
+        },
+        {
+          "centreHz": 1400.0,
+          "label": "1.4k",
+          "medianRelDb": -1.42,
+          "spreadDb": 1.51
+        },
+        {
+          "centreHz": 2800.0,
+          "label": "2.8k",
+          "medianRelDb": -3.17,
+          "spreadDb": 1.0
+        },
+        {
+          "centreHz": 5600.0,
+          "label": "5.6k",
+          "medianRelDb": -10.12,
+          "spreadDb": 5.62
+        },
+        {
+          "centreHz": 9500.0,
+          "label": "9.5k",
+          "medianRelDb": -40.65,
+          "spreadDb": 12.57
+        }
+      ],
+      "members": [
+        "bfmv-waking-the-demon",
+        "aild-my-own-grave",
+        "aild-the-darkest-nights"
+      ],
+      "title": "Richardson-Era Metalcore"
+    }
+  },
+  "schema": 1,
+  "stems": [
+    {
+      "bands": [
+        {
+          "centreHz": 90.0,
+          "label": "90",
+          "maxRelDb": 15.74,
+          "meanRelDb": -0.09,
+          "medianRelDb": -4.41,
+          "minRelDb": -52.58
+        },
+        {
+          "centreHz": 175.0,
+          "label": "175",
+          "maxRelDb": 18.89,
+          "meanRelDb": 2.61,
+          "medianRelDb": -2.57,
+          "minRelDb": -41.01
+        },
+        {
+          "centreHz": 350.0,
+          "label": "350",
+          "maxRelDb": 13.22,
+          "meanRelDb": 2.49,
+          "medianRelDb": 1.69,
+          "minRelDb": -38.03
+        },
+        {
+          "centreHz": 700.0,
+          "label": "700",
+          "maxRelDb": 6.63,
+          "meanRelDb": 3.02,
+          "medianRelDb": 3.16,
+          "minRelDb": -34.14
+        },
+        {
+          "centreHz": 1400.0,
+          "label": "1.4k",
+          "maxRelDb": 3.74,
+          "meanRelDb": -1.98,
+          "medianRelDb": -2.51,
+          "minRelDb": -26.34
+        },
+        {
+          "centreHz": 2800.0,
+          "label": "2.8k",
+          "maxRelDb": 2.18,
+          "meanRelDb": -2.14,
+          "medianRelDb": -3.17,
+          "minRelDb": -15.5
+        },
+        {
+          "centreHz": 5600.0,
+          "label": "5.6k",
+          "maxRelDb": -3.44,
+          "meanRelDb": -7.07,
+          "medianRelDb": -6.76,
+          "minRelDb": -15.12
+        },
+        {
+          "centreHz": 9500.0,
+          "label": "9.5k",
+          "maxRelDb": -20.21,
+          "meanRelDb": -43.75,
+          "medianRelDb": -49.42,
+          "minRelDb": -101.91
+        }
+      ],
+      "durationSeconds": 257.32,
+      "family": "richardson-metalcore",
+      "framesSkipped": 14,
+      "framesUsed": 199,
+      "hfFloorRelDb": -53.26,
+      "id": "bfmv-waking-the-demon",
+      "path": "Docs/GuitarOnlyStems/Waking The Demon/Waking The Demon (GUITAR MASTER TRACK).mp3",
+      "quality": "clean",
+      "referenceDb": 23.93,
+      "rmsDb": -18.16,
+      "sampleRate": 44100,
+      "sub60RelDb": -18.07,
+      "tiltDbPerOct": -1.177,
+      "valid": true
+    },
+    {
+      "bands": [
+        {
+          "centreHz": 90.0,
+          "label": "90",
+          "maxRelDb": 20.21,
+          "meanRelDb": 8.99,
+          "medianRelDb": 7.12,
+          "minRelDb": -46.98
+        },
+        {
+          "centreHz": 175.0,
+          "label": "175",
+          "maxRelDb": 27.11,
+          "meanRelDb": 12.75,
+          "medianRelDb": 9.93,
+          "minRelDb": -33.19
+        },
+        {
+          "centreHz": 350.0,
+          "label": "350",
+          "maxRelDb": 28.6,
+          "meanRelDb": 4.96,
+          "medianRelDb": 3.84,
+          "minRelDb": -14.61
+        },
+        {
+          "centreHz": 700.0,
+          "label": "700",
+          "maxRelDb": 6.75,
+          "meanRelDb": 1.32,
+          "medianRelDb": 1.46,
+          "minRelDb": -8.45
+        },
+        {
+          "centreHz": 1400.0,
+          "label": "1.4k",
+          "maxRelDb": 3.33,
+          "meanRelDb": -0.8,
+          "medianRelDb": -1.42,
+          "minRelDb": -49.78
+        },
+        {
+          "centreHz": 2800.0,
+          "label": "2.8k",
+          "maxRelDb": 1.41,
+          "meanRelDb": -4.11,
+          "medianRelDb": -3.25,
+          "minRelDb": -95.47
+        },
+        {
+          "centreHz": 5600.0,
+          "label": "5.6k",
+          "maxRelDb": -2.98,
+          "meanRelDb": -10.82,
+          "medianRelDb": -10.12,
+          "minRelDb": -101.91
+        },
+        {
+          "centreHz": 9500.0,
+          "label": "9.5k",
+          "maxRelDb": -25.28,
+          "meanRelDb": -39.98,
+          "medianRelDb": -40.65,
+          "minRelDb": -106.91
+        }
+      ],
+      "durationSeconds": 250.08,
+      "family": "richardson-metalcore",
+      "framesSkipped": 2,
+      "framesUsed": 205,
+      "hfFloorRelDb": -46.95,
+      "id": "aild-my-own-grave",
+      "path": "Docs/GuitarOnlyStems/As I Lay Dying/My Own Grave (low quality)/As I Lay Dying - My Own Grave (Guitars Only).mp3",
+      "quality": "low-indep",
+      "referenceDb": 22.47,
+      "rmsDb": -17.96,
+      "sampleRate": 44100,
+      "sub60RelDb": -11.97,
+      "tiltDbPerOct": -3.554,
+      "valid": true
+    },
+    {
+      "bands": [
+        {
+          "centreHz": 90.0,
+          "label": "90",
+          "maxRelDb": 28.36,
+          "meanRelDb": 7.88,
+          "medianRelDb": 1.81,
+          "minRelDb": -13.6
+        },
+        {
+          "centreHz": 175.0,
+          "label": "175",
+          "maxRelDb": 35.38,
+          "meanRelDb": 11.45,
+          "medianRelDb": 4.3,
+          "minRelDb": -10.08
+        },
+        {
+          "centreHz": 350.0,
+          "label": "350",
+          "maxRelDb": 16.92,
+          "meanRelDb": 4.9,
+          "medianRelDb": 3.89,
+          "minRelDb": -6.82
+        },
+        {
+          "centreHz": 700.0,
+          "label": "700",
+          "maxRelDb": 5.48,
+          "meanRelDb": 2.38,
+          "medianRelDb": 2.1,
+          "minRelDb": -4.99
+        },
+        {
+          "centreHz": 1400.0,
+          "label": "1.4k",
+          "maxRelDb": 1.91,
+          "meanRelDb": -0.97,
+          "medianRelDb": -1.0,
+          "minRelDb": -6.44
+        },
+        {
+          "centreHz": 2800.0,
+          "label": "2.8k",
+          "maxRelDb": 2.07,
+          "meanRelDb": -2.54,
+          "medianRelDb": -2.25,
+          "minRelDb": -8.52
+        },
+        {
+          "centreHz": 5600.0,
+          "label": "5.6k",
+          "maxRelDb": -2.41,
+          "meanRelDb": -12.57,
+          "medianRelDb": -12.38,
+          "minRelDb": -20.35
+        },
+        {
+          "centreHz": 9500.0,
+          "label": "9.5k",
+          "maxRelDb": -4.49,
+          "meanRelDb": -35.9,
+          "medianRelDb": -36.85,
+          "minRelDb": -45.07
+        }
+      ],
+      "durationSeconds": 231.04,
+      "family": "richardson-metalcore",
+      "framesSkipped": 0,
+      "framesUsed": 209,
+      "hfFloorRelDb": -42.03,
+      "id": "aild-the-darkest-nights",
+      "path": "Docs/GuitarOnlyStems/As I Lay Dying/The Darkest Nights (Low Quality)/As I Lay Dying - The Darkest Nights [Isolated Guitars Track].mp3",
+      "quality": "low-indep",
+      "referenceDb": 26.52,
+      "rmsDb": -14.66,
+      "sampleRate": 48000,
+      "sub60RelDb": -12.24,
+      "tiltDbPerOct": -2.998,
+      "valid": true
+    },
+    {
+      "bands": [
+        {
+          "centreHz": 90.0,
+          "label": "90",
+          "maxRelDb": 26.88,
+          "meanRelDb": 10.97,
+          "medianRelDb": 9.06,
+          "minRelDb": -17.13
+        },
+        {
+          "centreHz": 175.0,
+          "label": "175",
+          "maxRelDb": 20.65,
+          "meanRelDb": 8.16,
+          "medianRelDb": 7.08,
+          "minRelDb": -18.27
+        },
+        {
+          "centreHz": 350.0,
+          "label": "350",
+          "maxRelDb": 24.44,
+          "meanRelDb": 3.52,
+          "medianRelDb": -0.49,
+          "minRelDb": -30.31
+        },
+        {
+          "centreHz": 700.0,
+          "label": "700",
+          "maxRelDb": 6.57,
+          "meanRelDb": 4.16,
+          "medianRelDb": 3.29,
+          "minRelDb": -6.63
+        },
+        {
+          "centreHz": 1400.0,
+          "label": "1.4k",
+          "maxRelDb": 2.92,
+          "meanRelDb": -2.48,
+          "medianRelDb": -2.03,
+          "minRelDb": -13.76
+        },
+        {
+          "centreHz": 2800.0,
+          "label": "2.8k",
+          "maxRelDb": 11.53,
+          "meanRelDb": 1.77,
+          "medianRelDb": 2.34,
+          "minRelDb": -9.14
+        },
+        {
+          "centreHz": 5600.0,
+          "label": "5.6k",
+          "maxRelDb": -1.73,
+          "meanRelDb": -14.58,
+          "medianRelDb": -14.47,
+          "minRelDb": -23.16
+        },
+        {
+          "centreHz": 9500.0,
+          "label": "9.5k",
+          "maxRelDb": -1.72,
+          "meanRelDb": -36.63,
+          "medianRelDb": -35.89,
+          "minRelDb": -47.95
+        }
+      ],
+      "durationSeconds": 307.06,
+      "family": "classic-thrash",
+      "framesSkipped": 0,
+      "framesUsed": 207,
+      "hfFloorRelDb": -47.5,
+      "id": "megadeth-the-conjuring",
+      "path": "Docs/GuitarOnlyStems/Megadeth/The Conjuring/Megadeth - The Conjuring (Guitar Track).mp3",
+      "quality": "unknown",
+      "referenceDb": 25.04,
+      "rmsDb": -15.32,
+      "sampleRate": 44100,
+      "sub60RelDb": -14.73,
+      "tiltDbPerOct": -2.988,
+      "valid": true
+    },
+    {
+      "bands": [
+        {
+          "centreHz": 90.0,
+          "label": "90",
+          "maxRelDb": 33.31,
+          "meanRelDb": 15.04,
+          "medianRelDb": 15.08,
+          "minRelDb": -15.72
+        },
+        {
+          "centreHz": 175.0,
+          "label": "175",
+          "maxRelDb": 38.14,
+          "meanRelDb": 19.63,
+          "medianRelDb": 18.82,
+          "minRelDb": -0.42
+        },
+        {
+          "centreHz": 350.0,
+          "label": "350",
+          "maxRelDb": 19.66,
+          "meanRelDb": 8.23,
+          "medianRelDb": 9.08,
+          "minRelDb": -10.1
+        },
+        {
+          "centreHz": 700.0,
+          "label": "700",
+          "maxRelDb": 6.55,
+          "meanRelDb": 3.26,
+          "medianRelDb": 0.67,
+          "minRelDb": -9.78
+        },
+        {
+          "centreHz": 1400.0,
+          "label": "1.4k",
+          "maxRelDb": 2.46,
+          "meanRelDb": -1.36,
+          "medianRelDb": 0.05,
+          "minRelDb": -13.31
+        },
+        {
+          "centreHz": 2800.0,
+          "label": "2.8k",
+          "maxRelDb": 11.33,
+          "meanRelDb": 4.0,
+          "medianRelDb": 5.6,
+          "minRelDb": -9.72
+        },
+        {
+          "centreHz": 5600.0,
+          "label": "5.6k",
+          "maxRelDb": -0.93,
+          "meanRelDb": -7.48,
+          "medianRelDb": -5.47,
+          "minRelDb": -40.87
+        },
+        {
+          "centreHz": 9500.0,
+          "label": "9.5k",
+          "maxRelDb": 5.9,
+          "meanRelDb": -31.05,
+          "medianRelDb": -30.55,
+          "minRelDb": -55.45
+        }
+      ],
+      "durationSeconds": 513.49,
+      "family": "classic-thrash",
+      "framesSkipped": 3,
+      "framesUsed": 202,
+      "hfFloorRelDb": -47.51,
+      "id": "metallica-master-of-puppets",
+      "path": "Docs/GuitarOnlyStems/Metallica/Master Of Puppets/Metallica - Master Of Puppets (Guitars Only) [HD].mp3",
+      "quality": "unknown",
+      "referenceDb": 19.56,
+      "rmsDb": -15.81,
+      "sampleRate": 44100,
+      "sub60RelDb": -10.95,
+      "tiltDbPerOct": -3.786,
+      "valid": true
+    },
+    {
+      "bands": [
+        {
+          "centreHz": 90.0,
+          "label": "90",
+          "maxRelDb": 30.22,
+          "meanRelDb": 15.0,
+          "medianRelDb": 11.24,
+          "minRelDb": -6.97
+        },
+        {
+          "centreHz": 175.0,
+          "label": "175",
+          "maxRelDb": 29.04,
+          "meanRelDb": 12.67,
+          "medianRelDb": 10.3,
+          "minRelDb": -4.98
+        },
+        {
+          "centreHz": 350.0,
+          "label": "350",
+          "maxRelDb": 24.42,
+          "meanRelDb": 11.77,
+          "medianRelDb": 10.13,
+          "minRelDb": 0.22
+        },
+        {
+          "centreHz": 700.0,
+          "label": "700",
+          "maxRelDb": 4.53,
+          "meanRelDb": 0.72,
+          "medianRelDb": 0.38,
+          "minRelDb": -6.69
+        },
+        {
+          "centreHz": 1400.0,
+          "label": "1.4k",
+          "maxRelDb": 2.24,
+          "meanRelDb": -1.36,
+          "medianRelDb": -1.15,
+          "minRelDb": -5.91
+        },
+        {
+          "centreHz": 2800.0,
+          "label": "2.8k",
+          "maxRelDb": 10.42,
+          "meanRelDb": 4.36,
+          "medianRelDb": 4.15,
+          "minRelDb": -2.49
+        },
+        {
+          "centreHz": 5600.0,
+          "label": "5.6k",
+          "maxRelDb": -5.93,
+          "meanRelDb": -12.01,
+          "medianRelDb": -12.42,
+          "minRelDb": -22.19
+        },
+        {
+          "centreHz": 9500.0,
+          "label": "9.5k",
+          "maxRelDb": -27.26,
+          "meanRelDb": -35.52,
+          "medianRelDb": -36.38,
+          "minRelDb": -47.25
+        }
+      ],
+      "durationSeconds": 312.19,
+      "family": "classic-thrash",
+      "framesSkipped": 13,
+      "framesUsed": 197,
+      "hfFloorRelDb": -54.41,
+      "id": "metallica-for-whom-the-bell-tolls",
+      "path": "Docs/GuitarOnlyStems/Metallica/For Whom The Bell Tolls/For Whom the Bell Tolls (Guitar Track).mp3",
+      "quality": "unknown",
+      "referenceDb": 17.26,
+      "rmsDb": -19.98,
+      "sampleRate": 44100,
+      "sub60RelDb": -8.78,
+      "tiltDbPerOct": -3.802,
+      "valid": true
+    }
+  ],
+  "tool": "Tools/SpectrumProfiler/profile_stems.py"
+}

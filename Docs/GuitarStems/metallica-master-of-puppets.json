@@ -1,0 +1,82 @@
+{
+  "bands": [
+    {
+      "centreHz": 90.0,
+      "label": "90",
+      "maxRelDb": 33.31,
+      "meanRelDb": 15.04,
+      "medianRelDb": 15.08,
+      "minRelDb": -15.72
+    },
+    {
+      "centreHz": 175.0,
+      "label": "175",
+      "maxRelDb": 38.14,
+      "meanRelDb": 19.63,
+      "medianRelDb": 18.82,
+      "minRelDb": -0.42
+    },
+    {
+      "centreHz": 350.0,
+      "label": "350",
+      "maxRelDb": 19.66,
+      "meanRelDb": 8.23,
+      "medianRelDb": 9.08,
+      "minRelDb": -10.1
+    },
+    {
+      "centreHz": 700.0,
+      "label": "700",
+      "maxRelDb": 6.55,
+      "meanRelDb": 3.26,
+      "medianRelDb": 0.67,
+      "minRelDb": -9.78
+    },
+    {
+      "centreHz": 1400.0,
+      "label": "1.4k",
+      "maxRelDb": 2.46,
+      "meanRelDb": -1.36,
+      "medianRelDb": 0.05,
+      "minRelDb": -13.31
+    },
+    {
+      "centreHz": 2800.0,
+      "label": "2.8k",
+      "maxRelDb": 11.33,
+      "meanRelDb": 4.0,
+      "medianRelDb": 5.6,
+      "minRelDb": -9.72
+    },
+    {
+      "centreHz": 5600.0,
+      "label": "5.6k",
+      "maxRelDb": -0.93,
+      "meanRelDb": -7.48,
+      "medianRelDb": -5.47,
+      "minRelDb": -40.87
+    },
+    {
+      "centreHz": 9500.0,
+      "label": "9.5k",
+      "maxRelDb": 5.9,
+      "meanRelDb": -31.05,
+      "medianRelDb": -30.55,
+      "minRelDb": -55.45
+    }
+  ],
+  "durationSeconds": 513.49,
+  "family": "classic-thrash",
+  "framesSkipped": 3,
+  "framesUsed": 202,
+  "hfFloorRelDb": -47.51,
+  "id": "metallica-master-of-puppets",
+  "path": "Docs/GuitarOnlyStems/Metallica/Master Of Puppets/Metallica - Master Of Puppets (Guitars Only) [HD].mp3",
+  "quality": "unknown",
+  "referenceDb": 19.56,
+  "rmsDb": -15.81,
+  "sampleRate": 44100,
+  "sub60RelDb": -10.95,
+  "tiltDbPerOct": -3.786,
+  "valid": true
+}

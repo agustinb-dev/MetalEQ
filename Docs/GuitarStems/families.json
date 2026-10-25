@@ -1,0 +1,121 @@
+{
+  "classic-thrash": {
+    "bands": [
+      {
+        "centreHz": 90.0,
+        "label": "90",
+        "medianRelDb": 11.24,
+        "spreadDb": 6.02
+      },
+      {
+        "centreHz": 175.0,
+        "label": "175",
+        "medianRelDb": 10.3,
+        "spreadDb": 11.74
+      },
+      {
+        "centreHz": 350.0,
+        "label": "350",
+        "medianRelDb": 9.08,
+        "spreadDb": 10.62
+      },
+      {
+        "centreHz": 700.0,
+        "label": "700",
+        "medianRelDb": 0.67,
+        "spreadDb": 2.91
+      },
+      {
+        "centreHz": 1400.0,
+        "label": "1.4k",
+        "medianRelDb": -1.15,
+        "spreadDb": 2.08
+      },
+      {
+        "centreHz": 2800.0,
+        "label": "2.8k",
+        "medianRelDb": 4.15,
+        "spreadDb": 3.26
+      },
+      {
+        "centreHz": 5600.0,
+        "label": "5.6k",
+        "medianRelDb": -12.42,
+        "spreadDb": 9.0
+      },
+      {
+        "centreHz": 9500.0,
+        "label": "9.5k",
+        "medianRelDb": -35.89,
+        "spreadDb": 5.83
+      }
+    ],
+    "members": [
+      "megadeth-the-conjuring",
+      "metallica-master-of-puppets",
+      "metallica-for-whom-the-bell-tolls"
+    ],
+    "title": "Classic Thrash \u2014 '84-'86 Era"
+  },
+  "richardson-metalcore": {
+    "bands": [
+      {
+        "centreHz": 90.0,
+        "label": "90",
+        "medianRelDb": -4.41,
+        "note": "low anchor: bfmv-waking-the-demon",
+        "spreadDb": 0.0
+      },
+      {
+        "centreHz": 175.0,
+        "label": "175",
+        "medianRelDb": -2.57,
+        "note": "low anchor: bfmv-waking-the-demon",
+        "spreadDb": 0.0
+      },
+      {
+        "centreHz": 350.0,
+        "label": "350",
+        "medianRelDb": 1.69,
+        "note": "low anchor: bfmv-waking-the-demon",
+        "spreadDb": 0.0
+      },
+      {
+        "centreHz": 700.0,
+        "label": "700",
+        "medianRelDb": 2.1,
+        "spreadDb": 1.7
+      },
+      {
+        "centreHz": 1400.0,
+        "label": "1.4k",
+        "medianRelDb": -1.42,
+        "spreadDb": 1.51
+      },
+      {
+        "centreHz": 2800.0,
+        "label": "2.8k",
+        "medianRelDb": -3.17,
+        "spreadDb": 1.0
+      },
+      {
+        "centreHz": 5600.0,
+        "label": "5.6k",
+        "medianRelDb": -10.12,
+        "spreadDb": 5.62
+      },
+      {
+        "centreHz": 9500.0,
+        "label": "9.5k",
+        "medianRelDb": -40.65,
+        "spreadDb": 12.57
+      }
+    ],
+    "members": [
+      "bfmv-waking-the-demon",
+      "aild-my-own-grave",
+      "aild-the-darkest-nights"
+    ],
+    "title": "Richardson-Era Metalcore"
+  }
+}

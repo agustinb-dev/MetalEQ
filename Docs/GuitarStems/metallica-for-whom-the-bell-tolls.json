@@ -1,0 +1,82 @@
+{
+  "bands": [
+    {
+      "centreHz": 90.0,
+      "label": "90",
+      "maxRelDb": 30.22,
+      "meanRelDb": 15.0,
+      "medianRelDb": 11.24,
+      "minRelDb": -6.97
+    },
+    {
+      "centreHz": 175.0,
+      "label": "175",
+      "maxRelDb": 29.04,
+      "meanRelDb": 12.67,
+      "medianRelDb": 10.3,
+      "minRelDb": -4.98
+    },
+    {
+      "centreHz": 350.0,
+      "label": "350",
+      "maxRelDb": 24.42,
+      "meanRelDb": 11.77,
+      "medianRelDb": 10.13,
+      "minRelDb": 0.22
+    },
+    {
+      "centreHz": 700.0,
+      "label": "700",
+      "maxRelDb": 4.53,
+      "meanRelDb": 0.72,
+      "medianRelDb": 0.38,
+      "minRelDb": -6.69
+    },
+    {
+      "centreHz": 1400.0,
+      "label": "1.4k",
+      "maxRelDb": 2.24,
+      "meanRelDb": -1.36,
+      "medianRelDb": -1.15,
+      "minRelDb": -5.91
+    },
+    {
+      "centreHz": 2800.0,
+      "label": "2.8k",
+      "maxRelDb": 10.42,
+      "meanRelDb": 4.36,
+      "medianRelDb": 4.15,
+      "minRelDb": -2.49
+    },
+    {
+      "centreHz": 5600.0,
+      "label": "5.6k",
+      "maxRelDb": -5.93,
+      "meanRelDb": -12.01,
+      "medianRelDb": -12.42,
+      "minRelDb": -22.19
+    },
+    {
+      "centreHz": 9500.0,
+      "label": "9.5k",
+      "maxRelDb": -27.26,
+      "meanRelDb": -35.52,
+      "medianRelDb": -36.38,
+      "minRelDb": -47.25
+    }
+  ],
+  "durationSeconds": 312.19,
+  "family": "classic-thrash",
+  "framesSkipped": 13,
+  "framesUsed": 197,
+  "hfFloorRelDb": -54.41,
+  "id": "metallica-for-whom-the-bell-tolls",
+  "path": "Docs/GuitarOnlyStems/Metallica/For Whom The Bell Tolls/For Whom the Bell Tolls (Guitar Track).mp3",
+  "quality": "unknown",
+  "referenceDb": 17.26,
+  "rmsDb": -19.98,
+  "sampleRate": 44100,
+  "sub60RelDb": -8.78,
+  "tiltDbPerOct": -3.802,
+  "valid": true
+}

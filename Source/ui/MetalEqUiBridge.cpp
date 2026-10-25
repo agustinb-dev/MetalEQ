@@ -788,6 +788,10 @@ juce::var UiBridge::buildAnalyzerObject()
 
         obj->setProperty ("inputConfidence", report.inputConfidence);
         obj->setProperty ("correctionConfidence", report.correctionConfidence);
+        obj->setProperty ("warnings", static_cast<int> (report.warnings));
+        obj->setProperty ("sub60RelDb", report.sub60RelDb);
+        obj->setProperty ("hfFloorRelDb", report.hfFloorRelDb);
+        obj->setProperty ("tiltDbPerOct", report.tiltDbPerOct);
         obj->setProperty ("alreadyClose", report.alreadyClose);
     }
 

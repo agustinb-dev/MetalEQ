@@ -2490,6 +2490,10 @@ bool MetalEQAudioProcessor::getAnalyzerReport (AnalyzerReport& report) const noe
     report.predicted = analyzerPredictedShape;
     report.inputConfidence = analyzerInputConfidence;
     report.correctionConfidence = analyzerCorrectionConfidence;
+    report.warnings = analyzerWarnings;
+    report.sub60RelDb = analyzerSub60RelDb;
+    report.hfFloorRelDb = analyzerHfFloorRelDb;
+    report.tiltDbPerOct = analyzerTiltDbPerOct;
     report.alreadyClose = analyzerAlreadyClose;
     return true;
 }
@@ -2502,9 +2506,18 @@ bool MetalEQAudioProcessor::readAnalyzerInput (metaleq::tone::InputProfile& inpu
 
     const juce::SpinLock::ScopedLockType lock (analyzerReportLock);
     for (int i = 0; i < metaleq::tone::kNumFeatures; ++i)
-        input.relativeDb[static_cast<size_t> (i)] =
-            static_cast<double> (analyzerInputShape[static_cast<size_t> (i)]);
+    {
+        // The stored shape is the median take shape the correction used.
+        const auto value = static_cast<double> (analyzerInputShape[static_cast<size_t> (i)]);
+        input.relativeDb[static_cast<size_t> (i)] = value;
+        input.relativeDbMedian[static_cast<size_t> (i)] = value;
+    }
+    input.hasMedian = true;
     input.confidence = static_cast<double> (analyzerInputConfidence);
+    input.warnings = analyzerWarnings;
+    input.sub60RelDb = static_cast<double> (analyzerSub60RelDb);
+    input.hfFloorRelDb = static_cast<double> (analyzerHfFloorRelDb);
+    input.tiltDbPerOct = static_cast<double> (analyzerTiltDbPerOct);
     input.valid = true;
     return true;
 }
@@ -2527,8 +2540,12 @@ void MetalEQAudioProcessor::storeAnalyzerResult (
         const juce::SpinLock::ScopedLockType lock (analyzerReportLock);
         for (int i = 0; i < metaleq::tone::kNumFeatures; ++i)
         {
-            analyzerInputShape[static_cast<size_t> (i)] =
-                static_cast<float> (input.relativeDb[static_cast<size_t> (i)]);
+            // Publish the median shape the solver actually fitted; the report
+            // is the explanation shown to the user, so it must match.
+            const auto inputValue = input.hasMedian
+                ? input.relativeDbMedian[static_cast<size_t> (i)]
+                : input.relativeDb[static_cast<size_t> (i)];
+            analyzerInputShape[static_cast<size_t> (i)] = static_cast<float> (inputValue);
             analyzerTargetShape[static_cast<size_t> (i)] =
                 static_cast<float> (correction.targetDb[static_cast<size_t> (i)]);
             analyzerPredictedShape[static_cast<size_t> (i)] =
@@ -2536,6 +2553,10 @@ void MetalEQAudioProcessor::storeAnalyzerResult (
         }
         analyzerInputConfidence = static_cast<float> (input.confidence);
         analyzerCorrectionConfidence = static_cast<float> (correction.confidence);
+        analyzerWarnings = input.warnings;
+        analyzerSub60RelDb = static_cast<float> (input.sub60RelDb);
+        analyzerHfFloorRelDb = static_cast<float> (input.hfFloorRelDb);
+        analyzerTiltDbPerOct = static_cast<float> (input.tiltDbPerOct);
         analyzerAlreadyClose = correction.alreadyClose;
     }
 

@@ -20,7 +20,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { isJuceBackendAvailable, JuceBridge } from './bridge';
 import { MockBridge } from './mockBridge';
 import { store, useUiState } from './store';
-import { AnalyzerStatus, PROTOCOL_VERSION } from './types';
+import { AnalyzerStatus, CAPTURE_WARNING, PROTOCOL_VERSION } from './types';
 import type {
   AnalyzerInfo,
   AnalyzerTargetInfo,
@@ -283,6 +283,22 @@ function AnalyzerResultPanel({
     .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
     .slice(0, 3);
 
+  const warningTexts: string[] = [];
+  const warnings = info.warnings ?? 0;
+  if (warnings & CAPTURE_WARNING.lowEndLeakage) {
+    warningTexts.push(
+      'Low-end leakage detected: kick/bass bleed in the capture. Sub and bass bands are down-weighted.',
+    );
+  }
+  if (warnings & CAPTURE_WARNING.highEndTruncated) {
+    warningTexts.push(
+      'High end looks truncated or very dark. The fizz/air band does not influence this recommendation.',
+    );
+  }
+  if (warnings & CAPTURE_WARNING.transientSpread) {
+    warningTexts.push('Riff-dominated take (large level swings). The recommendation uses median band levels.');
+  }
+
   return (
     <div className="analyzer-report">
       <div className="analyzer-report-head">
@@ -292,6 +308,14 @@ function AnalyzerResultPanel({
           {target ? ` · target ${confidenceLabel(target.confidence)}` : ''}
         </span>
       </div>
+
+      {warningTexts.length > 0 && (
+        <ul className="analyzer-warnings" aria-label="Capture warnings">
+          {warningTexts.map((text) => (
+            <li key={text}>{text}</li>
+          ))}
+        </ul>
+      )}
 
       <div className="analyzer-band-table" role="table" aria-label="Analyzer input, target and predicted band balances">
         <div className="analyzer-band-row analyzer-band-head" role="row">

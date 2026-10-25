@@ -185,15 +185,54 @@ const Source& getSource (int index) noexcept;
 const char* evidenceTag (Evidence evidence) noexcept;
 
 //==============================================================================
+/** Advisory capture diagnostics. A warning never blocks a recommendation; it
+    explains why the solver trusts some bands less and the UI shows it.
+*/
+enum class CaptureWarning : unsigned
+{
+    none = 0,
+    lowEndLeakage    = 1u << 0,  // sub-60 Hz energy suggests kick/bass bleed
+    highEndTruncated = 1u << 1,  // 10-16 kHz far below 5.6 kHz: codec-limited or very dark
+    transientSpread  = 1u << 2   // per-band level swings across the take
+};
+
+/** Thresholds calibrated 2025-10 against the measured stem set:
+    clean official stem sub60 = -18.1 dB; AI-separated stems -14.7..-8.8 dB.
+    High-end drop is hfFloorRelDb - 5.6 kHz band; the stems measured
+    -46.5..-29.6 dB. Spread is max(bandMax - bandMin) across features.
+*/
+inline constexpr double kLeakageWarningSub60Db = -15.0;
+inline constexpr double kHighEndWarningDropDb = -35.0;
+inline constexpr double kTransientSpreadWarningDb = 20.0;
+
+/** Short UI text for one warning bit. */
+const char* captureWarningLabel (CaptureWarning warning) noexcept;
+
+//==============================================================================
 /** Result of measuring a captured guitar tone. */
 struct InputProfile
 {
+    /** Linear-mean band levels across analysed frames. */
     std::array<double, kNumFeatures> relativeDb {};
+    /** Median band levels across analysed frames: robust against the loud
+        riff / quiet lead swings that dominate a linear mean. The correction
+        solver prefers this when hasMedian is true.
+    */
+    std::array<double, kNumFeatures> relativeDbMedian {};
+    /** Per-band temporal range, for the UI diagnostics. */
+    std::array<double, kNumFeatures> bandMinRelDb {};
+    std::array<double, kNumFeatures> bandMaxRelDb {};
+    /** Advisory diagnostics from the same averaged spectrum. */
+    double sub60RelDb = 0.0;
+    double hfFloorRelDb = 0.0;
+    double tiltDbPerOct = 0.0;
+    unsigned warnings = 0;
     /** 0..1 measurement confidence (capture length and level). */
     double confidence = 0.0;
     /** Un-normalised level of the 500-2000 Hz reference region, dB. */
     double referenceDb = -120.0;
     int frames = 0;
+    bool hasMedian = false;
     bool valid = false;
 };
 

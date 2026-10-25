@@ -785,6 +785,25 @@ const char* evidenceTag (Evidence evidence) noexcept
     }
 }
 
+const char* captureWarningLabel (CaptureWarning warning) noexcept
+{
+    switch (warning)
+    {
+        case CaptureWarning::lowEndLeakage:
+            return "Low-end leakage detected: the capture carries kick/bass bleed, "
+                   "so the sub and bass bands are down-weighted.";
+        case CaptureWarning::highEndTruncated:
+            return "The high end looks truncated or very dark: the fizz/air band "
+                   "does not influence this recommendation.";
+        case CaptureWarning::transientSpread:
+            return "The take is riff-dominated (large level swings): the "
+                   "recommendation uses median band levels.";
+        case CaptureWarning::none:
+        default:
+            return "";
+    }
+}
+
 //==============================================================================
 std::array<double, kNumFeatures> targetShape (const ToneTarget& target) noexcept
 {
@@ -806,9 +825,14 @@ InputProfile analyseInput (const float* samples, int numSamples, double sampleRa
     const double nyquist = sampleRate * 0.5;
 
     std::vector<double> power (static_cast<size_t> (kFftSize / 2 + 1), 0.0);
+    std::vector<double> framePower (static_cast<size_t> (kFftSize / 2 + 1), 0.0);
     std::vector<double> re (static_cast<size_t> (kFftSize));
     std::vector<double> im (static_cast<size_t> (kFftSize));
     std::vector<double> window (static_cast<size_t> (kFftSize));
+    std::vector<std::array<double, kNumFeatures>> frameShapes;
+
+    if (numSamples >= kFftSize)
+        frameShapes.reserve (static_cast<size_t> ((numSamples - kFftSize) / (kFftSize / 2) + 1));
 
     for (int i = 0; i < kFftSize; ++i)
         window[static_cast<size_t> (i)] = 0.5 - 0.5 * std::cos (
@@ -839,7 +863,21 @@ InputProfile analyseInput (const float* samples, int numSamples, double sampleRa
             const double p = re[static_cast<size_t> (bin)] * re[static_cast<size_t> (bin)]
                            + im[static_cast<size_t> (bin)] * im[static_cast<size_t> (bin)];
             power[static_cast<size_t> (bin)] += p;
+            framePower[static_cast<size_t> (bin)] = p;
         }
+
+        // Per-frame feature shape: the median across frames is the robust
+        // representative the correction solver uses (the linear mean is
+        // dominated by the loudest riff sections).
+        const double frameReference = bandPowerDb (framePower, 500.0, 2000.0, binHz, nyquist);
+        std::array<double, kNumFeatures> frameShape {};
+        for (int i = 0; i < kNumFeatures; ++i)
+        {
+            const auto& spec = kFeatures[static_cast<size_t> (i)];
+            frameShape[static_cast<size_t> (i)] =
+                bandPowerDb (framePower, spec.lowHz, spec.highHz, binHz, nyquist) - frameReference;
+        }
+        frameShapes.push_back (frameShape);
 
         totalSquare += frameSquare;
         ++frames;
@@ -860,6 +898,71 @@ InputProfile analyseInput (const float* samples, int numSamples, double sampleRa
         const auto& spec = kFeatures[static_cast<size_t> (i)];
         const double bandDb = bandPowerDb (power, spec.lowHz, spec.highHz, binHz, nyquist);
         result.relativeDb[static_cast<size_t> (i)] = bandDb - referenceDb;
+    }
+
+    // Median and range per band across the accepted frames.
+    std::vector<double> column;
+    column.reserve (frameShapes.size());
+    for (int i = 0; i < kNumFeatures; ++i)
+    {
+        column.clear();
+        for (const auto& shape : frameShapes)
+            column.push_back (shape[static_cast<size_t> (i)]);
+
+        std::sort (column.begin(), column.end());
+        const auto count = column.size();
+        const double median = (count % 2 == 0)
+            ? 0.5 * (column[count / 2 - 1] + column[count / 2])
+            : column[count / 2];
+        result.relativeDbMedian[static_cast<size_t> (i)] = median;
+        result.bandMinRelDb[static_cast<size_t> (i)] = column.front();
+        result.bandMaxRelDb[static_cast<size_t> (i)] = column.back();
+    }
+    result.hasMedian = true;
+
+    // Capture diagnostics: leakage and codec truncation are advisory, but
+    // they drive feature weighting in computeCorrection().
+    result.sub60RelDb = bandPowerDb (power, 15.0, 60.0, binHz, nyquist) - referenceDb;
+    result.hfFloorRelDb = bandPowerDb (power, 10000.0, 16000.0, binHz, nyquist) - referenceDb;
+
+    int presenceIndex = kNumFeatures - 1;
+    for (int i = 0; i < kNumFeatures; ++i)
+        if (std::abs (kFeatures[static_cast<size_t> (i)].centreHz - 5600.0) < 1.0)
+            presenceIndex = i;
+
+    if (result.sub60RelDb > kLeakageWarningSub60Db)
+        result.warnings |= static_cast<unsigned> (CaptureWarning::lowEndLeakage);
+
+    if (result.hfFloorRelDb - result.relativeDbMedian[static_cast<size_t> (presenceIndex)]
+            < kHighEndWarningDropDb)
+        result.warnings |= static_cast<unsigned> (CaptureWarning::highEndTruncated);
+
+    for (int i = 0; i < kNumFeatures; ++i)
+    {
+        const double spread = result.bandMaxRelDb[static_cast<size_t> (i)]
+                            - result.bandMinRelDb[static_cast<size_t> (i)];
+        if (spread > kTransientSpreadWarningDb)
+        {
+            result.warnings |= static_cast<unsigned> (CaptureWarning::transientSpread);
+            break;
+        }
+    }
+
+    // Broad spectral tilt across the musically relevant bands, dB/octave.
+    {
+        double sx = 0.0, sy = 0.0, sxx = 0.0, sxy = 0.0, count = 0.0;
+        for (int i = 0; i < kNumFeatures; ++i)
+        {
+            const double centre = kFeatures[static_cast<size_t> (i)].centreHz;
+            if (centre < 175.0 || centre > 5600.0)
+                continue;
+            const double x = std::log2 (centre);
+            const double y = result.relativeDbMedian[static_cast<size_t> (i)];
+            sx += x; sy += y; sxx += x * x; sxy += x * y; count += 1.0;
+        }
+        const double denominator = count * sxx - sx * sx;
+        if (count >= 2.0 && std::abs (denominator) > 1.0e-12)
+            result.tiltDbPerOct = (count * sxy - sx * sy) / denominator;
     }
 
     const double rms = std::sqrt (totalSquare / static_cast<double> (frames * kFftSize));
@@ -955,19 +1058,42 @@ CorrectionResult computeCorrection (const InputProfile& input,
     const double confidenceScale = 0.80 + 0.20 * std::min (measurement, targetConfidence);
 
     // Desired per-feature change: target minus input, with a deadband so an
-    // already-suitable region is not "corrected" for no reason.
-    std::array<double, kNumFeatures> desired {};
+    // already-suitable region is not "corrected" for no reason. The median
+    // take shape is preferred when the capture produced one.
+    const auto& inputDb = input.hasMedian ? input.relativeDbMedian : input.relativeDb;
+    const bool leakyLowEnd = (input.warnings
+        & static_cast<unsigned> (CaptureWarning::lowEndLeakage)) != 0;
+    const bool truncatedTop = (input.warnings
+        & static_cast<unsigned> (CaptureWarning::highEndTruncated)) != 0;
+
+    std::array<double, kNumFeatures> weights {};
     for (int i = 0; i < kNumFeatures; ++i)
     {
         const auto& ft = target.features[static_cast<size_t> (i)];
+        const double centre = kFeatures[static_cast<size_t> (i)].centreHz;
+        double tolerance = std::max (0.0, ft.toleranceDb);
+        double weight = std::max (0.0, ft.weight);
+
+        // Diagnostics-driven weighting: a region the capture cannot represent
+        // must not drive the EQ. A leaky 90 Hz band keeps a little influence
+        // (real palm-mute weight still lives there) with a wider deadband;
+        // a codec-truncated fizz band is ignored entirely.
+        if (leakyLowEnd && std::abs (centre - 90.0) < 1.0)
+        {
+            weight *= 0.3;
+            tolerance *= 1.5;
+        }
+        if (truncatedTop && std::abs (centre - 9500.0) < 1.0)
+            weight = 0.0;
+
+        weights[static_cast<size_t> (i)] = weight;
+
         const double delta = result.targetDb[static_cast<size_t> (i)]
-                           - input.relativeDb[static_cast<size_t> (i)];
-        const double tol = std::max (0.0, ft.toleranceDb);
+                           - inputDb[static_cast<size_t> (i)];
         double d = 0.0;
-        if (std::abs (delta) > tol)
-            d = delta - std::copysign (tol, delta);
+        if (std::abs (delta) > tolerance)
+            d = delta - std::copysign (tolerance, delta);
         d = clampDouble (d * confidenceScale, -ft.maxCorrectionDb, ft.maxCorrectionDb);
-        desired[static_cast<size_t> (i)] = d;
         result.desiredDb[static_cast<size_t> (i)] = d;
     }
 
@@ -986,13 +1112,13 @@ CorrectionResult computeCorrection (const InputProfile& input,
 
     for (int i = 0; i < kNumFeatures; ++i)
     {
-        const double w = std::max (0.0, target.features[static_cast<size_t> (i)].weight);
+        const double w = weights[static_cast<size_t> (i)];
         if (w <= 0.0)
             continue;
 
         for (int j = 0; j < n; ++j)
         {
-            b[j] += w * sensitivity[i][j] * desired[static_cast<size_t> (i)];
+            b[j] += w * sensitivity[i][j] * result.desiredDb[static_cast<size_t> (i)];
             for (int k = 0; k < n; ++k)
                 a[j][k] += w * sensitivity[i][j] * sensitivity[i][k];
         }
@@ -1050,7 +1176,7 @@ CorrectionResult computeCorrection (const InputProfile& input,
             result.gainsDb[static_cast<size_t> (i)] =
                 clampDouble (augmented[i][n], -kGlobalMaxGainDb, kGlobalMaxGainDb);
 
-    result.predictedDb = predictShape (input.relativeDb, result.gainsDb, sampleRate);
+    result.predictedDb = predictShape (inputDb, result.gainsDb, sampleRate);
 
     double maxGain = 0.0;
     double maxResidual = 0.0;

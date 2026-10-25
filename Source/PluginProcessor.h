@@ -258,6 +258,11 @@ public:
         std::array<float, metaleq::kNumBands> gains {};
         float inputConfidence = 0.0f;
         float correctionConfidence = 0.0f;
+        /** Capture diagnostics: bitmask of metaleq::tone::CaptureWarning. */
+        unsigned warnings = 0;
+        float sub60RelDb = 0.0f;
+        float hfFloorRelDb = 0.0f;
+        float tiltDbPerOct = 0.0f;
         bool alreadyClose = false;
         bool valid = false;
     };
@@ -429,6 +434,10 @@ private:
     std::array<float, metaleq::tone::kNumFeatures> analyzerPredictedShape {};
     float analyzerInputConfidence = 0.0f;
     float analyzerCorrectionConfidence = 0.0f;
+    unsigned analyzerWarnings = 0;
+    float analyzerSub60RelDb = 0.0f;
+    float analyzerHfFloorRelDb = 0.0f;
+    float analyzerTiltDbPerOct = 0.0f;
     bool analyzerAlreadyClose = false;
     /** 0 = target-profile analyzer, 1 = surgical scan, 2 = dynamic scan. */
     std::atomic<int> analyzerMode { 0 };

@@ -223,6 +223,90 @@ void testInputAnalysis()
            "too-short capture is rejected");
 }
 
+/** Phase 3: capture diagnostics. A clean full-band capture carries no
+    warnings; sub-60 Hz bleed and a missing top octave are recognised; the
+    per-band median survives loud/quiet swings and is preferred by the solver.
+*/
+void testCaptureDiagnostics()
+{
+    using namespace metaleq::tone;
+
+    const auto hasWarning = [] (const InputProfile& profile, CaptureWarning warning)
+    {
+        return (profile.warnings & static_cast<unsigned> (warning)) != 0;
+    };
+
+    std::array<double, kNumFeatures> flat {};
+    const auto cleanCapture = makeBandTones (flat);
+    const auto clean = analyseInput (cleanCapture.data(), static_cast<int> (cleanCapture.size()), sampleRate);
+    check (clean.valid && clean.hasMedian, "a clean capture produces a median profile");
+    check (! hasWarning (clean, CaptureWarning::lowEndLeakage),
+           "a clean full-band capture has no leakage warning");
+    check (! hasWarning (clean, CaptureWarning::highEndTruncated),
+           "a clean full-band capture has no high-end warning");
+    check (clean.tiltDbPerOct > -1.0 && clean.tiltDbPerOct < 1.0,
+           "a flat capture has a near-zero spectral tilt");
+
+    // Kick/bass bleed: a strong 40 Hz component sits inside the sub-60 band.
+    auto leakyCapture = cleanCapture;
+    for (size_t i = 0; i < leakyCapture.size(); ++i)
+        leakyCapture[i] += static_cast<float> (
+            0.05 * std::sin (2.0 * metaleq::kPi * 40.0 * static_cast<double> (i) / sampleRate));
+    const auto leaky = analyseInput (leakyCapture.data(), static_cast<int> (leakyCapture.size()), sampleRate);
+    check (leaky.valid, "the leaky capture is still analysable");
+    check (leaky.sub60RelDb > kLeakageWarningSub60Db,
+           "sub-60 Hz bleed is measured above the warning threshold");
+    check (hasWarning (leaky, CaptureWarning::lowEndLeakage),
+           "sub-60 Hz bleed raises the leakage warning");
+
+    // Codec-style truncation: no energy in the 9.5 kHz band at all, so the
+    // 10-16 kHz floor sits far below 5.6 kHz.
+    std::array<double, kNumFeatures> dark {};
+    dark[8] = -100.0;
+    const auto darkCapture = makeBandTones (dark);
+    const auto truncated = analyseInput (darkCapture.data(), static_cast<int> (darkCapture.size()), sampleRate);
+    check (truncated.valid, "the dark capture is still analysable");
+    check (hasWarning (truncated, CaptureWarning::highEndTruncated),
+           "a missing top octave raises the high-end warning");
+
+    // Loud/quiet alternation: the linear mean follows the loud half, the
+    // median reports the middle of the take.
+    std::array<double, kNumFeatures> quietShape {};
+    std::array<double, kNumFeatures> loudShape {};
+    loudShape[2] = 12.0; // 350 Hz much louder in the loud half
+    auto quietHalf = makeBandTones (quietShape, 2.0);
+    auto loudHalf = makeBandTones (loudShape, 2.0);
+    for (auto& sample : loudHalf)
+        sample *= 3.0f; // +9.5 dB, so the mean is loud-half dominated
+
+    std::vector<float> alternated;
+    alternated.reserve (quietHalf.size() + loudHalf.size());
+    alternated.insert (alternated.end(), quietHalf.begin(), quietHalf.end());
+    alternated.insert (alternated.end(), loudHalf.begin(), loudHalf.end());
+
+    const auto medianProfile = analyseInput (alternated.data(), static_cast<int> (alternated.size()), sampleRate);
+    check (medianProfile.valid && medianProfile.hasMedian, "alternating take has a median profile");
+    check (medianProfile.bandMaxRelDb[2] - medianProfile.bandMinRelDb[2] > 6.0,
+           "the alternation is visible in the per-band range");
+    check (medianProfile.relativeDbMedian[2] < medianProfile.relativeDb[2] - 2.0,
+           "the median is not dragged up by the loud half");
+    check (medianProfile.relativeDbMedian[2] > quietShape[2] + 2.0,
+           "the median still reflects both halves of the take");
+
+    // The solver must fit the median, not the loud-half-dominated mean.
+    const auto& target = getToneTarget (findToneTargetById ("genre-thrash-early-80s"));
+    InputProfile preferred = makeInput (targetShape (target), 1.0);
+    preferred.relativeDb[2] += 6.0; // misleading mean
+    preferred.relativeDbMedian = targetShape (target);
+    preferred.hasMedian = true;
+
+    const auto medianFit = computeCorrection (preferred, target, sampleRate);
+    preferred.hasMedian = false;
+    const auto meanFit = computeCorrection (preferred, target, sampleRate);
+    check (medianFit.maxAbsGainDb + 0.2 < meanFit.maxAbsGainDb,
+           "the correction prefers the median take shape over the mean");
+}
+
 void testCorrectionSafety()
 {
     using namespace metaleq::tone;
@@ -572,6 +656,7 @@ int main()
 {
     testTargetTable();
     testInputAnalysis();
+    testCaptureDiagnostics();
     testCorrectionSafety();
     testAlreadySuitableInput();
     testDeadbandAndConfidenceTuning();

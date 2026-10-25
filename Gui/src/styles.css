@@ -2174,6 +2174,20 @@ body {
   white-space: nowrap;
 }
 
+.analyzer-warnings {
+  margin: 6px 0 0;
+  padding: 6px 8px;
+  list-style: none;
+  border: 1px solid rgba(232, 198, 106, 0.35);
+  border-radius: 4px;
+  background: rgba(232, 198, 106, 0.06);
+  color: #e8c66a;
+  font-size: 9px;
+  line-height: 14px;
+}
+
+.analyzer-warnings li + li { margin-top: 3px; }
+
 .analyzer-band-table {
   margin-top: 5px;
   display: flex;

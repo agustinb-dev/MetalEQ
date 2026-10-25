@@ -129,6 +129,10 @@ function buildMockAnalyzer(targetIndex: number): AnalyzerInfo {
     correctionFreqs: CORRECTION_FREQS,
     inputConfidence: 0.9,
     correctionConfidence: meta.confidence * 0.9,
+    warnings: 0,
+    sub60RelDb: -18.1,
+    hfFloorRelDb: -53.3,
+    tiltDbPerOct: -1.0,
     alreadyClose,
   };
 }

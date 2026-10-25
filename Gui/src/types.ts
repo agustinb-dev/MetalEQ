@@ -103,9 +103,9 @@ export interface AnalyzerInfo {
   resultTarget?: number;
   /** True when input/target/predicted arrays are present and usable. */
   hasReport?: boolean;
-  /** Eight measured input band levels, dB relative to the 500-2000 Hz region. */
+  /** Nine measured input band levels, dB relative to the 500-2000 Hz region. */
   input?: number[];
-  /** Eight target band levels in the same domain. */
+  /** Nine target band levels in the same domain. */
   target?: number[];
   /** Input plus the fitted correction, in the same domain. */
   predicted?: number[];
@@ -115,9 +115,24 @@ export interface AnalyzerInfo {
   correctionFreqs?: number[];
   inputConfidence?: number;
   correctionConfidence?: number;
+  /** Bitmask of the native CaptureWarning flags (1 = leakage, 2 = HF, 4 = spread). */
+  warnings?: number;
+  /** Sub-60 Hz energy relative to the mid reference, dB. */
+  sub60RelDb?: number;
+  /** 10-16 kHz energy relative to the mid reference, dB. */
+  hfFloorRelDb?: number;
+  /** Broad spectral tilt, dB/octave across 175-5600 Hz. */
+  tiltDbPerOct?: number;
   alreadyClose?: boolean;
   changed?: boolean;
 }
+
+/** Capture-warning bits, mirroring metaleq::tone::CaptureWarning. */
+export const CAPTURE_WARNING = {
+  lowEndLeakage: 1,
+  highEndTruncated: 2,
+  transientSpread: 4,
+} as const;
 
 /** One stationary resonance suggested by the V3 detector. */
 export interface ResonanceCandidateInfo {

@@ -2,7 +2,7 @@
     V3.2 analyzer model tests.
 
     These tests are deliberately independent of JUCE and of the audio device:
-    they exercise the research-backed target table, the eight-band input
+    they exercise the research-backed target table, the nine-band input
     analysis, and the adaptive correction solver directly.
 
     What is asserted here is the *behaviour* the Analyzer promises:
@@ -164,7 +164,7 @@ void testTargetTable()
     check (categoryCounts[2] == 6, "there are six producer targets");
 
     // The key differentiators share a 0.5 dB deadband across all profiles.
-    for (const int feature : { 0, 1, 2, 4, 6 })
+    for (const int feature : { 0, 1, 2, 4, 7 })
         for (int t = 0; t < getNumToneTargets(); ++t)
             checkNear (getToneTarget (t).features[static_cast<size_t> (feature)].toleranceDb,
                        0.5, 1.0e-9, "key-differentiator deadband is 0.5 dB");
@@ -204,14 +204,14 @@ void testInputAnalysis()
 
     std::array<double, kNumFeatures> shaped {};
     shaped[2] = 6.0;   // 350 Hz body
-    shaped[7] = -6.0;  // 9.5 kHz fizz cut
+    shaped[8] = -6.0;  // 9.5 kHz fizz cut
     const auto shapedCapture = makeBandTones (shaped);
     const auto shapedProfile = analyseInput (shapedCapture.data(), static_cast<int> (shapedCapture.size()), sampleRate);
 
     check (shapedProfile.valid, "shaped capture is valid");
     checkNear (shapedProfile.relativeDb[2] - flatProfile.relativeDb[2], 6.0, 1.0,
                "350 Hz emphasis is measured");
-    checkNear (shapedProfile.relativeDb[7] - flatProfile.relativeDb[7], -6.0, 1.0,
+    checkNear (shapedProfile.relativeDb[8] - flatProfile.relativeDb[8], -6.0, 1.0,
                "9.5 kHz cut is measured");
 
     std::vector<float> silence (static_cast<size_t> (sampleRate), 0.0f);
@@ -228,12 +228,12 @@ void testCorrectionSafety()
     using namespace metaleq::tone;
 
     const std::array<std::array<double, kNumFeatures>, 6> inputs {{
-        {{ -2.0, -0.5,  0.0, 0.5,  0.5, 0.0, -2.0, -6.0 }},
-        {{ -4.0, -2.0,  3.0, 1.0, -1.0, 0.5, -1.0, -5.0 }},
-        {{ -1.0,  0.5, -3.0, 0.0,  2.5, 2.0, -1.0, -6.0 }},
-        {{  1.0,  2.0,  1.5, 1.0,  0.0, -0.5, -3.0, -8.0 }},
-        {{ -3.0, -1.0, -2.0, 1.0,  3.0, 3.0,  1.0, -3.0 }},
-        {{ -6.0, -3.0, -4.0, 0.0,  1.0, 0.0, -7.0, -12.0 }}
+        {{ -2.0, -0.5,  0.0, 0.5,  0.5, 0.0, -1.0, -2.0, -6.0 }},
+        {{ -4.0, -2.0,  3.0, 1.0, -1.0, 0.5, -0.2, -1.0, -5.0 }},
+        {{ -1.0,  0.5, -3.0, 0.0,  2.5, 2.0,  0.5, -1.0, -6.0 }},
+        {{  1.0,  2.0,  1.5, 1.0,  0.0, -0.5, -1.8, -3.0, -8.0 }},
+        {{ -3.0, -1.0, -2.0, 1.0,  3.0, 3.0,  2.0,  1.0, -3.0 }},
+        {{ -6.0, -3.0, -4.0, 0.0,  1.0, 0.0, -3.5, -7.0, -12.0 }}
     }};
 
     for (int t = 0; t < getNumToneTargets(); ++t)
@@ -289,7 +289,7 @@ void testAlreadySuitableInput()
         // already-matching case.
         auto mismatched = targetShape (target);
         mismatched[2] += 3.0;
-        mismatched[6] -= 2.0;
+        mismatched[7] -= 2.0;
         const auto mismatchResult = computeCorrection (makeInput (mismatched, 0.95), target, sampleRate);
         check (mismatchResult.maxAbsGainDb > result.maxAbsGainDb + 0.2,
                "a real mismatch produces a larger correction than a match");
@@ -348,7 +348,7 @@ void testDeadbandAndConfidenceTuning()
             feature.maxCorrectionDb = 12.0;
         }
 
-        const auto result = computeCorrection (makeInput ({ 0, 0, 0, 0, 0, 0, 0, 0 }, 1.0),
+        const auto result = computeCorrection (makeInput ({ 0, 0, 0, 0, 0, 0, 0, 0, 0 }, 1.0),
                                                extreme, sampleRate);
         check (result.maxAbsGainDb > 6.0,
                "the raised 12 dB ceiling is reachable for an extreme mismatch");
@@ -377,8 +377,8 @@ void testInputAdaptation()
     thin.relativeDb[4] += 2.0;
 
     auto bright = makeInput (targetShape (target), 0.95);
-    bright.relativeDb[6] += 3.0;
     bright.relativeDb[7] += 3.0;
+    bright.relativeDb[8] += 3.0;
 
     const auto muddyResult = computeCorrection (muddy, target, sampleRate);
     const auto thinResult = computeCorrection (thin, target, sampleRate);
@@ -403,7 +403,7 @@ void testTargetDistinctness()
 {
     using namespace metaleq::tone;
 
-    const auto input = makeInput ({ -2.5, -1.0, -0.5, 0.8, 1.0, 0.2, -2.5, -6.5 }, 0.9);
+    const auto input = makeInput ({ -2.5, -1.0, -0.5, 0.8, 1.0, 0.2, -1.2, -2.5, -6.5 }, 0.9);
 
     std::vector<std::array<double, kNumCorrectionBands>> corrections;
     for (int t = 0; t < getNumToneTargets(); ++t)
@@ -435,10 +435,10 @@ void testTargetDistinctness()
     auto distanceBetween = [] (int a, int b)
     {
         const auto left = computeCorrection (
-            makeInput ({ -2.5, -1.0, -0.5, 0.8, 1.0, 0.2, -2.5, -6.5 }, 0.9),
+            makeInput ({ -2.5, -1.0, -0.5, 0.8, 1.0, 0.2, -1.2, -2.5, -6.5 }, 0.9),
             getToneTarget (a), sampleRate).gainsDb;
         const auto right = computeCorrection (
-            makeInput ({ -2.5, -1.0, -0.5, 0.8, 1.0, 0.2, -2.5, -6.5 }, 0.9),
+            makeInput ({ -2.5, -1.0, -0.5, 0.8, 1.0, 0.2, -1.2, -2.5, -6.5 }, 0.9),
             getToneTarget (b), sampleRate).gainsDb;
         double distance = 0.0;
         for (int band = 0; band < kNumCorrectionBands; ++band)

@@ -38,6 +38,12 @@
         "lowHz": 2240.0
       },
       {
+        "centreHz": 4000.0,
+        "highHz": 4480.0,
+        "label": "4k",
+        "lowHz": 3520.0
+      },
+      {
         "centreHz": 5600.0,
         "highHz": 7040.0,
         "label": "5.6k",
@@ -100,6 +106,12 @@
           "spreadDb": 3.26
         },
         {
+          "centreHz": 4000.0,
+          "label": "4k",
+          "medianRelDb": -4.12,
+          "spreadDb": 5.81
+        },
+        {
           "centreHz": 5600.0,
           "label": "5.6k",
           "medianRelDb": -12.42,
@@ -159,6 +171,12 @@
           "label": "2.8k",
           "medianRelDb": -3.17,
           "spreadDb": 1.0
+        },
+        {
+          "centreHz": 4000.0,
+          "label": "4k",
+          "medianRelDb": -4.54,
+          "spreadDb": 4.1
         },
         {
           "centreHz": 5600.0,
@@ -234,6 +252,14 @@
           "minRelDb": -15.5
         },
         {
+          "centreHz": 4000.0,
+          "label": "4k",
+          "maxRelDb": 5.47,
+          "meanRelDb": -2.37,
+          "medianRelDb": -2.29,
+          "minRelDb": -22.61
+        },
+        {
           "centreHz": 5600.0,
           "label": "5.6k",
           "maxRelDb": -3.44,
@@ -262,7 +288,7 @@
       "rmsDb": -18.16,
       "sampleRate": 44100,
       "sub60RelDb": -18.07,
-      "tiltDbPerOct": -1.177,
+      "tiltDbPerOct": -1.031,
       "valid": true
     },
     {
@@ -316,6 +342,14 @@
           "minRelDb": -95.47
         },
         {
+          "centreHz": 4000.0,
+          "label": "4k",
+          "maxRelDb": 1.18,
+          "meanRelDb": -5.42,
+          "medianRelDb": -4.54,
+          "minRelDb": -94.46
+        },
+        {
           "centreHz": 5600.0,
           "label": "5.6k",
           "maxRelDb": -2.98,
@@ -344,7 +378,7 @@
       "rmsDb": -17.96,
       "sampleRate": 44100,
       "sub60RelDb": -11.97,
-      "tiltDbPerOct": -3.554,
+      "tiltDbPerOct": -3.345,
       "valid": true
     },
     {
@@ -398,6 +432,14 @@
           "minRelDb": -8.52
         },
         {
+          "centreHz": 4000.0,
+          "label": "4k",
+          "maxRelDb": -1.44,
+          "meanRelDb": -6.56,
+          "medianRelDb": -6.39,
+          "minRelDb": -11.99
+        },
+        {
           "centreHz": 5600.0,
           "label": "5.6k",
           "maxRelDb": -2.41,
@@ -426,7 +468,7 @@
       "rmsDb": -14.66,
       "sampleRate": 48000,
       "sub60RelDb": -12.24,
-      "tiltDbPerOct": -2.998,
+      "tiltDbPerOct": -2.953,
       "valid": true
     },
     {
@@ -480,6 +522,14 @@
           "minRelDb": -9.14
         },
         {
+          "centreHz": 4000.0,
+          "label": "4k",
+          "maxRelDb": 3.21,
+          "meanRelDb": -5.01,
+          "medianRelDb": -4.6,
+          "minRelDb": -15.21
+        },
+        {
           "centreHz": 5600.0,
           "label": "5.6k",
           "maxRelDb": -1.73,
@@ -508,7 +558,7 @@
       "rmsDb": -15.32,
       "sampleRate": 44100,
       "sub60RelDb": -14.73,
-      "tiltDbPerOct": -2.988,
+      "tiltDbPerOct": -2.812,
       "valid": true
     },
     {
@@ -562,6 +612,14 @@
           "minRelDb": -9.72
         },
         {
+          "centreHz": 4000.0,
+          "label": "4k",
+          "maxRelDb": 5.42,
+          "meanRelDb": -0.81,
+          "medianRelDb": 1.21,
+          "minRelDb": -24.17
+        },
+        {
           "centreHz": 5600.0,
           "label": "5.6k",
           "maxRelDb": -0.93,
@@ -590,7 +648,7 @@
       "rmsDb": -15.81,
       "sampleRate": 44100,
       "sub60RelDb": -10.95,
-      "tiltDbPerOct": -3.786,
+      "tiltDbPerOct": -3.453,
       "valid": true
     },
     {
@@ -644,6 +702,14 @@
           "minRelDb": -2.49
         },
         {
+          "centreHz": 4000.0,
+          "label": "4k",
+          "maxRelDb": 3.47,
+          "meanRelDb": -3.65,
+          "medianRelDb": -4.12,
+          "minRelDb": -12.69
+        },
+        {
           "centreHz": 5600.0,
           "label": "5.6k",
           "maxRelDb": -5.93,
@@ -672,7 +738,7 @@
       "rmsDb": -19.98,
       "sampleRate": 44100,
       "sub60RelDb": -8.78,
-      "tiltDbPerOct": -3.802,
+      "tiltDbPerOct": -3.667,
       "valid": true
     }
   ],

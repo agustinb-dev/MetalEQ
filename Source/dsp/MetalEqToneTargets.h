@@ -6,7 +6,7 @@
 
       1. INPUT ANALYSIS
          The captured guitar is reduced to a small, stable feature vector: the
-         energy in eight broad log-spaced bands, expressed in dB relative to
+         energy in nine broad log-spaced bands, expressed in dB relative to
          the 500-2000 Hz region of the same capture. Broad bands are used on
          purpose: distorted guitars produce a moving harmonic comb, and a
          narrow-band comparison would mistake note choice for tone.
@@ -49,11 +49,16 @@ namespace metaleq::tone
 {
 
 //==============================================================================
-inline constexpr int kNumFeatures = 8;
+inline constexpr int kNumFeatures = 9;
 inline constexpr int kNumCorrectionBands = kNumBands;
 
 /** The five broad musical bands the analyzer may drive. These match
     MetalEQAudioProcessor::applyAnalyzerSuggestion().
+
+    V3.3 adds a ninth analysis feature at 4 kHz ("Attack") but deliberately
+    keeps five correction bands: the processor exposes exactly kNumBands
+    musical bands, so the 4 kHz objective is steered through the existing
+    2.8 kHz and 7 kHz peaking sections by the least-squares fit.
 */
 inline constexpr std::array<double, kNumCorrectionBands> kCorrectionFrequencies
     { 120.0, 350.0, 1000.0, 2800.0, 7000.0 };
@@ -102,8 +107,11 @@ struct FeatureSpec
     const char* description = "";
 };
 
-/** Eight broad, log-spaced analysis bands. The edges are wider than typical
+/** Nine broad, log-spaced analysis bands. The edges are wider than typical
     harmonic spacing so a played note cannot masquerade as a tonal problem.
+    V3.3 added the 4 kHz "Attack" band to close the 3.52-4.48 kHz gap between
+    the 2.8 kHz and 5.6 kHz bands, where pick attack and the classic 4 kHz
+    presence spike live.
 */
 inline constexpr std::array<FeatureSpec, kNumFeatures> kFeatures {{
     {   90.0,    70.0,   115.0, "Sub weight",     "90",   "Lowest guitar body and rumble below the palm-mute thump" },
@@ -112,6 +120,7 @@ inline constexpr std::array<FeatureSpec, kNumFeatures> kFeatures {{
     {  700.0,   560.0,   880.0, "Midrange",       "700",  "Fundamental midrange weight and body" },
     { 1400.0,  1120.0,  1760.0, "Upper-mid bite", "1.4k", "Aggression, articulation and upper-mid cut" },
     { 2800.0,  2240.0,  3520.0, "Presence",       "2.8k", "Pick attack and presence" },
+    { 4000.0,  3520.0,  4480.0, "Attack",         "4k",   "Pick attack and the 4 kHz presence spike" },
     { 5600.0,  4480.0,  7040.0, "Brightness",     "5.6k", "Harshness and upper brightness" },
     { 9500.0,  7600.0, 12000.0, "Fizz / air",     "9.5k", "Fizz, sizzle and top-end air" }
 }};
@@ -203,12 +212,12 @@ struct CorrectionResult
     bool alreadyClose = false;
 };
 
-/** Analyse captured mono audio and return the eight-band input profile.
+/** Analyse captured mono audio and return the nine-band input profile.
     Safe to call on the analyzer worker thread; allocates only there.
 */
 InputProfile analyseInput (const float* samples, int numSamples, double sampleRate);
 
-/** The target's eight feature levels. */
+/** The target's nine feature levels. */
 std::array<double, kNumFeatures> targetShape (const ToneTarget& target) noexcept;
 
 /** Compare the measured input with the target and fit the five broad bands.
@@ -218,7 +227,7 @@ CorrectionResult computeCorrection (const InputProfile& input,
                                     const ToneTarget& target,
                                     double sampleRate);
 
-/** Evaluate the eight feature bands after applying `gainsDb` at the five
+/** Evaluate the nine feature bands after applying `gainsDb` at the five
     correction frequencies.
 */
 std::array<double, kNumFeatures> predictShape (

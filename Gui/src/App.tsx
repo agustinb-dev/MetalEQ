@@ -275,7 +275,7 @@ function AnalyzerResultPanel({
   const predicted = info.predicted;
   if (!input || !targetShape || !predicted) return null;
 
-  const freqs = info.featureFreqs ?? [90, 175, 350, 700, 1400, 2800, 5600, 9500];
+  const freqs = info.featureFreqs ?? [90, 175, 350, 700, 1400, 2800, 4000, 5600, 9500];
   const correctionFreqs = info.correctionFreqs ?? [120, 350, 1000, 2800, 7000];
   const mismatches = freqs
     .map((freq, index) => ({ freq, delta: targetShape[index] - input[index] }))
@@ -286,7 +286,7 @@ function AnalyzerResultPanel({
   return (
     <div className="analyzer-report">
       <div className="analyzer-report-head">
-        <span className="analyzer-column-title">INPUT vs TARGET · eight broad bands, dB relative to 500–2000 Hz</span>
+        <span className="analyzer-column-title">INPUT vs TARGET · nine broad bands, dB relative to 500–2000 Hz</span>
         <span className="analyzer-report-confidence">
           input {Math.round((info.inputConfidence ?? 0) * 100)}%
           {target ? ` · target ${confidenceLabel(target.confidence)}` : ''}

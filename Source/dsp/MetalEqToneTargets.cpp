@@ -159,6 +159,7 @@ constexpr const char* kPresence    = "Presence and pick attack described for the
 constexpr const char* kSmoothTop   = "Controlled high end described for the selected reference";
 constexpr const char* kBrightTop   = "Bright high end described for the selected reference";
 constexpr const char* kSpace       = "Engineering interpretation of lead-guitar space in a dense mix";
+constexpr const char* kAttack      = "4 kHz attack/presence estimated from the neighbouring band objectives (no direct measurement for this estimate)";
 
 constexpr FeatureTarget f (double db, double tol, double weight, double maxCorrection,
                            Evidence evidence, const char* rationale)
@@ -195,6 +196,7 @@ constexpr std::array<ToneTarget, 16> kTargets {{
             f (+1.0, 0.75, 0.7, 2.5, Evidence::secondary, kMidBody),
             f (+3.0, 0.50, 1.0, 3.0, Evidence::documented, kUpperMid),
             f (+2.0, 1.00, 1.0, 2.5, Evidence::documented, kPresence),
+            f (0.0, 0.75, 0.6, 2.5, Evidence::interpretation, kAttack),
             f (-2.0, 0.50, 0.7, 2.5, Evidence::secondary, kSmoothTop),
             f (-5.0, 1.50, 0.4, 2.0, Evidence::secondary, kBrightTop)
         }},
@@ -227,6 +229,7 @@ constexpr std::array<ToneTarget, 16> kTargets {{
             f (+1.0, 0.75, 0.7, 2.5, Evidence::interpretation, kMidBody),
             f (+1.0, 0.50, 0.8, 3.0, Evidence::documented, kUpperMid),
             f (+0.5, 1.00, 0.8, 2.5, Evidence::documented, kPresence),
+            f (-2.0, 0.75, 0.6, 2.5, Evidence::interpretation, kAttack),
             f (-4.0, 0.50, 0.9, 2.5, Evidence::secondary, kSmoothTop),
             f (-8.0, 1.50, 0.7, 2.0, Evidence::secondary, kBrightTop)
         }},
@@ -258,6 +261,7 @@ constexpr std::array<ToneTarget, 16> kTargets {{
             f (+2.0, 0.75, 1.0, 2.5, Evidence::interpretation, kMidBody),
             f (+3.5, 0.50, 1.0, 3.0, Evidence::documented, kUpperMid),
             f (+2.0, 1.00, 1.0, 2.5, Evidence::documented, kPresence),
+            f (0.0, 0.75, 0.6, 2.5, Evidence::interpretation, kAttack),
             f (-2.0, 0.50, 0.6, 2.5, Evidence::secondary, kSmoothTop),
             f (-7.0, 1.50, 0.4, 2.0, Evidence::interpretation, kBrightTop)
         }},
@@ -290,6 +294,7 @@ constexpr std::array<ToneTarget, 16> kTargets {{
             f (+1.0, 0.75, 0.9, 2.5, Evidence::documented, kMidBody),
             f (+0.5, 0.50, 0.8, 3.0, Evidence::secondary, kUpperMid),
             f (+0.0, 1.00, 0.7, 2.5, Evidence::interpretation, kPresence),
+            f (-2.0, 0.75, 0.6, 2.5, Evidence::interpretation, kAttack),
             f (-3.5, 0.50, 0.8, 2.5, Evidence::documented, kSmoothTop),
             f (-8.0, 1.50, 0.5, 2.0, Evidence::documented, kBrightTop)
         }},
@@ -321,6 +326,7 @@ constexpr std::array<ToneTarget, 16> kTargets {{
             f (+1.0, 0.75, 0.8, 2.5, Evidence::interpretation, kMidBody),
             f (+2.5, 0.50, 1.0, 3.0, Evidence::interpretation, kUpperMid),
             f (+1.5, 1.00, 0.9, 2.5, Evidence::interpretation, kPresence),
+            f (0.0, 0.75, 0.6, 2.5, Evidence::interpretation, kAttack),
             f (-1.0, 0.50, 0.7, 2.5, Evidence::interpretation, kSmoothTop),
             f (-6.0, 1.50, 0.4, 2.0, Evidence::interpretation, kBrightTop)
         }},
@@ -351,6 +357,7 @@ constexpr std::array<ToneTarget, 16> kTargets {{
             f (+0.0, 0.75, 0.8, 2.5, Evidence::interpretation, kMidBody),
             f (+3.0, 0.50, 1.0, 3.0, Evidence::documented, kUpperMid),
             f (+2.0, 1.00, 0.9, 2.5, Evidence::documented, kPresence),
+            f (+1.0, 0.75, 0.6, 2.5, Evidence::interpretation, kAttack),
             f (+0.0, 0.50, 0.8, 2.5, Evidence::documented, kSmoothTop),
             f (-6.0, 1.50, 0.4, 2.0, Evidence::interpretation, kBrightTop)
         }},
@@ -382,6 +389,7 @@ constexpr std::array<ToneTarget, 16> kTargets {{
             f (+1.0, 0.75, 0.7, 2.5, Evidence::interpretation, kMidBody),
             f (+2.5, 0.50, 1.0, 3.0, Evidence::documented, kUpperMid),
             f (+2.5, 1.00, 1.0, 2.5, Evidence::documented, kPresence),
+            f (+0.5, 0.75, 0.6, 2.5, Evidence::interpretation, kAttack),
             f (-1.5, 0.50, 0.7, 2.5, Evidence::secondary, kSmoothTop),
             f (-6.0, 1.50, 0.4, 2.0, Evidence::interpretation, kBrightTop)
         }},
@@ -412,6 +420,7 @@ constexpr std::array<ToneTarget, 16> kTargets {{
             f (+1.0, 0.75, 0.8, 2.5, Evidence::interpretation, kMidBody),
             f (+3.0, 0.50, 1.0, 3.0, Evidence::documented, kUpperMid),
             f (+2.0, 1.00, 0.9, 2.5, Evidence::secondary, kPresence),
+            f (0.0, 0.75, 0.6, 2.5, Evidence::interpretation, kAttack),
             f (-1.5, 0.50, 0.7, 2.5, Evidence::secondary, kSmoothTop),
             f (-7.0, 1.50, 0.4, 2.0, Evidence::interpretation, kBrightTop)
         }},
@@ -442,6 +451,7 @@ constexpr std::array<ToneTarget, 16> kTargets {{
             f (+1.0, 0.75, 0.8, 2.5, Evidence::interpretation, kMidBody),
             f (+2.5, 0.50, 1.0, 3.0, Evidence::documented, kUpperMid),
             f (+2.0, 1.00, 0.9, 2.5, Evidence::documented, kPresence),
+            f (-1.0, 0.75, 0.6, 2.5, Evidence::interpretation, kAttack),
             f (-3.5, 0.50, 0.8, 2.5, Evidence::secondary, kSmoothTop),
             f (-6.0, 1.50, 0.4, 2.0, Evidence::interpretation, kBrightTop)
         }},
@@ -473,6 +483,7 @@ constexpr std::array<ToneTarget, 16> kTargets {{
             f (+1.0, 0.75, 0.7, 2.5, Evidence::secondary, kMidBody),
             f (+2.0, 0.50, 0.9, 3.0, Evidence::documented, kUpperMid),
             f (+2.5, 1.00, 1.0, 2.5, Evidence::documented, kPresence),
+            f (+1.0, 0.75, 0.6, 2.5, Evidence::interpretation, kAttack),
             f (-1.0, 0.50, 0.8, 2.5, Evidence::documented, kSmoothTop),
             f (-6.0, 1.50, 0.4, 2.0, Evidence::secondary, kBrightTop)
         }},
@@ -503,6 +514,7 @@ constexpr std::array<ToneTarget, 16> kTargets {{
             f (+1.0, 0.75, 0.8, 2.5, Evidence::secondary, kMidBody),
             f (+2.5, 0.50, 1.0, 3.0, Evidence::documented, kUpperMid),
             f (+1.5, 1.00, 0.9, 2.5, Evidence::documented, kPresence),
+            f (0.0, 0.75, 0.6, 2.5, Evidence::interpretation, kAttack),
             f (-2.0, 0.50, 0.8, 2.5, Evidence::secondary, kSmoothTop),
             f (-7.0, 1.50, 0.4, 2.0, Evidence::secondary, kBrightTop)
         }},
@@ -534,6 +546,7 @@ constexpr std::array<ToneTarget, 16> kTargets {{
             f (+2.0, 0.75, 1.0, 2.5, Evidence::documented, kMidBody),
             f (+3.0, 0.50, 1.0, 3.0, Evidence::documented, kUpperMid),
             f (+2.5, 1.00, 1.0, 2.5, Evidence::documented, kPresence),
+            f (+0.5, 0.75, 0.6, 2.5, Evidence::interpretation, kAttack),
             f (-1.5, 0.50, 0.7, 2.5, Evidence::secondary, kSmoothTop),
             f (-7.0, 1.50, 0.4, 2.0, Evidence::secondary, kBrightTop)
         }},
@@ -565,6 +578,7 @@ constexpr std::array<ToneTarget, 16> kTargets {{
             f (+1.5, 0.75, 0.9, 2.5, Evidence::documented, kMidBody),
             f (-0.5, 0.50, 0.6, 3.0, Evidence::secondary, kUpperMid),
             f (-1.0, 1.00, 0.5, 2.5, Evidence::interpretation, kPresence),
+            f (-3.0, 0.75, 0.6, 2.5, Evidence::interpretation, kAttack),
             f (-4.5, 0.50, 0.8, 2.5, Evidence::documented, kSmoothTop),
             f (-9.0, 1.50, 0.5, 2.0, Evidence::documented, kBrightTop)
         }},
@@ -596,6 +610,7 @@ constexpr std::array<ToneTarget, 16> kTargets {{
             f (+2.0, 0.75, 1.0, 2.5, Evidence::documented, kMidBody),
             f (+2.5, 0.50, 1.0, 3.0, Evidence::documented, kUpperMid),
             f (+1.0, 1.00, 0.8, 2.5, Evidence::secondary, kPresence),
+            f (-0.5, 0.75, 0.6, 2.5, Evidence::interpretation, kAttack),
             f (-2.0, 0.50, 0.8, 2.5, Evidence::documented, kSmoothTop),
             f (-7.5, 1.50, 0.4, 2.0, Evidence::interpretation, kBrightTop)
         }},
@@ -626,6 +641,7 @@ constexpr std::array<ToneTarget, 16> kTargets {{
             f (+2.0, 0.75, 1.0, 2.5, Evidence::documented, kMidBody),
             f (+2.0, 0.50, 0.9, 3.0, Evidence::documented, kUpperMid),
             f (+1.0, 1.00, 0.8, 2.5, Evidence::documented, kPresence),
+            f (0.0, 0.75, 0.6, 2.5, Evidence::interpretation, kAttack),
             f (-1.5, 0.50, 0.7, 2.5, Evidence::secondary, kSmoothTop),
             f (-8.0, 1.50, 0.4, 2.0, Evidence::documented, kBrightTop)
         }},
@@ -656,6 +672,7 @@ constexpr std::array<ToneTarget, 16> kTargets {{
             f (+1.5, 0.75, 0.9, 2.5, Evidence::documented, kMidBody),
             f (+2.0, 0.50, 0.9, 3.0, Evidence::documented, kUpperMid),
             f (+1.0, 1.00, 0.8, 2.5, Evidence::secondary, kPresence),
+            f (-1.0, 0.75, 0.6, 2.5, Evidence::interpretation, kAttack),
             f (-2.5, 0.50, 0.8, 2.5, Evidence::documented, kSmoothTop),
             f (-7.5, 1.50, 0.4, 2.0, Evidence::interpretation, kBrightTop)
         }},

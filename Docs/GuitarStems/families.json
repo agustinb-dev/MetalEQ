@@ -38,6 +38,12 @@
         "spreadDb": 3.26
       },
       {
+        "centreHz": 4000.0,
+        "label": "4k",
+        "medianRelDb": -4.12,
+        "spreadDb": 5.81
+      },
+      {
         "centreHz": 5600.0,
         "label": "5.6k",
         "medianRelDb": -12.42,
@@ -97,6 +103,12 @@
         "label": "2.8k",
         "medianRelDb": -3.17,
         "spreadDb": 1.0
+      },
+      {
+        "centreHz": 4000.0,
+        "label": "4k",
+        "medianRelDb": -4.54,
+        "spreadDb": 4.1
       },
       {
         "centreHz": 5600.0,

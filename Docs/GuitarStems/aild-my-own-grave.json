@@ -49,6 +49,14 @@
       "minRelDb": -95.47
     },
     {
+      "centreHz": 4000.0,
+      "label": "4k",
+      "maxRelDb": 1.18,
+      "meanRelDb": -5.42,
+      "medianRelDb": -4.54,
+      "minRelDb": -94.46
+    },
+    {
       "centreHz": 5600.0,
       "label": "5.6k",
       "maxRelDb": -2.98,
@@ -77,6 +85,6 @@
   "rmsDb": -17.96,
   "sampleRate": 44100,
   "sub60RelDb": -11.97,
-  "tiltDbPerOct": -3.554,
+  "tiltDbPerOct": -3.345,
   "valid": true
 }

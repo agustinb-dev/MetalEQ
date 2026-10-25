@@ -10,8 +10,8 @@ inline constexpr double kSampleRate = 48000.0;
 inline constexpr double kSeconds = 8.0;
 inline constexpr double kToleranceDb = 0.25;
 
-inline constexpr std::array<const char*, 8> kLabels { "90", "175", "350", "700", "1.4k", "2.8k", "5.6k", "9.5k" };
+inline constexpr std::array<const char*, 9> kLabels { "90", "175", "350", "700", "1.4k", "2.8k", "4k", "5.6k", "9.5k" };
 
-inline constexpr std::array<double, 8> kExpectedMeanRelDb { -59.870, -50.800, -52.410, -58.860, -40.200, -49.070, -55.280, -26.610 };
+inline constexpr std::array<double, 9> kExpectedMeanRelDb { -59.870, -50.800, -52.410, -58.860, -40.200, -49.070, -10.460, -55.280, -26.610 };
 
 } // namespace metaleq::test::fixture

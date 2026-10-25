@@ -347,6 +347,11 @@ if(BUILD_TESTING)
   add_executable(MetalEQ_UiBridgeTests Tests/MetalEqUiBridgeTests.cpp)
   target_compile_features(MetalEQ_UiBridgeTests PRIVATE cxx_std_17)
 
+  # Lets the analyzer-preview test cross-check Gui/src/presets.ts and
+  # Gui/src/mockBridge.ts against the authoritative native target table.
+  target_compile_definitions(MetalEQ_UiBridgeTests PRIVATE
+      METALEQ_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+
   # The test links the plugin's shared-code lib, so it needs the generated
   # BinaryData object (the embedded UI zip) that the lib references.
   if(TARGET metaleq_ui_assets)

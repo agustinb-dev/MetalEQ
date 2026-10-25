@@ -259,24 +259,30 @@ void MetalEQNativeFallbackEditor::saveAsPreset()
     window->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
     window->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
 
+    // SafePointers keep the callback valid even if the host destroys the
+    // editor (or the modal dialog is dismissed and deleted) before it runs;
+    // a raw `this` capture here would be a use-after-free.
+    const juce::Component::SafePointer<MetalEQNativeFallbackEditor> safeThis (this);
+    const juce::Component::SafePointer<juce::AlertWindow> safeWindow (window);
+
     window->enterModalState (true, juce::ModalCallbackFunction::create (
-        [this, window] (int result)
+        [safeThis, safeWindow] (int result)
         {
-            if (result != 1)
+            if (result != 1 || safeThis == nullptr || safeWindow == nullptr)
                 return;
 
-            const auto name = window->getTextEditorContents ("name").trim();
+            const auto name = safeWindow->getTextEditorContents ("name").trim();
             if (name.isEmpty())
                 return;
 
             juce::String error;
-            if (! processor.saveUserPreset (name, false, error))
+            if (! safeThis->processor.saveUserPreset (name, false, error))
             {
                 juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon,
                                                         "MetalEQ user preset", error);
                 return;
             }
 
-            refreshPresetList();
+            safeThis->refreshPresetList();
         }), true);
 }

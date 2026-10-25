@@ -158,9 +158,6 @@ UiBridge::UiBridge (MetalEQAudioProcessor& p)
                                  std::numeric_limits<double>::quiet_NaN());
     lastSentValues.emplace_back (MetalEQAudioProcessor::ParameterIDs::dynAudition,
                                  std::numeric_limits<double>::quiet_NaN());
-
-    for (auto& g : lastSuggestion)
-        g = 0.0f;
 }
 
 UiBridge::~UiBridge() = default;
@@ -445,7 +442,18 @@ juce::var UiBridge::handleSaveUserPreset (const juce::Array<juce::var>& args)
     if (args.size() < 1 || ! args[0].isString())
         return errorResult ("saveUserPreset expects (name, overwrite).");
 
-    const bool overwrite = args.size() > 1 && static_cast<bool> (static_cast<double> (args[1]));
+    // Only accept an explicit boolean-like flag: casting an arbitrary var
+    // (undefined or string) through double would silently save as "overwrite".
+    bool overwrite = false;
+    if (args.size() > 1)
+    {
+        const auto& flag = args[1];
+        if (flag.isBool() || flag.isInt() || flag.isInt64() || flag.isDouble())
+            overwrite = static_cast<bool> (static_cast<double> (flag));
+        else
+            return errorResult ("saveUserPreset expects (name, overwrite).");
+    }
+
     juce::String error;
 
     if (! processor.saveUserPreset (args[0].toString(), overwrite, error))
@@ -541,8 +549,10 @@ juce::var UiBridge::handleStartAnalyzerCapture (const juce::Array<juce::var>& ar
     if (profile.isVoid())
         return errorResult ("startAnalyzerCapture expects a target profile index.");
 
-    processor.startAnalyzerCapture (juce::jlimit (0, metaleq::tone::getNumToneTargets() - 1,
-        static_cast<int> (static_cast<double> (profile))));
+    if (! processor.startAnalyzerCapture (juce::jlimit (0, metaleq::tone::getNumToneTargets() - 1,
+            static_cast<int> (static_cast<double> (profile)))))
+        return errorResult ("A previous capture is still being analysed. Try again in a moment.");
+
     return okResult();
 }
 
@@ -558,7 +568,9 @@ juce::var UiBridge::handleApplyAnalyzerSuggestion (const juce::Array<juce::var>&
     if (amount.isVoid())
         return errorResult ("applyAnalyzerSuggestion expects an amount in 0..1.");
 
-    processor.applyAnalyzerSuggestion (static_cast<float> (juce::jlimit (0.0, 1.0, static_cast<double> (amount))));
+    if (! processor.applyAnalyzerSuggestion (static_cast<float> (juce::jlimit (0.0, 1.0, static_cast<double> (amount)))))
+        return errorResult ("No analyzer recommendation is available for the selected target.");
+
     markCurveDirty();
     return okResult();
 }
@@ -746,11 +758,7 @@ juce::var UiBridge::buildAnalyzerObject()
 
     juce::Array<juce::var> gains;
     for (int i = 0; i < metaleq::kNumBands; ++i)
-    {
-        lastSuggestion[static_cast<size_t> (i)] = hasReport
-            ? report.gains[static_cast<size_t> (i)] : 0.0f;
-        gains.add (lastSuggestion[static_cast<size_t> (i)]);
-    }
+        gains.add (hasReport ? report.gains[static_cast<size_t> (i)] : 0.0f);
     obj->setProperty ("suggestion", gains);
 
     if (hasReport)
@@ -1003,15 +1011,13 @@ juce::var UiBridge::buildFullSnapshot()
         userPresets.add (name);
     obj->setProperty ("userPresets", userPresets);
 
+    // fullSyncRequired is still set here, so both builders are guaranteed to
+    // return a payload; one call each is enough.
     if (const auto analyzer = buildAnalyzerObject())
         obj->setProperty ("analyzer", analyzer);
-    else
-        obj->setProperty ("analyzer", buildAnalyzerObject());
 
     if (const auto resonance = buildResonanceObject())
         obj->setProperty ("resonance", resonance);
-    else
-        obj->setProperty ("resonance", buildResonanceObject());
 
     if (const auto curve = buildCurveArray())
         obj->setProperty ("curve", curve);

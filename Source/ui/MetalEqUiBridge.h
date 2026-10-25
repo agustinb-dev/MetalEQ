@@ -58,6 +58,8 @@
           analyzer,       // { status, progress, targetIndex, suggestion[5],
                           //   input[8], target[8], predicted[8], confidences,
                           //   alreadyClose } when changed
+                          // status: 0 idle, 1 capturing, 2 capture complete,
+                          //         3 analysing, 4 ready, 5 failed
           resonance,      // { surgical: { status, progress, enoughVariation,
                           //       candidates: [{freq,q,prominence,residual,
                           //                     confidence,cutDb}] },
@@ -224,7 +226,6 @@ private:
 
     // Diff tracking: the authoritative plain value last delivered to JS.
     std::vector<std::pair<juce::String, double>> lastSentValues;
-    std::array<float, metaleq::kNumBands> lastSuggestion {};
     int lastAnalyzerStatus = -1;
     int lastAnalyzerTarget = -1;
     int lastAnalyzerResultTarget = -1;

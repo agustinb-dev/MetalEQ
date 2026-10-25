@@ -8,10 +8,12 @@
 
     The vertical range is fixed at -15..+15 dB so steep high-pass/low-pass
     rolloff and stacked boosts cannot shrink the useful EQ shapes. Response
-    outside that window is clipped at the graph edge.
+    outside that window is drawn past the plot edge and clipped there, so the
+    curve simply leaves the view (standard EQ-graph behaviour) instead of being
+    flattened along the top/bottom borders.
 */
 
-import { useMemo, useRef, useState } from 'react';
+import { useId, useMemo, useRef, useState } from 'react';
 import {
   GRAPH_DB_LINES,
   GRAPH_MAX_DB,
@@ -19,12 +21,14 @@ import {
   GUITAR_LANDMARKS,
   REGIONS,
   dbToUnit,
+  dbToUnitRaw,
   frequencyLabel,
   frequencyToUnit,
   isMajorLandmark,
   unitToFrequency,
   visibleLabelIndices,
 } from '../graphAxis';
+import { GRAPH_MAX_FREQ, GRAPH_MIN_FREQ } from '../dspMirror';
 import type { CurveInfo, ParamSpec, ResonanceCandidateInfo } from '../types';
 
 // Plot margins mirror the native EQGraph paint().
@@ -84,6 +88,8 @@ export function EqGraph({
   const svgRef = useRef<SVGSVGElement>(null);
   const dragRef = useRef<DragState>(null);
   const [dragging, setDragging] = useState<DragState>(null);
+  // Unique per-instance SVG clip id (sanitised so url(#...) stays CSS-safe).
+  const clipPathId = useId().replace(/[^a-zA-Z0-9_-]/g, '');
 
   const plot = useMemo(() => {
     const w = width - PLOT_MARGIN.left - PLOT_MARGIN.right;
@@ -97,6 +103,18 @@ export function EqGraph({
 
   const freqToX = (hz: number) => plot.x + plot.w * frequencyToUnit(hz);
   const dbToY = (db: number) => plot.y + plot.h * (1 - dbToUnit(db));
+
+  // Unclamped mapping for the response paths: values past the fixed -15..+15 dB
+  // window go beyond the plot edge, where the clip path removes them from view.
+  // Grid lines, markers and handles keep using the clamped dbToY() above.
+  const curveToY = (db: number) => {
+    if (!Number.isFinite(db)) {
+      // Guard against degenerate values (e.g. log10(0) at an exact notch);
+      // park them far past the correct edge so the clip still reads as off-view.
+      return db > 0 ? plot.y - 4 * plot.h : plot.y + 4 * plot.h;
+    }
+    return plot.y + plot.h * (1 - dbToUnitRaw(db));
+  };
 
   const localPoint = (event: React.PointerEvent<SVGGElement>) => {
     const rect = svgRef.current?.getBoundingClientRect();
@@ -164,8 +182,8 @@ export function EqGraph({
       ? curve.points
           .map((db, i) => {
             const unit = i / (curve.points.length - 1);
-            const x = freqToX(20 * Math.pow(20000 / 20, unit));
-            return `${i === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${dbToY(db).toFixed(2)}`;
+            const x = freqToX(GRAPH_MIN_FREQ * Math.pow(GRAPH_MAX_FREQ / GRAPH_MIN_FREQ, unit));
+            return `${i === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${curveToY(db).toFixed(2)}`;
           })
           .join(' ')
       : '';
@@ -175,8 +193,8 @@ export function EqGraph({
       ? suggestionCurve
           .map((db, i) => {
             const unit = i / (suggestionCurve.length - 1);
-            const x = freqToX(20 * Math.pow(20000 / 20, unit));
-            return `${i === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${dbToY(db).toFixed(2)}`;
+            const x = freqToX(GRAPH_MIN_FREQ * Math.pow(GRAPH_MAX_FREQ / GRAPH_MIN_FREQ, unit));
+            return `${i === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${curveToY(db).toFixed(2)}`;
           })
           .join(' ')
       : '';
@@ -223,6 +241,14 @@ export function EqGraph({
       role="img"
       aria-label="EQ response curve"
     >
+      {/* Clip the drawn curves at the plot edges: out-of-window response leaves
+          the view instead of piling up flat along the top/bottom borders. */}
+      <defs>
+        <clipPath id={clipPathId}>
+          <rect x={plot.x} y={plot.y} width={plot.w} height={plot.h} />
+        </clipPath>
+      </defs>
+
       {/* regions */}
       {REGIONS.map((r) => {
         const x1 = freqToX(r.from);
@@ -292,7 +318,9 @@ export function EqGraph({
       })}
 
       {/* response curve */}
-      <path d={responsePath} className="graph-response" />
+      <g clipPath={`url(#${clipPathId})`}>
+        <path d={responsePath} className="graph-response" />
+      </g>
 
       {/* HP / LP -3 dB markers; draggable horizontally when editable */}
       {markers.map((m) => {
@@ -346,8 +374,12 @@ export function EqGraph({
         );
       })}
 
-      {/* suggested correction */}
-      {suggestionPath && <path d={suggestionPath} className="graph-suggestion" />}
+      {/* suggested correction (clipped like the main curve) */}
+      {suggestionPath && (
+        <g clipPath={`url(#${clipPathId})`}>
+          <path d={suggestionPath} className="graph-suggestion" />
+        </g>
+      )}
 
       {/* V3 resonance candidates: selectable vertical markers */}
       {resonanceCandidates.map((candidate, index) => {

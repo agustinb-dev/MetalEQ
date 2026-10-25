@@ -650,11 +650,9 @@ void MetalEQAudioProcessor::captureAnalyzerInput (const juce::AudioBuffer<float>
     const auto* const* input = buffer.getArrayOfReadPointers();
     for (int i = 0; i < samples && captured < limit; ++i)
     {
-        if (analyzerCaptureCancelled.load (std::memory_order_acquire))
-        {
-            analyzerCaptureState.store (AnalyzerCaptureState::idle, std::memory_order_release);
-            return;
-        }
+        // Cancellation is re-checked once per callback below: a cancel can
+        // discard this block's samples, and per-sample atomic loads on the
+        // audio thread buy nothing beyond one block of latency.
         const float mono = channels > 1 ? 0.5f * (input[0][i] + input[1][i]) : input[0][i];
         analyzerCapture[static_cast<size_t> (captured)] = mono;
         ++captured;
@@ -1519,7 +1517,10 @@ void MetalEQAudioProcessor::setChoiceParameter (const char* id, int index)
         if (numChoices <= 1)
             return;
 
-        choice->setValueNotifyingHost ((float) juce::jlimit (0, index, numChoices - 1) / (float) (numChoices - 1));
+        // Clamp the requested index, then write the normalised position the
+        // host expects for a choice parameter.
+        const int clampedIndex = juce::jlimit (0, numChoices - 1, index);
+        choice->setValueNotifyingHost ((float) clampedIndex / (float) (numChoices - 1));
     }
 }
 
@@ -2215,26 +2216,40 @@ void MetalEQAudioProcessor::revertToLoadedPreset()
         syncPresetChoiceToLoadedIdentity();
 }
 
-void MetalEQAudioProcessor::startAnalyzerCapture (int targetProfile)
+bool MetalEQAudioProcessor::startAnalyzerCapture (int targetProfile)
 {
-    // The target-profile analyzer cannot run at the same time as a resonance
-    // capture. If a resonance start is still waiting for the audio callback to
-    // release the capture buffer, replace it cleanly instead of leaving that
-    // section's status stuck on capturing.
-    if (analyzerDeferredStartRequested.load (std::memory_order_acquire))
+    const auto state = analyzerCaptureState.load (std::memory_order_acquire);
+
+    // A take waiting for, or already in, the worker must not be discarded by a
+    // new start; the UI disables the button during this window. The start is
+    // refused rather than silently dropped so the bridge can report it.
+    if (state == AnalyzerCaptureState::ready || state == AnalyzerCaptureState::analyzing)
+        return false;
+
+    // The target-profile analyzer and the resonance scans share one capture
+    // buffer. A new analyzer capture replaces a scan that is still listening
+    // (mirroring startResonanceScan), so either section can be re-targeted
+    // without stopping the other first. Completed results are left alone.
+    const bool deferredStart = analyzerDeferredStartRequested.load (std::memory_order_acquire);
+    if (deferredStart
+        || state == AnalyzerCaptureState::arming || state == AnalyzerCaptureState::requested
+        || state == AnalyzerCaptureState::recording || state == AnalyzerCaptureState::cancelPending)
     {
-        const int deferredTarget = resonanceTargetForAnalyzerMode (
-            analyzerDeferredStartMode.load (std::memory_order_relaxed));
+        const int previousTarget = deferredStart
+            ? resonanceTargetForAnalyzerMode (analyzerDeferredStartMode.load (std::memory_order_relaxed))
+            : resonanceTargetForAnalyzerMode (analyzerMode.load (std::memory_order_acquire));
+
         cancelAnalyzerCapture();
-        if (deferredTarget >= 0)
+
+        if (previousTarget >= 0)
         {
-            const auto target = static_cast<ResonanceScanTarget> (deferredTarget);
-            setResonanceStatus (target, AnalyzerStatus::idle);
-            clearResonanceResults (target);
+            const auto previous = static_cast<ResonanceScanTarget> (previousTarget);
+            setResonanceStatus (previous, AnalyzerStatus::idle);
+            clearResonanceResults (previous);
         }
     }
 
-    startAnalyzerCaptureWithGeneration (
+    return startAnalyzerCaptureWithGeneration (
         targetProfile, 0, analyzerCancelGeneration.load (std::memory_order_acquire));
 }
 
@@ -2381,6 +2396,8 @@ MetalEQAudioProcessor::AnalyzerStatus MetalEQAudioProcessor::captureStatus() con
     case AnalyzerCaptureState::cancelPending:
         return AnalyzerStatus::capturing;
     case AnalyzerCaptureState::ready:
+        // Recorded, waiting for the worker: not playable yet, not analysed yet.
+        return AnalyzerStatus::captureComplete;
     case AnalyzerCaptureState::analyzing:
         return AnalyzerStatus::analyzing;
     case AnalyzerCaptureState::complete:
@@ -2529,18 +2546,13 @@ void MetalEQAudioProcessor::storeAnalyzerResult (
 
 void MetalEQAudioProcessor::clearAnalyzerResult() noexcept
 {
+    // Invalidating is enough: getAnalyzerReport() and readAnalyzerInput() only
+    // publish the shape arrays after analyzerReportValid is observed true, and
+    // storeAnalyzerResult() fills them before setting the flag. That keeps this
+    // function lock-free because the deferred-start path runs it on the audio
+    // thread, where taking analyzerReportLock would risk priority inversion.
     for (auto& gain : analyzerSuggestion)
         gain.store (0.0f, std::memory_order_release);
-
-    {
-        const juce::SpinLock::ScopedLockType lock (analyzerReportLock);
-        analyzerInputShape.fill (0.0f);
-        analyzerTargetShape.fill (0.0f);
-        analyzerPredictedShape.fill (0.0f);
-        analyzerInputConfidence = 0.0f;
-        analyzerCorrectionConfidence = 0.0f;
-        analyzerAlreadyClose = false;
-    }
 
     analyzerResultTarget.store (-1, std::memory_order_release);
     analyzerReportValid.store (false, std::memory_order_release);
@@ -2593,36 +2605,35 @@ void MetalEQAudioProcessor::getAnalyzerSuggestion (
 
 double MetalEQAudioProcessor::getAnalyzerResponseDb (double freq, float amount) const
 {
-    static constexpr double frequencies[metaleq::kNumBands] = { 120.0, 350.0, 1000.0, 2800.0, 7000.0 };
     auto eq = readEqSettings();
     amount = juce::jlimit (0.0f, 1.0f, amount);
     for (int i = 0; i < metaleq::kNumBands; ++i)
     {
         auto& band = eq.bands[static_cast<size_t> (i)];
-        band.freq = frequencies[i];
+        band.freq = metaleq::tone::kCorrectionFrequencies[static_cast<size_t> (i)];
         band.gainDb = analyzerSuggestion[static_cast<size_t> (i)].load (std::memory_order_acquire) * amount;
-        band.q = 0.8;
+        band.q = metaleq::tone::kCorrectionQ;
         band.on = true;
     }
     return metaleq::responseDb (eq, readMacroSettings(), getDisplaySampleRate(), freq);
 }
 
-void MetalEQAudioProcessor::applyAnalyzerSuggestion (float amount)
+bool MetalEQAudioProcessor::applyAnalyzerSuggestion (float amount)
 {
     if (getAnalyzerStatus() != AnalyzerStatus::ready)
-        return;
+        return false;
     if (getAnalyzerResultTarget() != getAnalyzerTargetIndex())
-        return;
+        return false;
 
-    static constexpr double frequencies[metaleq::kNumBands] = { 120.0, 350.0, 1000.0, 2800.0, 7000.0 };
     amount = juce::jlimit (0.0f, 1.0f, amount);
     applyingPreset.store (true, std::memory_order_relaxed);
     for (int i = 0; i < metaleq::kNumBands; ++i)
     {
-        setFloatParameter (ParameterIDs::bandFreq[i], frequencies[i]);
+        const auto slot = static_cast<size_t> (i);
+        setFloatParameter (ParameterIDs::bandFreq[i], metaleq::tone::kCorrectionFrequencies[slot]);
         setFloatParameter (ParameterIDs::bandGain[i],
-            analyzerSuggestion[static_cast<size_t> (i)].load (std::memory_order_acquire) * amount);
-        setFloatParameter (ParameterIDs::bandQ[i], 0.8);
+            analyzerSuggestion[slot].load (std::memory_order_acquire) * amount);
+        setFloatParameter (ParameterIDs::bandQ[i], metaleq::tone::kCorrectionQ);
         setFloatParameter (ParameterIDs::bandOn[i], 1.0);
     }
     setChoiceParameter (ParameterIDs::preset, 0);
@@ -2631,6 +2642,7 @@ void MetalEQAudioProcessor::applyAnalyzerSuggestion (float amount)
     loadedPresetIsUser = false;
     rememberCurrentAsLoadedPreset (lastPresetName, false);
     applyingPreset.store (false, std::memory_order_release);
+    return true;
 }
 
 bool MetalEQAudioProcessor::startResonanceScan (ResonanceScanTarget target)

@@ -67,7 +67,7 @@ public:
     double getTailLengthSeconds() const override { return 0.0; }
 
     /** Zero lookahead, zero added latency: this is a linear-time IIR EQ. */
-    bool supportsDoublePrecisionProcessing() const { return false; }
+    bool supportsDoublePrecisionProcessing() const override { return false; }
 
     juce::AudioProcessorParameter* getBypassParameter() const override
     {
@@ -218,15 +218,23 @@ public:
     /** Frequency response in dB at `freq` for the current settings. */
     double getResponseDb (double freq) const;
 
+    /** captureComplete is the short window between the audio thread finishing
+        the recording and the worker thread picking the take up for analysis.
+        It is emitted so the UI can show "analysing" rather than "idle" and
+        disable a second start. */
     enum class AnalyzerStatus : int { idle = 0, capturing = 1, captureComplete = 2, analyzing = 3, ready = 4, failed = 5 };
     static constexpr int analyzerDurationSeconds = 8;
-    void startAnalyzerCapture (int targetProfile);
+    /** Starts an 8-second capture. Returns false when a previous take is still
+        being analysed, or when the shared capture buffer is otherwise busy. */
+    bool startAnalyzerCapture (int targetProfile);
     void cancelAnalyzerCapture() noexcept;
     AnalyzerStatus getAnalyzerStatus() const noexcept;
     float getAnalyzerProgress() const noexcept;
     void getAnalyzerSuggestion (std::array<float, metaleq::kNumBands>& gains) const noexcept;
     double getAnalyzerResponseDb (double freq, float amount) const;
-    void applyAnalyzerSuggestion (float amount);
+    /** Copies the current recommendation into the five musical bands.
+        Returns false when no recommendation matches the selected target. */
+    bool applyAnalyzerSuggestion (float amount);
 
     //--- V3.2 evidence-based analyzer ---------------------------------------
     /** Chooses a target without starting a capture. When a previous capture is

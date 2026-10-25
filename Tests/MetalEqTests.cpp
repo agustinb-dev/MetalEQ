@@ -113,6 +113,9 @@ void testLowPass()
             check (std::isfinite (atCutoff) && std::isfinite (above), "LPF response stays finite at supported sample rates");
             check (above < atCutoff, "LPF attenuates high frequencies");
 
+            // The labelled frequency must be the true -3 dB point of the whole
+            // cascade (regression: slopes 2/3 used to miss it badly).
+            near (atCutoff, -3.0103, 0.05, "LPF cutoff is near -3 dB at the labelled frequency");
             if (slope == 1)
                 near (atCutoff, -3.0103, 0.15, "12 dB/oct LPF cutoff is near -3 dB");
             if (slope > 1)
@@ -229,6 +232,37 @@ void testFactorySettings()
                "neutral preset uses centred/off macros");
     }
 }
+void testHighPass()
+{
+    for (double rate : { 44100.0, 48000.0, 96000.0, 192000.0 })
+    {
+        for (int slope : { 1, 2, 3 })
+        {
+            metaleq::EqSettings eq;
+            eq.hpFreq = 80.0;
+            eq.hpSlope = slope;
+            metaleq::ChainSpec chain;
+            metaleq::buildChain (chain, eq, metaleq::MacroSettings {}, rate);
+            const double atCutoff = metaleq::chainResponseDb (chain, rate, 80.0);
+            const double below = metaleq::chainResponseDb (chain, rate, 40.0);
+            check (std::isfinite (atCutoff) && std::isfinite (below), "HPF response stays finite at supported sample rates");
+            check (below < atCutoff, "HPF attenuates low frequencies");
+
+            // Same regression pin as the LPF: the labelled frequency is the
+            // true -3 dB point of the cascade for every slope. (Slopes 2/3
+            // used to be compensated in the wrong direction entirely.)
+            near (atCutoff, -3.0103, 0.05, "HPF cutoff is near -3 dB at the labelled frequency");
+        }
+
+        metaleq::EqSettings off;
+        off.hpSlope = 0;
+        metaleq::ChainSpec bypassChain;
+        metaleq::buildChain (bypassChain, off, metaleq::MacroSettings {}, rate);
+        near (metaleq::chainResponseDb (bypassChain, rate, 40.0), 0.0, 1.0e-8,
+              "disabled HPF is transparent");
+    }
+}
+
 } // namespace
 
 int main()
@@ -236,6 +270,7 @@ int main()
     testGraphAxis();
     testNonDestructiveShapes();
     testLowPass();
+    testHighPass();
     testChainRetirement();
     testFactorySettings();
     if (failures != 0)

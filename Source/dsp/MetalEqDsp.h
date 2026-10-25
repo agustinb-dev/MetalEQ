@@ -472,19 +472,23 @@ inline int getNumShapes() noexcept { return static_cast<int> (shapeDefinitions.s
 // Chain construction
 //==============================================================================
 
-/** Cascaded Butterworth (Linkwitz-Riley even order) crossover sections.
+/** Cascaded identical Butterworth (Q = 0.7071) crossover sections.
 
-    With `stages` identical sections the -3 dB point of the cascade sits below
-    the cutoff of a single section, so the section frequency is compensated so
-    that the labelled frequency stays at the true -3 dB point of the whole
-    filter: stages 1 -> x1.000, 2 -> x1.557, 3 -> x1.993.
+    With `stages` identical sections the cascade's -3 dB point no longer sits
+    on the section frequency, so the section frequency is compensated so that
+    the labelled frequency stays at the true -3 dB point of the whole filter.
+    For N cascaded low-pass prototype sections |H(w)|^(2N) = 1/(1+w^4)^N = 1/2
+    at w = f(-3dB)/f(section) = (2^(1/N) - 1)^(1/4), i.e. stages 2 -> w 0.8022
+    (comp 1.24651) and stages 3 -> w 0.71402 (comp 1.40055). A high-pass is the
+    exact mirror image, which is why addCrossover() divides instead of
+    multiplies for high-pass sections.
 */
 inline double crossoverCompensation (int stages) noexcept
 {
     switch (stages)
     {
-        case 2:  return 1.5572;
-        case 3:  return 1.9930;
+        case 2:  return 1.2465047164293;   // (2^(1/2) - 1)^(-1/4)
+        case 3:  return 1.4005058698113;   // (2^(1/3) - 1)^(-1/4)
         default: return 1.0;
     }
 }
@@ -494,8 +498,24 @@ inline void addCrossover (ChainSpec& chain, FilterType type, double freq, int sl
     if (slopeChoice <= 0)
         return;
 
-    const int    stages = clampValue (slopeChoice, 1, 3);
-    const double f      = clampValue (freq * crossoverCompensation (stages), 1.0, sampleRate * 0.49);
+    const int stages = clampValue (slopeChoice, 1, 3);
+    const double omegaN = 1.0 / crossoverCompensation (stages);
+
+    // RBJ biquads realize the Butterworth s-plane prototype through a bilinear
+    // transform: the prototype frequency variable is tau(f) = tan(pi f / fs).
+    // At low frequencies tau and f agree, but near the top of the band (a 12
+    // kHz low-pass at a 48 kHz rate, say) the plain analog constant misses by
+    // 10-18 %. Place the section in the tan-warped domain so the label stays
+    // at the true -3 dB point of both the drawn GUI curve and the filters the
+    // audio thread runs:
+    //   low-pass :  tau(f_section) = tau(f_label) / omegaN   (sections above)
+    //   high-pass:  tau(f_section) = tau(f_label) * omegaN   (sections below)
+    const double f0Label = clampValue (freq, 1.0, sampleRate * 0.49);
+    const double tauLabel = std::tan (kPi * f0Label / sampleRate);
+    const double tauSection = (type == FilterType::lowPass) ? tauLabel / omegaN
+                                                            : tauLabel * omegaN;
+    const double f = clampValue (sampleRate * std::atan (tauSection) / kPi,
+                                 1.0, sampleRate * 0.49);
 
     for (int i = 0; i < stages; ++i)
         chain.add (type, f, kButterworthQ, 0.0);

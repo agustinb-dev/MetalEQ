@@ -659,15 +659,141 @@ static void testAnalyzerModelIntegration (MetalEQAudioProcessor& processor)
     check (second.target != first.target,
            "the target model changed with the destination");
 
-    processor.applyAnalyzerSuggestion (1.0f);
-    checkNear (readPlain (processor, "band1Gain"), second.gains[0], 0.05,
-               "Apply correction writes the first band gain");
-    checkNear (readPlain (processor, "band2Gain"), second.gains[1], 0.05,
-               "Apply correction writes the second band gain");
-    checkNear (static_cast<double> (readPlain (processor, "band1Freq")), 120.0, 0.01,
-               "Apply correction uses the analyzer's 120 Hz band");
+    check (processor.applyAnalyzerSuggestion (1.0f),
+           "Apply correction succeeds for a matching ready report");
+
+    for (int i = 0; i < metaleq::kNumBands; ++i)
+    {
+        const auto prefix = "band" + juce::String (i + 1);
+        checkNear (readPlain (processor, (prefix + "Gain").toRawUTF8()),
+                   second.gains[static_cast<size_t> (i)], 0.05,
+                   "Apply correction writes every suggested band gain");
+        checkNear (static_cast<double> (readPlain (processor, (prefix + "Freq").toRawUTF8())),
+                   metaleq::tone::kCorrectionFrequencies[static_cast<size_t> (i)], 0.01,
+                   "Apply correction uses the shared correction frequency for every band");
+        checkNear (static_cast<double> (readPlain (processor, (prefix + "Q").toRawUTF8())),
+                   metaleq::tone::kCorrectionQ, 0.005,
+                   "Apply correction uses the shared correction Q for every band");
+    }
 
     processor.releaseResources();
+}
+
+//==============================================================================
+static void testAnalyzerStartAndApplyRefusals (MetalEQAudioProcessor& processor)
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int blockSize = 512;
+    processor.prepareToPlay (sampleRate, blockSize);
+
+    // No report yet: applying must report failure and leave the bands alone.
+    setPlain (processor, "band1Gain", 0.0f);
+    check (! processor.applyAnalyzerSuggestion (1.0f),
+           "Apply correction reports failure when no report is ready");
+    checkNear (readPlain (processor, "band1Gain"), 0.0, 1.0e-6,
+               "a refused Apply correction leaves the bands untouched");
+
+    // The tone analyzer and the resonance scans share one capture buffer: a
+    // tone capture replaces a scan that is still listening instead of failing
+    // silently, and the replaced section returns to idle.
+    check (processor.startResonanceScan (MetalEQAudioProcessor::ResonanceScanTarget::surgical),
+           "a surgical scan starts from idle");
+
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    buffer.clear();
+    juce::MidiBuffer midi;
+    processor.processBlock (buffer, midi);
+
+    check (processor.getResonanceStatus (MetalEQAudioProcessor::ResonanceScanTarget::surgical)
+               == MetalEQAudioProcessor::AnalyzerStatus::capturing,
+           "the surgical scan is listening after a block");
+
+    check (processor.startAnalyzerCapture (2),
+           "a tone capture can replace a listening resonance scan");
+    check (processor.getResonanceStatus (MetalEQAudioProcessor::ResonanceScanTarget::surgical)
+               == MetalEQAudioProcessor::AnalyzerStatus::idle,
+           "the replaced resonance section returns to idle");
+    check (processor.getAnalyzerTargetIndex() == 2,
+           "the replacement capture uses the requested target");
+
+    processor.cancelAnalyzerCapture();
+    processor.processBlock (buffer, midi); // finish cancelPending -> idle
+    check (processor.getAnalyzerStatus() == MetalEQAudioProcessor::AnalyzerStatus::idle,
+           "cancelling the replacement capture returns the analyzer to idle");
+    processor.releaseResources();
+}
+
+//==============================================================================
+static void testAnalyzerPreviewMatchesGui()
+{
+    const juce::File presetsFile (juce::String (METALEQ_SOURCE_DIR) + "/Gui/src/presets.ts");
+    check (presetsFile.existsAsFile(), "Gui/src/presets.ts is reachable from the test");
+    if (! presetsFile.existsAsFile())
+        return;
+
+    const auto presetsText = presetsFile.loadFileAsString();
+    const int tableStart = presetsText.indexOf ("ANALYZER_TARGETS");
+    check (tableStart >= 0, "presets.ts declares ANALYZER_TARGETS");
+    if (tableStart < 0)
+        return;
+
+    auto table = presetsText.substring (tableStart);
+    const int tableOpen = table.indexOf ("= [");
+    check (tableOpen >= 0, "presets.ts opens the ANALYZER_TARGETS array");
+    if (tableOpen < 0)
+        return;
+
+    table = table.substring (tableOpen + 3); // after "= ["
+    table = table.upToFirstOccurrenceOf ("\n];", false, false);
+
+    juce::StringArray guiIds;
+    for (const auto& line : juce::StringArray::fromLines (table))
+    {
+        const int marker = line.indexOf ("id: '");
+        if (marker < 0)
+            continue;
+        const int begin = marker + 5;
+        const int end = line.indexOfChar (begin, '\'');
+        if (end > begin)
+            guiIds.add (line.substring (begin, end));
+    }
+
+    check (guiIds.size() == metaleq::tone::getNumToneTargets(),
+           "the GUI preview lists exactly the native analyzer targets");
+    const int shared = juce::jmin (guiIds.size(), metaleq::tone::getNumToneTargets());
+    for (int i = 0; i < shared; ++i)
+        check (guiIds[i] == metaleq::tone::getToneTarget (i).id,
+               "the GUI preview target id and order match the native target table");
+
+    // The browser mock's per-target shapes are indexed by target number; a
+    // shorter table silently clamps lower indices to the last shape.
+    const juce::File mockFile (juce::String (METALEQ_SOURCE_DIR) + "/Gui/src/mockBridge.ts");
+    check (mockFile.existsAsFile(), "Gui/src/mockBridge.ts is reachable from the test");
+    if (! mockFile.existsAsFile())
+        return;
+
+    const auto mockText = mockFile.loadFileAsString();
+    const int shapesStart = mockText.indexOf ("MOCK_TARGET_SHAPES");
+    check (shapesStart >= 0, "mockBridge.ts declares MOCK_TARGET_SHAPES");
+    if (shapesStart < 0)
+        return;
+
+    auto shapes = mockText.substring (shapesStart);
+    const int shapesOpen = shapes.indexOf ("= [");
+    check (shapesOpen >= 0, "mockBridge.ts opens the MOCK_TARGET_SHAPES array");
+    if (shapesOpen < 0)
+        return;
+
+    shapes = shapes.substring (shapesOpen + 3); // after "= ["
+    shapes = shapes.upToFirstOccurrenceOf ("\n];", false, false);
+
+    int rows = 0;
+    for (const auto& line : juce::StringArray::fromLines (shapes))
+        if (line.trimStart().startsWithChar ('['))
+            ++rows;
+
+    check (rows == metaleq::tone::getNumToneTargets(),
+           "mockBridge.ts provides one target shape per native analyzer target");
 }
 
 //==============================================================================
@@ -712,6 +838,13 @@ int main()
         MetalEQAudioProcessor processor;
         testAnalyzerModelIntegration (processor);
     }
+
+    {
+        MetalEQAudioProcessor processor;
+        testAnalyzerStartAndApplyRefusals (processor);
+    }
+
+    testAnalyzerPreviewMatchesGui();
 
     if (failures == 0)
         std::cout << "All MetalEqUiBridge tests passed.\n";

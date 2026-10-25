@@ -523,7 +523,10 @@ void testLowPassStateMigration (MetalEQAudioProcessor& processor)
             continue;
         auto slotParams = slotBaseline.getChildWithName ("PARAMS");
         slot.removeChild (slotBaseline, nullptr);
-        slot.appendChild (slotParams, nullptr);
+        // slotParams is still a child of slotBaseline after the remove, so it
+        // must be detached with a copy before it can be appended to the slot
+        // (appending a still-parented tree asserts inside ValueTree).
+        slot.appendChild (slotParams.createCopy(), nullptr);
     }
     setLowPassInParameterTrees (legacySlotLayout, 0.0, 2.0);
     const auto legacySlotBlock = stateToBlock (legacySlotLayout);

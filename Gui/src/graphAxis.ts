@@ -33,6 +33,13 @@ export function dbToUnit(db: number, minDb = GRAPH_MIN_DB, maxDb = GRAPH_MAX_DB)
   return clamp((db - minDb) / (maxDb - minDb), 0, 1);
 }
 
+/** Unclamped mirror of dbToUnit for response paths. Out-of-range values map
+    beyond the 0..1 window on purpose: the renderer clips the curve at the plot
+    edges (standard EQ-graph behaviour) instead of flattening it there. */
+export function dbToUnitRaw(db: number, minDb = GRAPH_MIN_DB, maxDb = GRAPH_MAX_DB): number {
+  return (db - minDb) / (maxDb - minDb);
+}
+
 /** Select a non-overlapping subset of frequency labels for the available width. */
 export function visibleLabelIndices(width: number, minLabelSpacing: number): number[] {
   const selected: number[] = [];

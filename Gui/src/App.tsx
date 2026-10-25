@@ -135,6 +135,8 @@ function analyzerStatusText(info: AnalyzerInfo, targetLabel: string | undefined)
   switch (info.status) {
     case AnalyzerStatus.capturing:
       return `Capturing input: ${Math.round(info.progress * 100)}% · play through the host.`;
+    case AnalyzerStatus.captureComplete:
+      return 'Capture complete · analysing the take…';
     case AnalyzerStatus.analyzing:
       return 'Measuring the input and comparing it with the selected target…';
     case AnalyzerStatus.ready: {
@@ -176,6 +178,8 @@ function resonanceStatusText(info: SurgicalResonanceInfo): string {
   switch (info.status) {
     case AnalyzerStatus.capturing:
       return `Listening: ${Math.round(info.progress * 100)}% · play varied riffs and let notes ring.`;
+    case AnalyzerStatus.captureComplete:
+      return 'Capture complete · analysing the take…';
     case AnalyzerStatus.analyzing:
       return 'Separating stationary peaks from moving harmonics…';
     case AnalyzerStatus.ready:
@@ -193,6 +197,8 @@ function dynamicResonanceStatusText(info: DynamicResonanceInfo): string {
   switch (info.status) {
     case AnalyzerStatus.capturing:
       return `Listening: ${Math.round(info.progress * 100)}% · play varied riffs and let notes ring.`;
+    case AnalyzerStatus.captureComplete:
+      return 'Capture complete · analysing the take…';
     case AnalyzerStatus.analyzing:
       return 'Measuring each peak against its neighbouring half-octaves…';
     case AnalyzerStatus.ready:
@@ -393,7 +399,8 @@ function ResonancePanel({
   onAudition: (enabled: boolean) => void;
 }) {
   const capturing = info.status === AnalyzerStatus.capturing;
-  const analyzing = info.status === AnalyzerStatus.analyzing;
+  const analyzing = info.status === AnalyzerStatus.analyzing
+    || info.status === AnalyzerStatus.captureComplete;
   const ready = info.status === AnalyzerStatus.ready;
   const canSelect = ready || info.status === AnalyzerStatus.idle || info.status === AnalyzerStatus.failed;
 
@@ -521,7 +528,8 @@ function DynamicSuggestionPanel({
   onAudition: (enabled: boolean) => void;
 }) {
   const capturing = info.status === AnalyzerStatus.capturing;
-  const analyzing = info.status === AnalyzerStatus.analyzing;
+  const analyzing = info.status === AnalyzerStatus.analyzing
+    || info.status === AnalyzerStatus.captureComplete;
   const ready = info.status === AnalyzerStatus.ready;
   const suggestions = info.candidates;
 
@@ -1401,9 +1409,11 @@ export function App(): React.JSX.Element {
   const resonance = state.resonance;
   const surgicalScan = resonance.surgical;
   const dynamicScan = resonance.dynamic;
-  const resonanceBusy = state.analyzer.status === AnalyzerStatus.analyzing
-    || surgicalScan.status === AnalyzerStatus.analyzing
-    || dynamicScan.status === AnalyzerStatus.analyzing;
+  // The tone capture and both resonance scans share one native capture
+  // machine. While any take is being analysed, no section can start a new one.
+  const analysisInFlight = [state.analyzer.status, surgicalScan.status, dynamicScan.status].some(
+    (status) => status === AnalyzerStatus.captureComplete || status === AnalyzerStatus.analyzing,
+  );
   const surgicalActive = useMemo(() => {
     for (let i = 0; i < NUM_SURGICAL_BANDS; i++) {
       const n = i + 1;
@@ -1553,8 +1563,21 @@ export function App(): React.JSX.Element {
     if (profile >= targetOptions.length) setProfile(0);
   }, [profile, targetOptions.length, state.analyzer.targetIndex]);
 
+  /** The debounced suggestion-curve fetch below re-runs when either changes. */
+  const analyzerSuggestion = state.analyzer.suggestion;
+  const analyzerResultTarget = state.analyzer.resultTarget;
+
+  // A new recommendation (revision bump) invalidates the cached preview even
+  // while the analyzer stays ready, e.g. when the destination changes and the
+  // native side re-fits the same take. Clear first so the graph cannot show
+  // the previous target's dashed curve during the debounce window.
+  useEffect(() => {
+    store.setSuggestionCurve(null);
+  }, [analyzerSuggestion, analyzerResultTarget]);
+
   // Suggested-correction curve: fetched whenever the analyzer is ready and
-  // the amount changes (debounced so dragging the slider stays cheap).
+  // the recommendation or the amount changes (debounced so dragging the
+  // slider stays cheap).
   useEffect(() => {
     if (!analyzerReady) {
       store.setSuggestionCurve(null);
@@ -1566,7 +1589,7 @@ export function App(): React.JSX.Element {
       });
     }, 150);
     return () => window.clearTimeout(timer);
-  }, [bridge, analyzerReady, amount]);
+  }, [bridge, analyzerReady, amount, analyzerSuggestion, analyzerResultTarget]);
 
   //----------------------------------------------------------------------
   // Parameter write: optimistic local echo, then the authoritative value.
@@ -1955,9 +1978,10 @@ export function App(): React.JSX.Element {
           type="button"
           className="btn capture-btn"
           onClick={onCaptureClicked}
-          disabled={targetOptions.length === 0}
+          disabled={targetOptions.length === 0 || analysisInFlight}
+          title="Capture 8 seconds of playing. Starting a new capture replaces a resonance scan that is still listening."
         >
-          {capturing ? 'Stop capture' : 'Capture 8 seconds'}
+          {capturing ? 'Stop capture' : analysisInFlight ? 'Analysing…' : 'Capture 8 seconds'}
         </button>
         <span className="row-label amount-label">AMOUNT</span>
         <Slider
@@ -2181,7 +2205,7 @@ export function App(): React.JSX.Element {
             hovered={hoveredCandidate}
             surgicalActive={surgicalActive}
             audition={(state.params.resAudition ?? 0) >= 0.5}
-            busy={resonanceBusy}
+            busy={analysisInFlight}
             onScan={() => onResonanceScan(false)}
             onCancel={() => onResonanceCancel(false)}
             onToggleCandidate={onToggleCandidate}
@@ -2213,7 +2237,7 @@ export function App(): React.JSX.Element {
               selected={selectedDynamicCandidates}
               dynamicActive={dynamicActive}
               audition={(state.params.dynAudition ?? 0) >= 0.5}
-              busy={resonanceBusy}
+              busy={analysisInFlight}
               onScan={() => onResonanceScan(true)}
               onCancel={() => onResonanceCancel(true)}
               onToggleCandidate={onToggleDynamicCandidate}

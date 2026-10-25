@@ -494,6 +494,38 @@ export const ANALYZER_TARGETS: AnalyzerTargetInfo[] = [
       evidence: 0, evidenceLabel: 'documented',
     }],
   },
+  {
+    index: 16, id: 'genre-thrash-early-80s', label: "Classic Thrash — '84-'86 Era",
+    shortLabel: 'Classic Thrash', category: 0, categoryLabel: 'Genres',
+    albumPeriod: "Metallica, Master of Puppets (1986) and Ride the Lightning (1984); Megadeth, Peace Sells… But Who's Buying? (1986)",
+    objective: 'A measured mid-80s thrash destination: palm-mute weight without sub rumble, a present 2.8-4 kHz attack and a controlled top.',
+    limitations: 'Thrash stems leak below 100 Hz, so 90-350 Hz are estimates; 9.5 kHz fizz cannot be calibrated from lossy stems. A family destination, not one album.',
+    confidence: 0.60,
+    measuredFromStems: 'Metallica - Master of Puppets (guitar stem); Metallica - For Whom the Bell Tolls (guitar stem); Megadeth - The Conjuring (guitar stem)',
+    sources: [{
+      title: "How Flemming Rasmussen produced Metallica's classic Master Of Puppets (MusicRadar)",
+      url: 'https://www.musicradar.com/artists/producers-engineers/all-the-albums-i-did-with-metallica-were-recorded-on-24-track-analogue-tape-theres-not-a-computer-in-sight-how-flemming-rasmussen-produced-metallicas-classic-master-of-puppets',
+      date: '2025-05-01',
+      claim: 'Flemming Rasmussen produced Master of Puppets; the measured MOP stem belongs to this family.',
+      evidence: 0, evidenceLabel: 'documented',
+    }],
+  },
+  {
+    index: 17, id: 'genre-richardson-metalcore', label: 'Richardson-Era Metalcore',
+    shortLabel: 'Richardson Metalcore', category: 0, categoryLabel: 'Genres',
+    albumPeriod: 'Bullet for My Valentine, Waking the Demon (2008); As I Lay Dying, The Darkest Nights (2005) / My Own Grave (2019)',
+    objective: 'A measured 2000s Colin Richardson metalcore destination: tight controlled lows, scooped low-mids, strong 2.8-4 kHz attack and a darker top.',
+    limitations: 'Lows anchored on the clean Waking the Demon stem; AILD stems leak below 350 Hz. AILD recordings span 2005-2019. 9.5 kHz fizz is codec-truncated and stays an estimate.',
+    confidence: 0.66,
+    measuredFromStems: 'Bullet for My Valentine - Waking the Demon (official guitar master); As I Lay Dying - The Darkest Nights (isolated guitars); As I Lay Dying - My Own Grave (guitars only)',
+    sources: [{
+      title: 'How Colin Richardson Defined The Sound of Modern Metal (Nail The Mix)',
+      url: 'https://www.nailthemix.com/blog/how-colin-richardson-defined-the-sound-of-modern-metal',
+      date: '2022-03-03',
+      claim: "Colin Richardson's documented approach to modern metal guitar defines this family.",
+      evidence: 0, evidenceLabel: 'documented',
+    }],
+  },
 ];
 
 export const SHAPES: ShapeDef[] = [

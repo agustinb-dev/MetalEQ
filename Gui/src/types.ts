@@ -79,6 +79,8 @@ export interface AnalyzerTargetInfo {
   limitations: string;
   confidence: number;
   sources: AnalyzerSourceInfo[];
+  /** Isolated-stem provenance for measured targets; empty for estimates. */
+  measuredFromStems?: string;
 }
 
 /** Mirrors MetalEQAudioProcessor::AnalyzerStatus. */

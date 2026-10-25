@@ -173,6 +173,10 @@ struct ToneTarget
     std::array<FeatureTarget, kNumFeatures> features {};
     std::array<SourceRef, 5> sources {};
     int numSources = 0;
+    /** Measured-target provenance: the isolated stems behind the values.
+        Empty for the hand-set estimate targets.
+    */
+    const char* measuredFromStems = "";
 };
 
 int getNumToneTargets() noexcept;

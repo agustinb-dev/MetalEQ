@@ -972,6 +972,7 @@ juce::var UiBridge::buildAnalyzerTargetList()
         obj->setProperty ("albumPeriod", utf8 (target.albumPeriod));
         obj->setProperty ("objective", utf8 (target.objective));
         obj->setProperty ("limitations", utf8 (target.limitations));
+        obj->setProperty ("measuredFromStems", utf8 (target.measuredFromStems));
         obj->setProperty ("confidence", target.confidence);
 
         juce::Array<juce::var> sources;

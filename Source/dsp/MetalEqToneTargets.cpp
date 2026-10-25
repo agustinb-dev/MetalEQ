@@ -160,6 +160,10 @@ constexpr const char* kSmoothTop   = "Controlled high end described for the sele
 constexpr const char* kBrightTop   = "Bright high end described for the selected reference";
 constexpr const char* kSpace       = "Engineering interpretation of lead-guitar space in a dense mix";
 constexpr const char* kAttack      = "4 kHz attack/presence estimated from the neighbouring band objectives (no direct measurement for this estimate)";
+constexpr const char* kMeasuredFamily = "Median of the measured isolated guitar stems for this family";
+constexpr const char* kMeasuredLowAnchor = "Low band anchored on the clean official BFMV stem; the AILD stems leak below 350 Hz";
+constexpr const char* kMeasuredFizzEstimate = "Fizz estimate: lossy stems cannot calibrate 9.5 kHz, so weight is deliberately low";
+constexpr const char* kThrashLowEstimate = "Estimated from the documented thrash references; the measured lows are contaminated by kick/bass bleed";
 
 constexpr FeatureTarget f (double db, double tol, double weight, double maxCorrection,
                            Evidence evidence, const char* rationale)
@@ -176,7 +180,7 @@ constexpr SourceRef src (int index, const char* claim, Evidence evidence)
 // Target models. Values are estimates, rounded to 0.5 dB. See the research
 // document for the translation rubric and the limitations of each profile.
 //------------------------------------------------------------------------------
-constexpr std::array<ToneTarget, 16> kTargets {{
+constexpr std::array<ToneTarget, 18> kTargets {{
     // 1. 2000s Metalcore -----------------------------------------------------
     {
         "genre-metalcore-2000s",
@@ -317,7 +321,8 @@ constexpr std::array<ToneTarget, 16> kTargets {{
         "A tight, dry, articulate technical-thrash destination: lean low end, controlled low-mid weight, "
         "strong upper-mid attack and a bright but not fizzy top.",
         "Direct tonal documentation is sparse. The profile is derived from the production credits and the "
-        "technical-thrash context, with a deliberately conservative correction. No claim of the record's exact EQ.",
+        "technical-thrash context, with a deliberately conservative correction. No claim of the record's exact EQ. "
+        "The v3.3 measured family target uses The Conjuring (1986), not Rust in Peace.",
         0.40,
         {{
             f (-3.5, 0.50, 0.8, 3.0, Evidence::interpretation, kRumble),
@@ -380,7 +385,8 @@ constexpr std::array<ToneTarget, 16> kTargets {{
         "Tight, British metalcore rhythm guitars with a strong upper-mid/presence signature, "
         "a controlled low-mid range and a 5150-based bite.",
         "The band's sound changed substantially after this period. This profile is only for The Poison; "
-        "lead-specific and later-record tones are outside its scope.",
+        "lead-specific and later-record tones are outside its scope. The v3.3 measured family target uses "
+        "Waking the Demon (2008), not this album, so it does not calibrate this profile.",
         0.55,
         {{
             f (-3.0, 0.50, 0.7, 3.0, Evidence::secondary, kRumble),
@@ -441,18 +447,18 @@ constexpr std::array<ToneTarget, 16> kTargets {{
         "As I Lay Dying, An Ocean Between Us (2007)",
         "A modern metalcore rhythm destination: tight low end, a controlled low-mid scoop, "
         "sharp upper-mid attack and a darker top than the brighter 2000s records.",
-        "The album was produced by Adam Dutkiewicz, mixed by Colin Richardson and re-amped by Andy Sneap, "
-        "so its sound is a collaboration. The profile describes the record, not one producer's signature.",
+        "The album was produced by Adam Dutkiewicz, mixed by Colin Richardson and re-amped by Andy Sneap. "
+        "V3.3 pulled this profile at most 1.5 dB per band toward the measured Richardson-family median, anchored on the clean Waking the Demon stem; the AILD stems still need a cleaner isolated-guitar reference, especially below 350 Hz.",
         0.50,
         {{
-            f (-3.0, 0.50, 0.7, 3.0, Evidence::interpretation, kRumble),
-            f (-1.0, 0.50, 0.7, 3.0, Evidence::interpretation, kTightLow),
-            f (-1.5, 0.50, 1.0, 3.5, Evidence::secondary, kMidScoop),
-            f (+1.0, 0.75, 0.8, 2.5, Evidence::interpretation, kMidBody),
-            f (+2.5, 0.50, 1.0, 3.0, Evidence::documented, kUpperMid),
-            f (+2.0, 1.00, 0.9, 2.5, Evidence::documented, kPresence),
-            f (-1.0, 0.75, 0.6, 2.5, Evidence::interpretation, kAttack),
-            f (-3.5, 0.50, 0.8, 2.5, Evidence::secondary, kSmoothTop),
+            f (-4.5, 0.50, 0.7, 3.0, Evidence::interpretation, kRumble),
+            f (-2.5, 0.50, 0.7, 3.0, Evidence::interpretation, kTightLow),
+            f (0.0, 0.50, 1.0, 3.5, Evidence::secondary, kMidScoop),
+            f (+2.0, 0.75, 0.8, 2.5, Evidence::interpretation, kMidBody),
+            f (+1.0, 0.50, 1.0, 3.0, Evidence::documented, kUpperMid),
+            f (+0.5, 1.00, 0.9, 2.5, Evidence::documented, kPresence),
+            f (-2.5, 0.75, 0.6, 2.5, Evidence::interpretation, kAttack),
+            f (-5.0, 0.50, 0.8, 2.5, Evidence::secondary, kSmoothTop),
             f (-6.0, 1.50, 0.4, 2.0, Evidence::interpretation, kBrightTop)
         }},
         {{
@@ -537,18 +543,18 @@ constexpr std::array<ToneTarget, 16> kTargets {{
         "A midrange-forward, attack-led metal guitar sound: tight lows, controlled fizz, strong 700 Hz body "
         "and upper-mid cut. Heavy without turning into a fuzzy wall.",
         "The profile is an interpretation of Richardson's documented production approach across several records. "
-        "It does not claim that he used the same EQ on every album.",
+        "Values were pulled at most 1.5 dB per band toward the measured Richardson-family median (v3.3), anchored on the clean Waking the Demon stem and the AILD stems. It remains a producer-level interpretation, not a measured album curve.",
         0.55,
         {{
-            f (-3.0, 0.50, 0.8, 3.0, Evidence::documented, kRumble),
-            f (-1.0, 0.50, 0.8, 3.0, Evidence::documented, kTightLow),
-            f (-1.5, 0.50, 0.9, 3.5, Evidence::secondary, kMidScoop),
+            f (-4.5, 0.50, 0.8, 3.0, Evidence::documented, kRumble),
+            f (-2.5, 0.50, 0.8, 3.0, Evidence::documented, kTightLow),
+            f (0.0, 0.50, 0.9, 3.5, Evidence::secondary, kMidScoop),
             f (+2.0, 0.75, 1.0, 2.5, Evidence::documented, kMidBody),
-            f (+3.0, 0.50, 1.0, 3.0, Evidence::documented, kUpperMid),
-            f (+2.5, 1.00, 1.0, 2.5, Evidence::documented, kPresence),
-            f (+0.5, 0.75, 0.6, 2.5, Evidence::interpretation, kAttack),
-            f (-1.5, 0.50, 0.7, 2.5, Evidence::secondary, kSmoothTop),
-            f (-7.0, 1.50, 0.4, 2.0, Evidence::secondary, kBrightTop)
+            f (+1.5, 0.50, 1.0, 3.0, Evidence::documented, kUpperMid),
+            f (+1.0, 1.00, 1.0, 2.5, Evidence::documented, kPresence),
+            f (-1.0, 0.75, 0.6, 2.5, Evidence::interpretation, kAttack),
+            f (-3.0, 0.50, 0.7, 2.5, Evidence::secondary, kSmoothTop),
+            f (-6.0, 1.50, 0.4, 2.0, Evidence::secondary, kBrightTop)
         }},
         {{
             src (12, "Secondary analysis of Richardson's approach: midrange authority and attack, less gain, HPF 80-100 Hz, tame 5-10 kHz fizz, a modest 1.5-4 kHz attack boost, SM57+MD421 blend.", Evidence::secondary),
@@ -601,18 +607,18 @@ constexpr std::array<ToneTarget, 16> kTargets {{
         "A mid-focused, tight thrash destination: solid midrange body, controlled low end, "
         "articulate upper-mids and a smooth rather than bright top. Layered rhythm guitars with a dry, immediate feel.",
         "The sources document gear, mic technique and a studio EQ insert, but not its frequencies. "
-        "AJFA is used only as context; the model is for Master of Puppets.",
+        "Values in the measured 700 Hz-5.6 kHz region were pulled at most 1.5 dB toward the measured classic-thrash family median (v3.3). The profile remains an interpretation of the producer's approach, not a measured Master of Puppets curve.",
         0.60,
         {{
-            f (-3.0, 0.50, 0.8, 3.0, Evidence::documented, kRumble),
-            f (-1.0, 0.50, 0.8, 3.0, Evidence::documented, kTightLow),
-            f (+1.0, 0.50, 0.8, 3.5, Evidence::documented, kMidScoop),
-            f (+2.0, 0.75, 1.0, 2.5, Evidence::documented, kMidBody),
-            f (+2.5, 0.50, 1.0, 3.0, Evidence::documented, kUpperMid),
-            f (+1.0, 1.00, 0.8, 2.5, Evidence::secondary, kPresence),
-            f (-0.5, 0.75, 0.6, 2.5, Evidence::interpretation, kAttack),
-            f (-2.0, 0.50, 0.8, 2.5, Evidence::documented, kSmoothTop),
-            f (-7.5, 1.50, 0.4, 2.0, Evidence::interpretation, kBrightTop)
+            f (-2.5, 0.50, 0.8, 3.0, Evidence::documented, kRumble),
+            f (-0.5, 0.50, 0.8, 3.0, Evidence::documented, kTightLow),
+            f (-0.5, 0.50, 0.8, 3.5, Evidence::documented, kMidScoop),
+            f (+0.5, 0.75, 1.0, 2.5, Evidence::documented, kMidBody),
+            f (+1.0, 0.50, 1.0, 3.0, Evidence::documented, kUpperMid),
+            f (+4.0, 1.00, 0.8, 2.5, Evidence::secondary, kPresence),
+            f (-2.0, 0.75, 0.6, 2.5, Evidence::interpretation, kAttack),
+            f (-3.5, 0.50, 0.8, 2.5, Evidence::documented, kSmoothTop),
+            f (-6.0, 1.50, 0.4, 2.0, Evidence::interpretation, kBrightTop)
         }},
         {{
             src (6,  "Rasmussen on Master of Puppets: Mesa/Boogie Mark II C+ preamp into a Marshall power amp and 4x12s; two SM57s plus DPA room mics and AKG Gold tubes; a studio parametric EQ inserted; double/quad-tracked rhythms.", Evidence::documented),
@@ -682,7 +688,10 @@ constexpr std::array<ToneTarget, 16> kTargets {{
             src (28, "Norman mixed Rust in Peace (1990), anchoring him in Megadeth's thrash catalogue.", Evidence::documented)
         }},
         3
-    }
+    },
+    // Measured family targets, generated from Docs/GuitarStems/families.json.
+    // The include defines two additional ToneTarget entries.
+#include "MetalEqToneTargetsMeasured.inc"
 }};
 
 //------------------------------------------------------------------------------

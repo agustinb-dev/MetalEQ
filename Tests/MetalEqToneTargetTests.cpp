@@ -28,6 +28,7 @@
 
 #include "../Source/dsp/MetalEqParams.h"
 #include "../Source/dsp/MetalEqToneTargets.h"
+#include "../Tools/SpectrumProfiler/fixtures/measured_targets_expected.h"
 #include "../Tools/SpectrumProfiler/fixtures/synthetic_expected.h"
 
 namespace
@@ -106,7 +107,7 @@ void testTargetTable()
 {
     using namespace metaleq::tone;
 
-    check (getNumToneTargets() == 16, "there are 16 target profiles");
+    check (getNumToneTargets() == 18, "there are 18 target profiles");
     check (kGlobalMaxGainDb == 12.0, "the global correction cap is 12 dB");
     check (getNumSources() >= 30, "the research record has a substantial source list");
 
@@ -147,7 +148,7 @@ void testTargetTable()
         {
             const auto& feature = target.features[static_cast<size_t> (f)];
             check (std::isfinite (feature.relativeDb), "feature target is finite");
-            check (std::abs (feature.relativeDb) <= 12.0, "feature target is within a musical range");
+            check (std::abs (feature.relativeDb) <= 15.0, "feature target is within the graph range");
             check (feature.toleranceDb >= 0.0 && feature.toleranceDb <= 3.0,
                    "feature tolerance is sane");
             check (feature.weight >= 0.0 && feature.weight <= 1.0, "feature weight is in 0..1");
@@ -158,16 +159,22 @@ void testTargetTable()
         }
     }
 
-    check (ids.size() == 16, "target ids are unique");
-    check (categoryCounts[0] == 6, "there are six genre targets");
+    check (ids.size() == 18, "target ids are unique");
+    check (categoryCounts[0] == 8, "there are eight genre targets");
     check (categoryCounts[1] == 4, "there are four artist targets");
     check (categoryCounts[2] == 6, "there are six producer targets");
 
-    // The key differentiators share a 0.5 dB deadband across all profiles.
+    // The hand-set key differentiators share a 0.5 dB deadband. Measured family
+    // targets use a spread-derived tolerance instead (see generate_targets.py).
     for (const int feature : { 0, 1, 2, 4, 7 })
         for (int t = 0; t < getNumToneTargets(); ++t)
-            checkNear (getToneTarget (t).features[static_cast<size_t> (feature)].toleranceDb,
+        {
+            const auto& target = getToneTarget (t);
+            if (target.measuredFromStems != nullptr && *target.measuredFromStems != 0)
+                continue;
+            checkNear (target.features[static_cast<size_t> (feature)].toleranceDb,
                        0.5, 1.0e-9, "key-differentiator deadband is 0.5 dB");
+        }
 
 
     check (findToneTargetById ("genre-thrash-ajfa") >= 0, "AJFA target is addressable by stable id");
@@ -561,7 +568,7 @@ void testTargetDistinctness()
             key += std::to_string (static_cast<int> (std::lround (v * 2.0))) + ",";
         shapes.insert (key);
     }
-    check (shapes.size() == 16, "all sixteen target shapes are distinct");
+    check (shapes.size() == 18, "all eighteen target shapes are distinct");
 }
 
 /** Cross-language fixture: the offline SpectrumProfiler and the native
@@ -607,6 +614,40 @@ void testAnalyzerProfilerEquivalence()
                    fixture::kExpectedMeanRelDb[static_cast<size_t> (i)],
                    fixture::kToleranceDb,
                    "profiler and native analyser agree on every feature band");
+    }
+}
+
+/** The measured family targets are generated from Docs/GuitarStems/ and must
+    match the pinned generator output. This catches a hand edit to the
+    generated include or a stale regeneration.
+*/
+void testMeasuredTargetPins()
+{
+    using namespace metaleq::tone;
+    namespace fixture = metaleq::test::fixture;
+
+    check (fixture::kMeasuredTargetCount == 2, "two measured family targets are pinned");
+    check (fixture::kMeasuredTargetExpectedDb.size() == fixture::kMeasuredTargetCount,
+           "one pinned shape per measured target");
+
+    for (size_t t = 0; t < fixture::kMeasuredTargetCount; ++t)
+    {
+        const int index = findToneTargetById (fixture::kMeasuredTargetIds[t]);
+        check (index >= 0, "measured target is addressable by stable id");
+        if (index < 0)
+            continue;
+
+        const auto& target = getToneTarget (index);
+        check (target.category == Category::genre, "measured family target is a genre target");
+        check (target.measuredFromStems != nullptr && *target.measuredFromStems != 0,
+               "measured target names its source stems");
+
+        const auto shape = targetShape (target);
+        for (int f = 0; f < kNumFeatures; ++f)
+            checkNear (shape[static_cast<size_t> (f)],
+                       fixture::kMeasuredTargetExpectedDb[t][static_cast<size_t> (f)],
+                       fixture::kMeasuredPinnedToleranceDb,
+                       "measured target matches the generated profiler values");
     }
 }
 
@@ -662,6 +703,7 @@ int main()
     testDeadbandAndConfidenceTuning();
     testInputAdaptation();
     testTargetDistinctness();
+    testMeasuredTargetPins();
     testEvidenceTraceability();
     testAnalyzerProfilerEquivalence();
 

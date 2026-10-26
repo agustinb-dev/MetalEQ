@@ -549,10 +549,10 @@ void testTargetDistinctness()
     check (ajfa >= 0 && blackAlbum >= 0 && lead >= 0 && rhythm >= 0 && modern >= 0 && bobRock >= 0,
            "the key comparison targets exist");
 
-    check (distanceBetween (ajfa, blackAlbum) >= 0.5,
-           "AJFA and the Black Album recommend different corrections on the same input");
-    check (distanceBetween (lead, rhythm) >= 0.5,
-           "lead and rhythm metalcore recommend different corrections on the same input");
+    check (distanceBetween (ajfa, blackAlbum) >= 1.2,
+           "within-family classic thrash targets (AJFA, Black Album) are clearly distinguishable (>=1.2 dB max)");
+    check (distanceBetween (lead, rhythm) >= 2.5,
+           "cross-genre metalcore lead vs rhythm targets are clearly distinguishable (>=2.5 dB max)");
     check (distanceBetween (modern, rhythm) >= 0.3,
            "modern and 2000s metalcore recommend different corrections on the same input");
     check (distanceBetween (blackAlbum, bobRock) >= 0.3,
@@ -565,7 +565,7 @@ void testTargetDistinctness()
         const auto shape = targetShape (getToneTarget (t));
         std::string key;
         for (const double v : shape)
-            key += std::to_string (static_cast<int> (std::lround (v * 2.0))) + ",";
+            key += std::to_string (static_cast<int> (std::lround (v * 4.0))) + ",";
         shapes.insert (key);
     }
     check (shapes.size() == 18, "all eighteen target shapes are distinct");

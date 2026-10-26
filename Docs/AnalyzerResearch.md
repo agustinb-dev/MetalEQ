@@ -824,3 +824,26 @@ audio thread.
 If better evidence arrives, update the source record and the target vector
 together. Do not add a numeric value without a documented rationale or a
 documented measurement method.
+
+## 8. V3.3 measurement campaign (2026-10-25)
+
+### 8.1 Measured stems
+Profiled at full 8192-point resolution (cross-verified with the profiler equivalence test, ±0.25 dB/band). Source audio is gitignored (`Docs/GuitarOnlyStems/`); JSON profiles are committed at `Docs/GuitarStems/`.
+
+Family aggregates (median of 9-feature dB rel 500-2000 Hz, from `families.json`):
+- classic-thrash: [11.2, 10.3, 9.1, 0.7, -1.1, 4.2, -4.1, -12.4, -35.9]
+- richardson-metalcore: [-4.4, -2.6, 1.7, 2.1, -1.4, -3.2, -4.5, -10.1, -40.6]
+
+Per-stem diagnostics: clean WTD sub60 = -18.1 dB; AI-separated stems -14.7..-8.8 dB; fizz all -30..-49 dB (codec-truncated).
+
+### 8.2 Decisions taken under the plan
+- Added the 4 kHz analysis band (features 6, index 6) because the 3520-4480 Hz gap was unmeasured. Kept 5 correction bands (`kNumBands == 5` drives `applyAnalyzerSuggestion()`); the new feature steers the existing 2.8k/7k peaks through the LSQ. Plan deviation documented.
+- Two new family targets (`genre-thrash-early-80s`, `genre-richardson-metalcore`) added to the 18-entry table; existing album targets re-anchored (≤1.5 dB) with updated limitations.
+- Low bands of richardson family anchored on clean BFMV WTD; thrash lows kept as estimates because the stems are AI-separated.
+- Capture diagnostics (sub60, hfFloor, tilt, per-band spread) calibrated against the measured stems and exposed through the bridge; advisory warnings (leakage, truncation, spread) never block a recommendation.
+- 9.5 kHz fizz remains an engineering estimate (low weight 0.4) because every isolated stem is a lossy MP3 transcode.
+
+### 8.3 Remaining v3.4 ideas (deferred)
+- Tilt shelf pair (v3.3 reports tilt as diagnostic; targeting shelves deferred).
+- Lossless / DI-bass-separated reference for the 9.5 kHz band (requires source recordings, not available).
+- 1.4-2.8 kHz expression split (measured family delta at 2.8k only 4.2 dB — not enough to justify another correction band).

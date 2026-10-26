@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(MetalEQ VERSION 3.2.0)
+project(MetalEQ VERSION 3.3.0)
 
 include(CTest)
 

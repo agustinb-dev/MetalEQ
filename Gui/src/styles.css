@@ -1549,8 +1549,8 @@ body {
 /* Keep the editor compact enough for the default expanded height. The graph
    stays directly editable, while the numeric panels get the room. */
 .metaleq-app.advanced .graph-slot {
-  flex: 0 0 220px;
-  height: 220px;
+  flex: 0 0 380px;
+  height: 380px;
 }
 
 .parameter-section,

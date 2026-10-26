@@ -350,6 +350,65 @@ static void testCurveRangeIsFixed (MetalEQAudioProcessor& processor)
 }
 
 //==============================================================================
+static void testTargetCurveEndpoint (MetalEQAudioProcessor& processor)
+{
+    metaleq::ui::UiBridge bridge (processor);
+
+    juce::var first;
+    check (callNative (bridge, "getTargetCurve", juce::Array<juce::var> {}, first),
+           "getTargetCurve is registered");
+
+    const auto firstCurve = getProperty (first, "curve");
+    auto* firstPoints = firstCurve.getArray();
+    check (firstPoints != nullptr
+               && firstPoints->size() == metaleq::ui::UiBridge::numCurvePoints,
+           "the target curve has one point per graph column");
+
+    const int initialTarget = processor.getAnalyzerTargetIndex();
+    check (getProperty (first, "targetId").toString()
+               == juce::String::fromUTF8 (metaleq::tone::getToneTarget (initialTarget).id),
+           "the target curve reports the active target id");
+
+    if (firstPoints != nullptr && firstPoints->size() > 1)
+    {
+        const auto initialShape = metaleq::tone::targetShape (
+            metaleq::tone::getToneTarget (initialTarget));
+        checkNear (static_cast<double> (firstPoints->getFirst ()),
+                   initialShape[0], 1.0e-9,
+                   "the target curve starts at the first band objective");
+        checkNear (static_cast<double> (firstPoints->getLast ()),
+                   initialShape[metaleq::tone::kNumFeatures - 1], 1.0e-9,
+                   "the target curve ends at the last band objective");
+    }
+
+    const int richardson = metaleq::tone::findToneTargetById ("genre-richardson-metalcore");
+    check (richardson >= 0, "the Richardson family target exists");
+    processor.setAnalyzerTarget (richardson);
+
+    juce::var second;
+    check (callNative (bridge, "getTargetCurve", juce::Array<juce::var> {}, second),
+           "getTargetCurve responds after a target switch");
+    check (getProperty (second, "targetId").toString() == "genre-richardson-metalcore",
+           "the target curve follows the selected destination");
+
+    auto* secondPoints = getProperty (second, "curve").getArray();
+    check (secondPoints != nullptr && firstPoints != nullptr
+               && secondPoints->size() == firstPoints->size(),
+           "the switched target curve keeps the same resolution");
+
+    if (secondPoints != nullptr && firstPoints != nullptr
+        && secondPoints->size() == firstPoints->size())
+    {
+        bool moved = false;
+        for (int i = 0; i < secondPoints->size(); ++i)
+            if (std::abs (static_cast<double> ((*secondPoints)[i])
+                          - static_cast<double> ((*firstPoints)[i])) > 0.5)
+                moved = true;
+        check (moved, "switching targets visibly moves the target curve");
+    }
+}
+
+//==============================================================================
 static void testSnapshotV7 (MetalEQAudioProcessor& processor)
 {
     metaleq::ui::UiBridge bridge (processor);
@@ -822,6 +881,11 @@ int main()
     {
         MetalEQAudioProcessor processor;
         testCurveRangeIsFixed (processor);
+    }
+
+    {
+        MetalEQAudioProcessor processor;
+        testTargetCurveEndpoint (processor);
     }
 
     {

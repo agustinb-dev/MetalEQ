@@ -21,6 +21,7 @@ import type {
   OpResult,
   SetParamResult,
   SuggestionCurveResult,
+  TargetCurveResult,
   Snapshot,
   TickMessage,
 } from './types';
@@ -171,6 +172,10 @@ export class JuceBridge implements MetalEqBridge {
 
   getSuggestionCurve(amount: number): Promise<SuggestionCurveResult> {
     return this.call<SuggestionCurveResult>('getSuggestionCurve', [amount]);
+  }
+
+  getTargetCurve(): Promise<TargetCurveResult> {
+    return this.call<TargetCurveResult>('getTargetCurve', []);
   }
 
   startResonanceScan(dynamic: boolean): Promise<OpResult> {

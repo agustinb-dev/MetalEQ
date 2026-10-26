@@ -81,6 +81,8 @@ export interface UiState {
   curve: CurveInfo | null;
   /** Curve of the suggested correction (240 dB points), fetched on demand. */
   suggestionCurve: number[] | null;
+  /** Curve of the selected target's nine band objectives (240 dB points). */
+  targetCurve: number[] | null;
   dragging: Set<string>;
   /** Fatal bridge error, surfaced as a banner (e.g. native call rejected). */
   lastError: string | null;
@@ -109,6 +111,7 @@ const initialState: UiState = {
   resonance: normaliseResonance(),
   curve: null,
   suggestionCurve: null,
+  targetCurve: null,
   dragging: new Set(),
   lastError: null,
 };
@@ -145,6 +148,7 @@ class Store {
       resonance: s.resonance ? normaliseResonance(s.resonance) : this.state.resonance,
       curve: s.curve ?? this.state.curve,
       suggestionCurve: null,
+      targetCurve: null,
     });
   }
 
@@ -183,6 +187,10 @@ class Store {
 
   setSuggestionCurve(curve: number[] | null): void {
     this.set({ suggestionCurve: curve });
+  }
+
+  setTargetCurve(curve: number[] | null): void {
+    this.set({ targetCurve: curve });
   }
 
   setDragging(id: string | null): void {

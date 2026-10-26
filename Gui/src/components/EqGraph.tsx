@@ -40,6 +40,8 @@ interface EqGraphProps {
   curve: CurveInfo | null;
   params: Record<string, number>;
   suggestionCurve: number[] | null;
+  /** Dashed destination curve for the selected analyzer target. */
+  targetCurve?: number[] | null;
   /** V3 scan candidates, drawn as vertical markers. */
   resonanceCandidates?: ResonanceCandidateInfo[];
   selectedCandidates?: number[];
@@ -74,6 +76,7 @@ export function EqGraph({
   curve,
   params,
   suggestionCurve,
+  targetCurve = null,
   resonanceCandidates = [],
   selectedCandidates = [],
   hoveredCandidate = null,
@@ -198,6 +201,19 @@ export function EqGraph({
           })
           .join(' ')
       : '';
+
+  const targetPath =
+    targetCurve && targetCurve.length > 1
+      ? targetCurve
+          .map((db, i) => {
+            const unit = i / (targetCurve.length - 1);
+            const x = freqToX(GRAPH_MIN_FREQ * Math.pow(GRAPH_MAX_FREQ / GRAPH_MIN_FREQ, unit));
+            return `${i === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${curveToY(db).toFixed(2)}`;
+          })
+          .join(' ')
+      : '';
+  const targetOverflowUp = targetCurve?.some((db) => db > GRAPH_MAX_DB) ?? false;
+  const targetOverflowDown = targetCurve?.some((db) => db < GRAPH_MIN_DB) ?? false;
 
   const markers: MarkerSpec[] = [];
   if (params.hpSlope > 0) {
@@ -374,6 +390,13 @@ export function EqGraph({
         );
       })}
 
+      {/* selected target curve (destination, clipped like the main curve) */}
+      {targetPath && (
+        <g clipPath={`url(#${clipPathId})`}>
+          <path d={targetPath} className="graph-target" />
+        </g>
+      )}
+
       {/* suggested correction (clipped like the main curve) */}
       {suggestionPath && (
         <g clipPath={`url(#${clipPathId})`}>
@@ -428,6 +451,17 @@ export function EqGraph({
       {suggestionPath && (
         <text x={146} y={14} className="graph-legend suggestion">
           CORRECTION
+        </text>
+      )}
+      {targetPath && (
+        <text x={224} y={14} className="graph-legend target">
+          TARGET
+        </text>
+      )}
+      {targetPath && (targetOverflowUp || targetOverflowDown) && (
+        <text x={plot.x + plot.w - 6} y={plot.y + 10} textAnchor="end" className="graph-legend overflow">
+          {targetOverflowUp ? '↑' : ''}
+          {targetOverflowDown ? '↓' : ''} TARGET OFF-SCALE
         </text>
       )}
       {editable && (

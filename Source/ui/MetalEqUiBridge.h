@@ -35,6 +35,7 @@
         cancelAnalyzerCapture()
         applyAnalyzerSuggestion (amount)
         getSuggestionCurve (amount)            -> { ok, curve, error? }
+        getTargetCurve()                       -> { ok, targetId, curve, error? }
         startResonanceScan (dynamic)           // false = surgical, true = dynamic
         cancelResonanceScan (dynamic)
         applyResonanceSelection ([indices])    // up to six candidates
@@ -56,7 +57,8 @@
           meters,         // { in, out } every tick (cheap atomics)
           dynamicReduction, // [dB, dB, dB, dB] positive gain reduction per band
           analyzer,       // { status, progress, targetIndex, suggestion[5],
-                          //   input[8], target[8], predicted[8], confidences,
+                          //   input[9], target[9], predicted[9], confidences,
+                          //   warnings, sub60RelDb, hfFloorRelDb, tiltDbPerOct,
                           //   alreadyClose } when changed
                           // status: 0 idle, 1 capturing, 2 capture complete,
                           //         3 analysing, 4 ready, 5 failed
@@ -185,6 +187,7 @@ private:
     juce::var handleCancelAnalyzerCapture();
     juce::var handleApplyAnalyzerSuggestion (const juce::Array<juce::var>& args);
     juce::var handleGetSuggestionCurve (const juce::Array<juce::var>& args);
+    juce::var handleGetTargetCurve();
     juce::var handleStartResonanceScan (const juce::Array<juce::var>& args);
     juce::var handleCancelResonanceScan (const juce::Array<juce::var>& args);
     juce::var handleApplyResonanceSelection (const juce::Array<juce::var>& args);

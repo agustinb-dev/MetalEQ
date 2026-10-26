@@ -245,6 +245,10 @@ export interface SuggestionCurveResult extends OpResult {
   curve?: number[];
 }
 
+export interface TargetCurveResult extends SuggestionCurveResult {
+  targetId?: string;
+}
+
 /** Every native function exposed by the bridge. */
 export interface MetalEqBridge {
   /** Registers the tick listener, calls uiReady and resolves with the snapshot. */
@@ -270,6 +274,7 @@ export interface MetalEqBridge {
   cancelAnalyzerCapture(): Promise<OpResult>;
   applyAnalyzerSuggestion(amount: number): Promise<OpResult>;
   getSuggestionCurve(amount: number): Promise<SuggestionCurveResult>;
+  getTargetCurve(): Promise<TargetCurveResult>;
   /** V3: independent 8 s captures for the surgical and dynamic sections. */
   startResonanceScan(dynamic: boolean): Promise<OpResult>;
   cancelResonanceScan(dynamic: boolean): Promise<OpResult>;

@@ -39,6 +39,67 @@ namespace
         return {};
     }
 
+    /** Monotone cubic (PCHIP) interpolation of the nine target band levels in
+        log-frequency. Clamps outside the measured band centres, so the target
+        curve stays at the lowest/highest objective instead of extrapolating.
+    */
+    double targetShapeAt (const std::array<double, metaleq::tone::kNumFeatures>& y, double freq) noexcept
+    {
+        constexpr int n = metaleq::tone::kNumFeatures;
+        std::array<double, n> x {};
+        for (int i = 0; i < n; ++i)
+            x[static_cast<size_t> (i)] = std::log2 (metaleq::tone::kFeatures[static_cast<size_t> (i)].centreHz);
+
+        const double lx = std::log2 (juce::jlimit (metaleq::tone::kFeatures[0].centreHz,
+                                                   metaleq::tone::kFeatures[n - 1].centreHz,
+                                                   freq));
+        if (lx <= x[0])
+            return y[0];
+        if (lx >= x[n - 1])
+            return y[static_cast<size_t> (n - 1)];
+
+        std::array<double, n - 1> h {};
+        std::array<double, n - 1> delta {};
+        for (int i = 0; i < n - 1; ++i)
+        {
+            const auto slot = static_cast<size_t> (i);
+            h[slot] = x[slot + 1] - x[slot];
+            delta[slot] = (y[slot + 1] - y[slot]) / h[slot];
+        }
+
+        std::array<double, n> slope {};
+        slope[0] = delta[0];
+        slope[static_cast<size_t> (n - 1)] = delta[static_cast<size_t> (n - 2)];
+        for (int i = 1; i < n - 1; ++i)
+        {
+            const auto slot = static_cast<size_t> (i);
+            if (delta[slot - 1] * delta[slot] <= 0.0)
+            {
+                slope[slot] = 0.0;
+                continue;
+            }
+            const double w1 = 2.0 * h[slot] + h[slot - 1];
+            const double w2 = h[slot] + 2.0 * h[slot - 1];
+            slope[slot] = (w1 + w2) / (w1 / delta[slot - 1] + w2 / delta[slot]);
+        }
+
+        int segment = 0;
+        while (segment < n - 2 && lx > x[static_cast<size_t> (segment) + 1])
+            ++segment;
+
+        const auto slot = static_cast<size_t> (segment);
+        const double t = (lx - x[slot]) / h[slot];
+        const double t2 = t * t;
+        const double t3 = t2 * t;
+        const double h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
+        const double h10 = t3 - 2.0 * t2 + t;
+        const double h01 = -2.0 * t3 + 3.0 * t2;
+        const double h11 = t3 - t2;
+
+        return h00 * y[slot] + h10 * h[slot] * slope[slot]
+             + h01 * y[slot + 1] + h11 * h[slot] * slope[slot + 1];
+    }
+
     bool boolFlag (const juce::Array<juce::var>& args, size_t index)
     {
         if (index >= args.size())
@@ -271,6 +332,11 @@ juce::WebBrowserComponent::Options UiBridge::addOptions (juce::WebBrowserCompone
             [self] (const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion complete)
             {
                 complete (self->handleGetSuggestionCurve (args));
+            })
+        .withNativeFunction ("getTargetCurve",
+            [self] (const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion complete)
+            {
+                complete (self->handleGetTargetCurve());
             })
         .withNativeFunction ("startResonanceScan",
             [self] (const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion complete)
@@ -594,6 +660,27 @@ juce::var UiBridge::handleGetSuggestionCurve (const juce::Array<juce::var>& args
 
     auto* obj = new juce::DynamicObject();
     obj->setProperty ("ok", true);
+    obj->setProperty ("curve", curve);
+    return juce::var (obj);
+}
+
+juce::var UiBridge::handleGetTargetCurve()
+{
+    const auto& target = metaleq::tone::getToneTarget (processor.getAnalyzerTargetIndex());
+    const auto shape = metaleq::tone::targetShape (target);
+
+    juce::Array<juce::var> curve;
+    for (int i = 0; i < numCurvePoints; ++i)
+    {
+        const double unit = static_cast<double> (i) / (numCurvePoints - 1);
+        const double freq = metaleq::kGraphMinFreq
+                          * std::pow (metaleq::kGraphMaxFreq / metaleq::kGraphMinFreq, unit);
+        curve.add (targetShapeAt (shape, freq));
+    }
+
+    auto* obj = new juce::DynamicObject();
+    obj->setProperty ("ok", true);
+    obj->setProperty ("targetId", utf8 (target.id));
     obj->setProperty ("curve", curve);
     return juce::var (obj);
 }

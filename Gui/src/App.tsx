@@ -229,9 +229,21 @@ function AnalyzerTargetDetails({
         <span className={`resonance-confidence ${confidenceLabel(target.confidence).toLowerCase()}`}>
           {confidenceLabel(target.confidence)} CONFIDENCE
         </span>
+        {target.measuredFromStems ? (
+          <span className="analyzer-provenance measured" title={target.measuredFromStems}>
+            MEASURED
+          </span>
+        ) : (
+          <span className="analyzer-provenance estimated" title="Values are engineering estimates, not measured spectra.">
+            ESTIMATED
+          </span>
+        )}
       </div>
       <div className="analyzer-target-album">{target.albumPeriod}</div>
       <div className="analyzer-target-objective">{target.objective}</div>
+      {target.measuredFromStems && (
+        <div className="analyzer-measured-stems">Measured from: {target.measuredFromStems}</div>
+      )}
       <details className="analyzer-sources">
         <summary>Research, sources & limitations ({target.sources.length})</summary>
         <p className="analyzer-limitation">{target.limitations}</p>
@@ -1599,6 +1611,23 @@ export function App(): React.JSX.Element {
     store.setSuggestionCurve(null);
   }, [analyzerSuggestion, analyzerResultTarget]);
 
+  const analyzerTargetIndex = state.analyzer.targetIndex;
+
+  // Target curve: the nine band objectives of the active destination, drawn
+  // as a dashed overlay independent of the captured take.
+  useEffect(() => {
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void bridge.getTargetCurve().then((result) => {
+        if (!cancelled && result.ok && result.curve != null) store.setTargetCurve(result.curve);
+      });
+    }, 120);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [bridge, analyzerTargetIndex]);
+
   // Suggested-correction curve: fetched whenever the analyzer is ready and
   // the recommendation or the amount changes (debounced so dragging the
   // slider stays cheap).
@@ -2169,6 +2198,7 @@ export function App(): React.JSX.Element {
           curve={state.curve}
           params={state.params}
           suggestionCurve={analyzerReady ? state.suggestionCurve : null}
+          targetCurve={analyzerReady ? state.targetCurve : null}
           resonanceCandidates={surgicalScan.status === AnalyzerStatus.ready ? surgicalScan.candidates : []}
           selectedCandidates={selectedCandidates}
           hoveredCandidate={hoveredCandidate}

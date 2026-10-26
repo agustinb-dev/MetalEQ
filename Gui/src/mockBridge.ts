@@ -26,6 +26,7 @@ import type {
   ResonanceInfo,
   SetParamResult,
   SuggestionCurveResult,
+  TargetCurveResult,
   Snapshot,
   TickMessage,
 } from './types';
@@ -1058,6 +1059,31 @@ export class MockBridge implements MetalEqBridge {
       curve.push(analyzerResponseDb(this.params, this.analyzer.suggestion, a, this.sampleRate, freq));
     }
     return Promise.resolve({ ok: true, curve });
+  }
+
+  getTargetCurve(): Promise<TargetCurveResult> {
+    const target = Math.max(0, Math.min(MOCK_TARGET_SHAPES.length - 1, this.analyzerTarget));
+    const shape = MOCK_TARGET_SHAPES[target];
+    const xs = FEATURE_FREQS.map((freq) => Math.log2(freq));
+    const curve: number[] = [];
+
+    for (let i = 0; i < CURVE_POINTS; i++) {
+      const unit = i / (CURVE_POINTS - 1);
+      const freq = GRAPH_MIN * Math.pow(GRAPH_MAX / GRAPH_MIN, unit);
+      const x = Math.log2(freq);
+      let value = shape[0];
+      if (x >= xs[xs.length - 1]) {
+        value = shape[shape.length - 1];
+      } else if (x > xs[0]) {
+        let segment = 0;
+        while (segment < xs.length - 2 && x > xs[segment + 1]) segment++;
+        const t = (x - xs[segment]) / (xs[segment + 1] - xs[segment]);
+        value = shape[segment] + (shape[segment + 1] - shape[segment]) * t;
+      }
+      curve.push(value);
+    }
+
+    return Promise.resolve({ ok: true, targetId: ANALYZER_TARGETS[target].id, curve });
   }
 
   setEditorExpanded(_expanded: boolean): Promise<OpResult> {

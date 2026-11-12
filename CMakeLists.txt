@@ -104,9 +104,21 @@ if(METALEQ_NPM_EXECUTABLE AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Gui/package.js
     set(METALEQ_UI_ZIP "${CMAKE_CURRENT_BINARY_DIR}/metaleq_ui.zip")
 
     # npm ci (if a lockfile exists) + vite/tsc build → Gui/dist/
+    #
+    # On Windows npm is a .cmd shim. Visual Studio custom build commands run
+    # inside a generated batch file, and invoking a .cmd directly transfers
+    # control to it without returning, so every following command (including
+    # the zip and BinaryData steps) would be skipped. `cmd /c call` runs the
+    # shim in a child shell and returns control to the custom build script.
+    if(WIN32)
+        set(METALEQ_NPM_COMMAND cmd /c call)
+    else()
+        set(METALEQ_NPM_COMMAND)
+    endif()
+
     set(METALEQ_UI_BUILD_COMMANDS
-        COMMAND "${METALEQ_NPM_EXECUTABLE}" install
-        COMMAND "${METALEQ_NPM_EXECUTABLE}" run build
+        COMMAND ${METALEQ_NPM_COMMAND} "${METALEQ_NPM_EXECUTABLE}" install
+        COMMAND ${METALEQ_NPM_COMMAND} "${METALEQ_NPM_EXECUTABLE}" run build
     )
 
     add_custom_command(

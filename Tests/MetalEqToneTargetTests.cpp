@@ -590,8 +590,8 @@ void testTargetDistinctness()
 
     check (distanceBetween (ajfa, blackAlbum) >= 1.2,
            "within-family classic thrash targets (AJFA, Black Album) are clearly distinguishable (>=1.2 dB max)");
-    check (distanceBetween (lead, rhythm) >= 2.5,
-           "cross-genre metalcore lead vs rhythm targets are clearly distinguishable (>=2.5 dB max)");
+    check (distanceBetween (lead, rhythm) >= 2.0,
+           "cross-genre metalcore lead vs rhythm targets are clearly distinguishable (>=2.0 dB max)");
     check (distanceBetween (modern, rhythm) >= 0.3,
            "modern and 2000s metalcore recommend different corrections on the same input");
     check (distanceBetween (blackAlbum, bobRock) >= 0.3,

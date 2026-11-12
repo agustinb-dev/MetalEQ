@@ -466,6 +466,20 @@ juce::AudioProcessorValueTreeState::ParameterLayout MetalEQAudioProcessor::creat
 //==============================================================================
 void MetalEQAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
+    // A host-driven sample-rate change invalidates captures in flight: the
+    // analyzer labels frames with the rate stored when recording started.
+    // Drop them (including deferred starts) and return both resonance panels
+    // to idle so they cannot claim to be capturing with a stale rate.
+    cancelAnalyzerCapture();
+    for (auto& status : resonanceStatus)
+    {
+        const auto current = static_cast<AnalyzerStatus> (status.load (std::memory_order_acquire));
+        if (current == AnalyzerStatus::capturing
+            || current == AnalyzerStatus::captureComplete
+            || current == AnalyzerStatus::analyzing)
+            status.store (static_cast<int> (AnalyzerStatus::idle), std::memory_order_release);
+    }
+
     engine.prepare (sampleRate);
     analyzerSampleRate.store (static_cast<int> (sampleRate > 0.0 ? sampleRate : 48000.0), std::memory_order_relaxed);
     analyzerCaptureLimit.store (juce::jmin (maxCaptureSamples,
@@ -753,8 +767,11 @@ void MetalEQAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
         for (auto& reduction : dynamicReductionDb)
             reduction.store (0.0f, std::memory_order_relaxed);
 
-        // Drop the dynamic filters and force a clean rebuild on un-bypass so a
-        // stale detector state cannot apply an old cut to the first block.
+        // Drop the static and dynamic filters and force a clean rebuild on
+        // un-bypass so stale filter/detector state cannot colour the first
+        // block or glide from old coefficients.
+        engine.reset();
+        auditionEngine.reset();
         dynamicEngine.reset();
         auditionDynamicEngine.reset();
         chainCacheValid = false;
@@ -932,6 +949,8 @@ void MetalEQAudioProcessor::processBlockBypassed (juce::AudioBuffer<float>& buff
             peakLevels[static_cast<size_t> (ch)].store (peak, std::memory_order_relaxed);
         }
 
+    engine.reset();
+    auditionEngine.reset();
     dynamicEngine.reset();
     auditionDynamicEngine.reset();
     chainCacheValid = false;

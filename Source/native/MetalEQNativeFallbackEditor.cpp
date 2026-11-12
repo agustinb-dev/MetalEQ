@@ -149,15 +149,41 @@ void MetalEQNativeFallbackEditor::resized()
 //==============================================================================
 void MetalEQNativeFallbackEditor::timerCallback()
 {
-    auto names = processor.getUserPresetNames();
-    if (names != userPresetNames)
-        refreshPresetList();
+    // Listing user presets parses every .metaleq file (XML + validation), so
+    // it must not run at the 8 Hz refresh rate. Poll the cheap directory
+    // snapshot instead and only re-parse when the files changed.
+    if (++presetScanTicks >= presetScanIntervalTicks)
+    {
+        presetScanTicks = 0;
+        if (scanUserPresetFiles() != lastPresetDirectoryScan)
+            refreshPresetList();
+    }
 
     refreshFromProcessor();
 }
 
+juce::StringArray MetalEQNativeFallbackEditor::scanUserPresetFiles() const
+{
+    juce::StringArray entries;
+
+    const auto directory = processor.getUserPresetDirectory();
+    if (! directory.isDirectory())
+        return entries;
+
+    juce::Array<juce::File> files;
+    directory.findChildFiles (files, juce::File::findFiles, false, "*.metaleq");
+    for (const auto& file : files)
+        entries.add (file.getFileName() + "|"
+                     + juce::String (file.getSize()) + "|"
+                     + juce::String (file.getLastModificationTime().toMilliseconds()));
+
+    entries.sort (true);
+    return entries;
+}
+
 void MetalEQNativeFallbackEditor::refreshPresetList()
 {
+    lastPresetDirectoryScan = scanUserPresetFiles();
     userPresetNames = processor.getUserPresetNames();
 
     updatingPresetCombo = true;

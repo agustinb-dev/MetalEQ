@@ -10,19 +10,12 @@
 
 #pragma once
 
-#include <array>
 #include <cstdint>
 
 #include "MetalEqDsp.h"
 
 namespace metaleq::params
 {
-
-//==============================================================================
-inline constexpr std::array<const char*, 8> idStrings =
-{
-    "hpFreq", "hpSlope", "lpFreq", "lpSlope", "lsFreq", "lsGain", "hsFreq", "hsGain"
-};
 
 //==============================================================================
 inline constexpr double hpFreqMin = 20.0,   hpFreqMax = 180.0,   hpFreqDefault = 80.0;

@@ -1,6 +1,8 @@
 #include "PluginEditor.h"
 #include "ui/MetalEqWebUiResources.h"
 
+#include <exception>
+
 namespace
 {
     // Kept in sync with the front-end's ?dev server (Gui/vite.config.ts).
@@ -100,6 +102,16 @@ void MetalEQAudioProcessorEditor::timerCallback()
     // user the native UI instead of an unresponsive window.
     if (! bridge.isReady())
     {
+        // Hidden editors (plugin scan, hosts that create the window before
+        // showing it) have throttled web timers, so only count watchdog time
+        // while the editor is actually on screen. Coming back into view later
+        // retries, and visibilityChanged() forces a full resync once ready.
+        if (! isShowing())
+        {
+            watchdogTicks = 0;
+            return;
+        }
+
         if (++watchdogTicks >= watchdogTicksLimit)
         {
             juce::Logger::writeToLog ("MetalEQ: WebView UI did not initialise; using the native editor.");
@@ -151,15 +163,30 @@ void MetalEQAudioProcessorEditor::attachNativeFallback()
     if (fallbackActive)
         return;
 
+    // Build the native editor before latching any state: if construction
+    // throws, the timer keeps running and the next watchdog tick can retry
+    // instead of leaving the editor permanently inert.
+    std::unique_ptr<MetalEQNativeFallbackEditor> fallback;
+    try
+    {
+        // The native editor is embedded as a plain child; its own resize calls
+        // are forwarded to this editor by the ComponentListener.
+        fallback = std::make_unique<MetalEQNativeFallbackEditor> (processorRef);
+    }
+    catch (const std::exception& e)
+    {
+        juce::Logger::writeToLog (juce::String ("MetalEQ: could not create the native editor: ")
+                                    + e.what());
+        return;
+    }
+
     fallbackActive = true;
     stopTimer();
 
-    // The native editor is embedded as a plain child; its own resize calls
-    // are forwarded to this editor by the ComponentListener.
-    fallbackEditor = std::make_unique<MetalEQNativeFallbackEditor> (processorRef);
-    fallbackEditor->addComponentListener (this);
-    addAndMakeVisible (*fallbackEditor);
-    fallbackEditor->setBounds (getLocalBounds());
+    fallback->addComponentListener (this);
+    addAndMakeVisible (*fallback);
+    fallback->setBounds (getLocalBounds());
+    fallbackEditor = std::move (fallback);
 
     webComponent.setVisible (false);
     resized();

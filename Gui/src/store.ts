@@ -42,6 +42,10 @@ function normaliseAnalyzer(info?: Partial<AnalyzerInfo> | null): AnalyzerInfo {
     correctionFreqs: info?.correctionFreqs,
     inputConfidence: info?.inputConfidence,
     correctionConfidence: info?.correctionConfidence,
+    warnings: info?.warnings,
+    sub60RelDb: info?.sub60RelDb,
+    hfFloorRelDb: info?.hfFloorRelDb,
+    tiltDbPerOct: info?.tiltDbPerOct,
     alreadyClose: info?.alreadyClose,
     changed: info?.changed,
   };

@@ -979,10 +979,14 @@ InputProfile analyseInput (const float* samples, int numSamples, double sampleRa
     const double frameScore = clampDouble (static_cast<double> (frames) / 60.0, 0.0, 1.0);
     const double levelScore = clampDouble ((rmsDb + 60.0) / 30.0, 0.0, 1.0);
 
-    result.confidence = clampDouble ((0.35 + 0.65 * frameScore) * (0.4 + 0.6 * levelScore), 0.0, 1.0);
+    // The floors used to be 0.35 and 0.40, so confidence could never drop
+    // below 0.14 and the validity gate below was mathematically unreachable.
+    // These floors still keep a healthy take near 1.0 but let a single very
+    // short or very quiet capture fall under the gate.
+    result.confidence = clampDouble ((0.10 + 0.90 * frameScore) * (0.25 + 0.75 * levelScore), 0.0, 1.0);
     result.referenceDb = referenceDb;
     result.frames = frames;
-    result.valid = result.confidence > 0.05;
+    result.valid = result.confidence > 0.15;
     return result;
 }
 
@@ -1192,7 +1196,7 @@ CorrectionResult computeCorrection (const InputProfile& input,
     for (int i = 0; i < n; ++i)
         maxGain = std::max (maxGain, std::abs (result.gainsDb[static_cast<size_t> (i)]));
     for (int i = 0; i < kNumFeatures; ++i)
-        if (target.features[static_cast<size_t> (i)].weight >= 0.4)
+        if (weights[static_cast<size_t> (i)] >= 0.4)
             maxResidual = std::max (maxResidual,
                                     std::abs (result.targetDb[static_cast<size_t> (i)]
                                               - result.predictedDb[static_cast<size_t> (i)]));

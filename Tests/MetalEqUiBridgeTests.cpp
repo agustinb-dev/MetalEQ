@@ -856,6 +856,66 @@ static void testAnalyzerPreviewMatchesGui()
 }
 
 //==============================================================================
+static void testEditorExpansionAndCandidateValidation (MetalEQAudioProcessor& processor)
+{
+    metaleq::ui::UiBridge bridge (processor);
+
+    bool lastExpanded = false;
+    int expansionCalls = 0;
+    bridge.setExpansionHandler ([&] (bool expanded)
+    {
+        ++expansionCalls;
+        lastExpanded = expanded;
+    });
+
+    // Regression: the front-end sends real JSON booleans, but the handler used
+    // to parse the argument with a number-only helper and rejected them, so the
+    // window never resized for the Advanced view.
+    juce::var result;
+    check (callNative (bridge, "setEditorExpanded", makeArgs (true), result),
+           "setEditorExpanded is registered");
+    check (resultOk (result), "setEditorExpanded accepts a JSON true");
+    check (expansionCalls == 1 && lastExpanded,
+           "setEditorExpanded forwards true to the editor");
+
+    check (callNative (bridge, "setEditorExpanded", makeArgs (false), result),
+           "setEditorExpanded accepts a JSON false");
+    check (resultOk (result), "setEditorExpanded accepts false");
+    check (expansionCalls == 2 && ! lastExpanded,
+           "setEditorExpanded forwards false to the editor");
+
+    check (callNative (bridge, "setEditorExpanded", makeArgs (1.0), result),
+           "setEditorExpanded keeps accepting numeric flags");
+    check (resultOk (result) && expansionCalls == 3 && lastExpanded,
+           "a numeric expansion flag is coerced to true");
+
+    check (callNative (bridge, "setEditorExpanded", makeArgs (juce::String ("yes")), result),
+           "setEditorExpanded handles non-boolean input");
+    check (! resultOk (result), "setEditorExpanded rejects a non-boolean argument");
+    check (expansionCalls == 3, "a rejected expansion request does not reach the editor");
+
+    // A fractional index used to be silently truncated (1.7 -> 1), selecting a
+    // different candidate than the one the UI asked for.
+    juce::Array<juce::var> fractional;
+    fractional.add (1.7);
+    check (callNative (bridge, "applyResonanceSelection", makeArgs (fractional), result),
+           "applyResonanceSelection is registered for index validation");
+    check (! resultOk (result), "applyResonanceSelection rejects a fractional candidate index");
+    check (getProperty (result, "error").toString().contains ("integers"),
+           "the fractional-index rejection explains the integer requirement");
+
+    juce::Array<juce::var> negative;
+    negative.add (-1.0);
+    check (callNative (bridge, "applyResonanceSelection", makeArgs (negative), result),
+           "applyResonanceSelection handles negative indices");
+    check (! resultOk (result), "applyResonanceSelection rejects a negative candidate index");
+
+    check (callNative (bridge, "applyResonanceToDynamic", makeArgs (fractional), result),
+           "applyResonanceToDynamic is registered for index validation");
+    check (! resultOk (result), "applyResonanceToDynamic also rejects fractional indices");
+}
+
+//==============================================================================
 int main()
 {
     {
@@ -896,6 +956,11 @@ int main()
     {
         MetalEQAudioProcessor processor;
         testResonanceRestartDuringLiveCapture (processor);
+    }
+
+    {
+        MetalEQAudioProcessor processor;
+        testEditorExpansionAndCandidateValidation (processor);
     }
 
     {

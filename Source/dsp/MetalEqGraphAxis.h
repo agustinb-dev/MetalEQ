@@ -59,8 +59,6 @@ inline std::vector<size_t> visibleLabelIndices (double width, double minLabelSpa
         }
     }
     const size_t last = guitarLandmarks.size() - 1;
-    if (width - lastX < minLabelSpacing && selected.size() > 1)
-        selected.pop_back();
     if (width >= minLabelSpacing)
         selected.push_back (last);
     return selected;

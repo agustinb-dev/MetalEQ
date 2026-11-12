@@ -30,6 +30,15 @@ private:
     void presetSelected();
     void saveAsPreset();
 
+    /** Cheap directory snapshot (file names, sizes and mtimes). Used to detect
+        preset changes without parsing every .metaleq file on each timer tick.
+    */
+    juce::StringArray scanUserPresetFiles() const;
+
+    // The timer runs at 8 Hz; scanning the directory about once per second is
+    // enough to pick up presets saved or deleted elsewhere.
+    static constexpr int presetScanIntervalTicks = 8;
+
     MetalEQAudioProcessor& processor;
 
     juce::Label titleLabel;
@@ -50,6 +59,8 @@ private:
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bypassAttachment;
     juce::StringArray userPresetNames;
+    juce::StringArray lastPresetDirectoryScan;
+    int presetScanTicks = 0;
     bool updatingPresetCombo = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MetalEQNativeFallbackEditor)

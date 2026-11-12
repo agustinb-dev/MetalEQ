@@ -58,6 +58,8 @@ export function Modal({
           if (e.key === 'Enter') {
             e.preventDefault();
             confirm();
+            // Message-only boxes have no input: OK also dismisses them.
+            if (initialText === undefined) onClose();
           } else if (e.key === 'Escape') {
             e.preventDefault();
             onClose();

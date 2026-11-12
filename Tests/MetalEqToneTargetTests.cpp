@@ -228,6 +228,16 @@ void testInputAnalysis()
     std::vector<float> tooShort (100, 0.1f);
     check (! analyseInput (tooShort.data(), static_cast<int> (tooShort.size()), sampleRate).valid,
            "too-short capture is rejected");
+
+    // A single FFT frame (8192 samples, ~170 ms) reaches the analysis loop but
+    // is not a usable take. The old confidence floors (0.35 * 0.40 = 0.14)
+    // made the validity gate unreachable, so this case used to be accepted.
+    const auto oneFrameCapture = makeBandTones (flat, 8192.0 / sampleRate);
+    const auto oneFrameProfile = analyseInput (oneFrameCapture.data(),
+                                               static_cast<int> (oneFrameCapture.size()), sampleRate);
+    check (oneFrameProfile.frames == 1, "an 8192-sample capture yields exactly one analysed frame");
+    check (oneFrameProfile.confidence < 0.15, "a single-frame capture has low confidence");
+    check (! oneFrameProfile.valid, "a single-frame capture is rejected as too short");
 }
 
 /** Phase 3: capture diagnostics. A clean full-band capture carries no
@@ -449,6 +459,35 @@ void testDeadbandAndConfidenceTuning()
             check (std::isfinite (gain) && std::abs (gain) <= kGlobalMaxGainDb + 1.0e-9,
                    "the 12 dB cap applies per band");
     }
+}
+
+void testTruncatedTopResidual()
+{
+    using namespace metaleq::tone;
+
+    const auto& target = getToneTarget (0);
+
+    // Everything matches the destination except the 9.5 kHz band, which sits
+    // at a codec-style floor. Without the diagnostic the solver tries to fix
+    // that band and the large residual there dominates the metric.
+    auto shape = targetShape (target);
+    shape[8] = -30.0;
+
+    auto clean = makeInput (shape, 1.0);
+    const auto cleanResult = computeCorrection (clean, target, sampleRate);
+    check (cleanResult.residualDb > 3.0,
+           "an unrepresentable 9.5 kHz mismatch dominates the residual without a diagnostic");
+
+    // With highEndTruncated the band is given zero weight in the fit, so it
+    // must also be excluded from the residual/confidence metric instead of
+    // penalising a capture the analyzer already knows is truncated.
+    auto truncated = makeInput (shape, 1.0);
+    truncated.warnings |= static_cast<unsigned> (CaptureWarning::highEndTruncated);
+    const auto truncatedResult = computeCorrection (truncated, target, sampleRate);
+    check (truncatedResult.residualDb < 0.5,
+           "a truncated top octave is excluded from the residual");
+    check (truncatedResult.confidence > cleanResult.confidence,
+           "the truncated capture is not penalised for its codec floor");
 }
 
 void testInputAdaptation()
@@ -701,6 +740,7 @@ int main()
     testCorrectionSafety();
     testAlreadySuitableInput();
     testDeadbandAndConfidenceTuning();
+    testTruncatedTopResidual();
     testInputAdaptation();
     testTargetDistinctness();
     testMeasuredTargetPins();

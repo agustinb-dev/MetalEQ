@@ -3,6 +3,7 @@
 #include "../dsp/MetalEqGraphAxis.h"
 
 #include <cmath>
+#include <limits>
 
 namespace metaleq::ui
 {
@@ -151,6 +152,15 @@ namespace
             if (! metaleq::isFiniteValue (plain) || plain < 0.0)
             {
                 error = "Candidate indices must be non-negative integers.";
+                return false;
+            }
+
+            // The wire format is JSON, so 1.7 parses as a valid double. Reject
+            // it instead of silently truncating to a different candidate.
+            if (plain != std::floor (plain)
+                || plain > static_cast<double> (std::numeric_limits<int>::max()))
+            {
+                error = "Candidate indices must be integers.";
                 return false;
             }
 
@@ -762,12 +772,18 @@ juce::var UiBridge::handleOpenExternalUrl (const juce::Array<juce::var>& args)
 
 juce::var UiBridge::handleSetEditorExpanded (const juce::Array<juce::var>& args)
 {
-    const auto expanded = numberOrNull (args, 0);
-    if (expanded.isVoid())
+    // The front-end sends a real JSON boolean here. `numberOrNull` would
+    // reject it as void, so validate bool-or-number explicitly and reuse the
+    // same coercion the other boolean flags use.
+    if (args.isEmpty())
+        return errorResult ("setEditorExpanded expects a boolean.");
+
+    const auto& value = args[0];
+    if (! (value.isBool() || value.isInt() || value.isInt64() || value.isDouble()))
         return errorResult ("setEditorExpanded expects a boolean.");
 
     if (expansionHandler != nullptr)
-        expansionHandler (static_cast<double> (expanded) >= 0.5);
+        expansionHandler (boolFlag (args, 0));
 
     return okResult();
 }
